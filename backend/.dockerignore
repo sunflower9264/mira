@@ -1,0 +1,12 @@
+.env
+.venv/
+__pycache__/
+**/__pycache__/
+*.pyc
+data/
+logs/
+runtime/bin/
+runtime/homes/
+runtime/workspaces/
+runtime/**/*.log
+*.sqlite*

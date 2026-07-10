@@ -1,0 +1,18 @@
+[
+  {
+    "id": "claude-code",
+    "name": "Claude Code",
+    "runtime": "claude",
+    "enabled": false,
+    "supported_models": [],
+    "description": "通过 Claude Code CLI 执行生成、编辑和应用搭建任务。"
+  },
+  {
+    "id": "codex",
+    "name": "Codex",
+    "runtime": "codex",
+    "enabled": false,
+    "supported_models": [],
+    "description": "通过 Codex CLI 执行代码生成与自动化改动任务。"
+  }
+]

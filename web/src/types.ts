@@ -1,0 +1,483 @@
+// Types mirror PRD §6.1 exactly. Backend (PRD §6.2 ORM) must align field-by-field.
+
+export type NodeType = 'user_input' | 'generate' | 'output' | 'asset' | 'condition';
+
+// Condition 节点的隐式 default 分支保留 key（cases 模式下作为兜底 handle）。
+// 用户禁止把这个值用作自定义 case key（后端 nlcompile._valid_new_node 也会拒绝）。
+export const CONDITION_DEFAULT_BRANCH_KEY = '__default__';
+export type AgentKind = 'claude' | 'codex';
+export type AppAgentKind = AgentKind | '';
+export type AgentProviderId = 'claude-code' | 'codex';
+export type ReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
+export interface DecisionOption {
+  label: string;
+  description: string;
+  recommended: boolean;
+}
+
+export interface DecisionRequestContext {
+  title: string;
+  summary: string;
+}
+
+export interface DecisionGroup {
+  id: string;
+  label: string;
+  type: 'single' | 'multi';
+  options: DecisionOption[];
+  placeholder?: string;
+}
+
+export interface DecisionAnswer {
+  group_id: string;
+  selected: string[];
+}
+
+export interface App {
+  id: string;
+  name: string;
+  description: string;
+  cover: string | null;
+  created_at: string;
+  updated_at: string;
+  published_at?: string;
+  archived_at?: string | null;
+  status: 'draft' | 'published';
+  visibility: 'public' | 'private';
+  market_access: 'cloneable' | 'run_only';
+  can_edit: boolean;
+  can_clone: boolean;
+  can_run: boolean;
+  can_view_source: boolean;
+  graph: Graph;
+}
+
+export interface Graph {
+  agent?: AppAgentKind;
+  tools?: {
+    disabled_tool_ids?: string[];
+  };
+  nodes: WorkflowNode[];
+  edges: WorkflowEdge[];
+  viewport?: { x: number; y: number; zoom: number };
+}
+
+export interface WorkflowLintIssue {
+  severity: 'error' | 'warning' | 'info';
+  code: string;
+  title: string;
+  detail: string;
+  node_id?: string | null;
+  edge_id?: string | null;
+  suggestion?: string | null;
+}
+
+export interface WorkflowLintResult {
+  ok: boolean;
+  summary: {
+    errors: number;
+    warnings: number;
+    infos: number;
+  };
+  issues: WorkflowLintIssue[];
+}
+
+export interface GraphNodeSize {
+  width: number;
+  height: number;
+}
+
+export type GraphNodeSizeMap = Record<string, GraphNodeSize>;
+
+export interface NodeBase {
+  id: string;
+  type: NodeType;
+  position: { x: number; y: number };
+  title: string;
+  description?: string;
+}
+
+export type OutputContractType = 'json' | 'html' | 'artifact';
+export type ArtifactContractKind =
+  | 'image'
+  | 'code'
+  | 'html'
+  | 'markdown'
+  | 'csv'
+  | 'excel'
+  | 'docx'
+  | 'ppt'
+  | 'pdf'
+  | 'archive'
+  | 'file';
+
+export interface NodeOutputContract {
+  type: OutputContractType;
+  json_schema?: Record<string, unknown>;
+  artifact_kind?: ArtifactContractKind;
+  max_count?: number;
+}
+
+export interface UserInputNode extends NodeBase {
+  type: 'user_input';
+  input_schema: {
+    label: string;
+    placeholder?: string;
+    kind: 'text' | 'file';
+    required?: boolean;
+  };
+}
+
+export interface GenerateNode extends NodeBase {
+  type: 'generate';
+  prompt: string;
+  model?: string;
+  reasoning_effort?: ReasoningEffort;
+  agent_session_id?: string;
+  output_contract?: NodeOutputContract;
+}
+
+export interface OutputNode extends NodeBase {
+  type: 'output';
+  prompt: string;
+  model?: string;
+  reasoning_effort?: ReasoningEffort;
+  agent_session_id?: string;
+  source_node_id: string;
+}
+
+export interface UploadRef {
+  id: string;
+  name: string;
+  mime: string;
+  size: number;
+  created_at: string;
+}
+
+export interface TextAssetNode extends NodeBase {
+  type: 'asset';
+  asset_kind: 'text';
+  content: string;
+}
+
+export interface UrlAssetNode extends NodeBase {
+  type: 'asset';
+  asset_kind: 'url';
+  urls: string[];
+}
+
+export interface FileAssetNode extends NodeBase {
+  type: 'asset';
+  asset_kind: 'file';
+  uploads: UploadRef[];
+}
+
+export interface DrawingAssetNode extends NodeBase {
+  type: 'asset';
+  asset_kind: 'drawing';
+  upload: UploadRef | null;
+}
+
+export type AssetNode = TextAssetNode | UrlAssetNode | FileAssetNode | DrawingAssetNode;
+
+export interface ConditionBranch {
+  key: string; // 用作 edge.source_handle 与 LLM 输出匹配；binary 模式固定 'true'/'false'
+  label?: string;
+}
+
+export interface ConditionBranchOverride {
+  node_id: string;
+  branch_key: string;
+}
+
+export interface ConditionResult {
+  chosen_branch: string;
+  unchosen_branches: string[];
+  reason: string;
+  raw_answer?: string | null;
+  forced: boolean;
+}
+
+export interface ConditionNode extends NodeBase {
+  type: 'condition';
+  mode: 'binary' | 'cases';
+  prompt: string;
+  model?: string;
+  reasoning_effort?: ReasoningEffort;
+  agent_session_id?: string;
+  branches: ConditionBranch[]; // binary 时固定 [{key:'true'},{key:'false'}]
+}
+
+export type WorkflowNode =
+  | UserInputNode
+  | GenerateNode
+  | OutputNode
+  | AssetNode
+  | ConditionNode;
+
+export interface WorkflowEdge {
+  id: string;
+  source: string;
+  target: string;
+  source_handle?: string;
+}
+
+export interface Run {
+  id: string;
+  app_id: string;
+  status: 'pending' | 'running' | 'waiting_for_user' | 'interrupted' | 'success' | 'failed' | 'cancelled';
+  name?: string | null;
+  inputs: Record<string, unknown>;
+  graph: Graph;
+  steps: Step[];
+  started_at: string;
+  finished_at?: string;
+  error?: string;
+  recovery?: RunRecovery | null;
+}
+
+export type RunSummary = Pick<
+  Run,
+  'id' | 'app_id' | 'status' | 'name' | 'inputs' | 'started_at' | 'finished_at' | 'error'
+>;
+
+export interface Step {
+  node_id: string;
+  status: 'pending' | 'running' | 'waiting_for_user' | 'interrupted' | 'success' | 'failed' | 'skipped' | 'cancelled';
+  input: unknown;
+  output: unknown;
+  agent_session_id?: string;
+  started_at?: string;
+  finished_at?: string;
+  duration_ms?: number;
+  error?: string;
+  logs: LogLine[];
+}
+
+export interface RunTraceChunk {
+  event_id: number;
+  type: 'text' | 'tool_call' | 'tool_result' | 'error' | 'done';
+  text?: string | null;
+  raw?: Record<string, unknown> | null;
+}
+
+export interface RunTraceArtifact {
+  path: string;
+  name: string;
+  size: number;
+  download_url: string;
+}
+
+export interface RunArtifact {
+  id: string;
+  name: string;
+  path?: string | null;
+  size?: number | null;
+  download_url: string;
+  source_node_id?: string | null;
+  source_node_title?: string | null;
+  source_kind: 'workspace_file' | 'artifact_contract';
+  mime?: string | null;
+}
+
+export interface RunArtifactsOut {
+  artifacts: RunArtifact[];
+  truncated: boolean;
+}
+
+export interface RunStepTrace {
+  run_id: string;
+  node_id: string;
+  node_title: string;
+  node_type: 'generate' | 'condition' | 'output';
+  status: Step['status'];
+  agent?: string | null;
+  model?: string | null;
+  reasoning_effort?: string | null;
+  agent_session_id?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+  duration_ms?: number | null;
+  error?: string | null;
+  prompt: string;
+  input?: unknown;
+  output?: unknown;
+  logs: LogLine[];
+  chunks: RunTraceChunk[];
+  chunks_truncated: boolean;
+  raw_text: string;
+  artifacts: RunTraceArtifact[];
+  artifacts_truncated: boolean;
+}
+
+export interface RunRecovery {
+  resumable: boolean;
+  resume_from_node_id?: string | null;
+  reason?: string | null;
+  waiting_request?: RunWaitingRequest | null;
+}
+
+export interface LogLine {
+  ts: string;
+  level: 'info' | 'warn' | 'error' | 'tool';
+  text: string;
+}
+
+export interface AppVersion {
+  id: string;
+  app_id: string;
+  label?: string;
+  name: string;
+  description: string;
+  graph: Graph;
+  created_at: string;
+  is_published?: boolean;
+}
+
+// WS event types (PRD §10.2)
+export type AgentChunk = {
+  type: 'text' | 'tool_call' | 'tool_result' | 'error' | 'done';
+  text?: string;
+  raw?: Record<string, unknown>;
+};
+
+/** ask_user 请求体；与后端 AskUserRequest / WaitingInputRequest 对齐。 */
+export interface RunWaitingRequest {
+  context: DecisionRequestContext;
+  groups: DecisionGroup[];
+  tool_use_id: string;
+}
+
+export type RunEvent =
+  | { event: 'step.start'; node_id: string; ts: string }
+  | { event: 'step.log'; node_id: string; log: LogLine }
+  | { event: 'step.delta'; node_id: string; chunk: AgentChunk }
+  | { event: 'step.waiting'; node_id: string; request: RunWaitingRequest; question?: string }
+  | { event: 'step.end'; node_id: string; step: Step }
+  | { event: 'run.waiting_for_user'; node_id: string; question?: string }
+  | { event: 'run.end'; status: 'success' | 'failed' | 'cancelled'; error?: string };
+
+// JSON Patch ops (subset used by nlcompile, RFC 6902-ish)
+export type GraphPatch =
+  | { op: 'add_node'; node: WorkflowNode }
+  | { op: 'remove_node'; id: string }
+  | { op: 'update_node'; id: string; patch: Partial<WorkflowNode> }
+  | { op: 'add_edge'; edge: WorkflowEdge }
+  | { op: 'remove_edge'; id: string };
+
+export interface NlCompilePlan {
+  goal_summary: string;
+  assumptions: string[];
+  data_flow: string[];
+  implementation_steps: string[];
+  graph_changes: string[];
+  expected_inputs: string[];
+  expected_outputs: string[];
+  acceptance_criteria: string[];
+}
+
+export interface AgentProviderStatus {
+  installed: boolean;
+  // runnable=null 表示尚未跑过真实 smoke；true/false 由 refresh_agent_status 写回。
+  runnable: boolean | null;
+  identity?: string | null;
+  method?: string | null;
+  error?: string | null;
+  checked_at: string;
+}
+
+export interface AgentProviderConfig {
+  id: AgentProviderId;
+  name: string;
+  description: string;
+  runtime: AgentKind;
+  enabled: boolean;
+  supported_models: string[];
+  status?: AgentProviderStatus | null;
+}
+
+/**
+ * 配置文件编辑入口支持的 kind，正文由后端加密存 DB，path 表示派生 runtime 文件位置：
+ * - claude-code → ~/.claude/settings.json
+ * - codex      → ~/.codex/config.toml
+ * - codex-auth → ~/.codex/auth.json（仅 admin 维护，仅用于 GET；写入合并到 codex PUT 的 auth_content 字段）
+ *
+ * 注意 codex-auth 不属于 AgentProviderId（runtime 选择只用 claude-code / codex）。
+ */
+export type AgentConfigKind = 'claude-code' | 'codex' | 'codex-auth';
+
+export interface AgentConfigFile {
+  agent_id: AgentConfigKind;
+  path: string;
+  content: string;
+  settings?: MiraSettings;
+  // codex 保存时附带 auth.json 的最新解密元数据。
+  auth?: AgentConfigFile | null;
+}
+
+export interface AgentSetupState {
+  completed: boolean;
+}
+
+export interface InstructionFile {
+  provider: AgentProviderId;
+  path: string;
+  content: string;
+}
+
+export interface PromptTemplate {
+  key: string;
+  name: string;
+  description: string;
+  content: string;
+  variables: string[];
+  updated_at: string;
+}
+
+export interface SkillConfig {
+  id: string;
+  name: string;
+  description: string;
+  archive_name: string;
+  archive_size: number;
+  uploaded_at: string;
+  enabled: boolean;
+  planning_enabled: boolean;
+}
+
+export interface SkillMarkdown {
+  path: string;
+  content: string;
+}
+
+export interface McpHeader {
+  name: string;
+  value: string;
+}
+
+export interface McpServerConfig {
+  id: string;
+  name: string;
+  enabled: boolean;
+  planning_enabled: boolean;
+  provider_ids: AgentProviderId[];
+  url: string;
+  headers: McpHeader[];
+  env_var_names: string[];
+}
+
+export interface ToolConfig {
+  id: string;
+  name: string;
+  description: string;
+  enabled: boolean;
+  planning_enabled: boolean;
+}
+
+export interface MiraSettings {
+  agents: AgentProviderConfig[];
+  skills: SkillConfig[];
+  mcp_servers: McpServerConfig[];
+  tools: ToolConfig[];
+}

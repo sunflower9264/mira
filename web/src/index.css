@@ -1,0 +1,175 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html, body, #root { height: 100%; }
+  body { margin: 0; }
+  * { box-sizing: border-box; }
+  button { cursor: pointer; }
+  button:disabled { cursor: not-allowed; }
+}
+
+@media (max-width: 767px) {
+  html,
+  body {
+    touch-action: pan-x pan-y;
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+
+  input[class],
+  textarea[class],
+  select[class] {
+    font-size: 16px;
+  }
+}
+
+/* React Flow tweaks: remove default attribution position interfering with our overlay */
+.react-flow__attribution { display: none; }
+.react-flow__pane { cursor: default; }
+.react-flow__pane.draggable { cursor: grab; }
+.react-flow__pane.dragging { cursor: grabbing; }
+.react-flow__pane.selection { cursor: default; }
+.react-flow__node { font-family: inherit; }
+.react-flow__node.draggable:hover,
+.react-flow__node.draggable.selected { cursor: grab; }
+.react-flow__node.draggable.dragging { cursor: grabbing; }
+.react-flow__nodesselection-rect {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  pointer-events: none;
+}
+.react-flow__node-output {
+  padding: 0;
+  width: auto;
+  color: inherit;
+  text-align: inherit;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.react-flow__node-output.selected,
+.react-flow__node-output.selectable:hover,
+.react-flow__node-output.selectable.selected,
+.react-flow__node-output.selectable:focus,
+.react-flow__node-output.selectable:focus-visible {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+/* Custom node card */
+.mira-node {
+  position: relative;
+  width: 220px;
+  border-radius: 14px;
+  padding: 12px 14px;
+  background: #fff;
+  border: 1px solid rgba(0,0,0,0.06);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.05), 0 6px 16px rgba(0,0,0,0.04);
+  transition: box-shadow 120ms ease, border-color 120ms ease;
+}
+.mira-node.selected {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 2px rgba(59,130,246,0.35), 0 6px 18px rgba(0,0,0,0.08);
+}
+
+/* Connection handles: quiet at rest, stronger on hover / select / connect. */
+.react-flow__handle {
+  transition: opacity 120ms ease, border-color 120ms ease, background-color 120ms ease, transform 120ms ease;
+}
+.mira-node-source-handle,
+.mira-node-target-handle {
+  width: 12px;
+  height: 12px;
+  border: 1.5px solid #94a3b8;
+  background: #fff;
+  opacity: 0.72;
+}
+.mira-node:hover .mira-node-source-handle,
+.mira-node.selected .mira-node-source-handle,
+.mira-node:hover .mira-node-target-handle,
+.mira-node.selected .mira-node-target-handle,
+.react-flow.mira-connecting .mira-node-target-handle {
+  opacity: 1;
+  border-color: #111827;
+}
+.mira-node-source-handle,
+.mira-node-target-handle {
+  cursor: crosshair;
+}
+.mira-node:hover .mira-node-source-handle,
+.mira-node.selected .mira-node-source-handle {
+  transform: translate(50%, -50%) scale(1.25);
+}
+.mira-node:hover .mira-node-target-handle,
+.mira-node.selected .mira-node-target-handle,
+.react-flow.mira-connecting .mira-node-target-handle {
+  transform: translate(-50%, -50%) scale(1.25);
+}
+
+.react-flow.mira-touch-canvas,
+.react-flow.mira-touch-canvas .react-flow__pane,
+.react-flow.mira-touch-canvas .react-flow__node {
+  touch-action: none;
+}
+
+@media (pointer: coarse), (hover: none) {
+  .react-flow.mira-touch-canvas .mira-node-source-handle,
+  .react-flow.mira-touch-canvas .mira-node-target-handle {
+    width: 22px;
+    height: 22px;
+    border-width: 2px;
+    opacity: 0.9;
+  }
+
+  .react-flow.mira-touch-canvas .mira-node-source-handle {
+    transform: translate(50%, -50%);
+  }
+
+  .react-flow.mira-touch-canvas .mira-node-target-handle {
+    transform: translate(-50%, -50%);
+  }
+
+  .mira-node-toolbar {
+    min-width: 0;
+    max-width: min(520px, calc(100vw - 32px));
+    justify-content: flex-start;
+    overflow-x: auto;
+    padding: 6px 8px;
+    scrollbar-width: none;
+  }
+
+  .mira-node-toolbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .mira-node-toolbar button {
+    min-height: 44px;
+  }
+}
+
+/* Sticky-note hint on empty editor */
+.empty-canvas-hint {
+  position: relative;
+  pointer-events: none;
+}
+
+.sticky-note {
+  display: inline-block;
+  background: #D8D2FF;
+  padding: 8px 14px;
+  border-radius: 4px;
+  font-family: 'Caveat', 'Comic Sans MS', cursive;
+  font-size: 18px;
+  transform: rotate(-3deg);
+  box-shadow: 0 2px 6px rgba(0,0,0,0.06);
+}
+
+/* react-sketch-canvas 6.x can attach empty SVG masks to stroke groups. We do
+   not expose erasing here, so disabling those masks keeps strokes visible. */
+.mira-sketch-canvas [id*="__stroke-group"] {
+  mask: none;
+}

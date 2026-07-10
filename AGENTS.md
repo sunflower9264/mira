@@ -1,0 +1,80 @@
+# AGENTS.md
+
+本文件约束整个 Mira 仓库。除非用户明确要求，解释、计划和总结默认使用中文；代码、命令、日志、错误信息和标识符保持原文。
+
+## Project Positioning
+
+Mira 是一个参考 Google Opal 思路的可视化 AI app 搭建与运行项目。用户通过节点图、自然语言编辑、Agent runtime、运行预览和中段交互快速构建 mini AI app。
+
+本仓库是全栈单体项目：
+
+- `web/`：React + Vite + TypeScript 前端，负责 Home、Editor、Preview、App View、Mobile Run 和 Settings UI。
+- `backend/`：FastAPI 后端，负责鉴权、Apps/Versions、Settings/Skills/MCP/Instructions/Prompt Templates、Uploads、Run 编排、SSE、NL compile、Prompt Assistant 和 Claude/Codex runtime 隔离。
+- `docs/`：预留文档目录；当前不要引用不存在的正式文档路径。
+- `deploy/`、`backend/data/`、`backend/logs/`、`backend/runtime/homes/`、`backend/runtime/workspaces/`：部署副本或本地运行产物，不作为源码维护。
+
+## Must-Read Files
+
+- `README.md`：项目定位、功能、启动方式和基础使用。
+- `web/AGENTS.md`、`backend/AGENTS.md`：前后端专项规则。
+- `web/src/types.ts`：前端核心类型和 wire shape。
+- `web/src/lib/api.ts`、`web/src/lib/ws.ts`：HTTP/SSE 客户端契约。
+- `backend/app/schemas/`、`backend/app/api/`：后端请求/响应 schema 和 router。
+- `backend/app/services/`、`backend/app/runtime/`：业务规则、run 编排和 Agent sandbox。
+
+## Runtime And Startup
+
+- 根目录开发启动：Linux/macOS/WSL2 执行 `sh start.sh`；Windows 后端必须在 WSL2 Linux shell 内运行。
+- `start.sh` 会停止 `8000`、`5173` 端口上的已有监听进程，启动后端和前端，并绑定 `0.0.0.0`。
+- 后端开发服务：`cd backend && uv sync && uv run python scripts/dev.py`。
+- 前端开发服务：`cd web && npm ci && npm run dev -- --host 0.0.0.0`。
+- Claude/Codex CLI 只允许在 `backend/runtime/Dockerfile` 构建的 Docker Linux sandbox 容器内执行；不要恢复宿主机直跑 Agent CLI 的路径。
+- `scripts/dev.py` 会初始化 `.env`、检查或构建 runtime 镜像、运行 `scripts/init_admin.py` 并启动 uvicorn。共享或远程部署前必须修改默认 admin 密码。
+
+## Architecture Rules
+
+- 前后端契约以 `web/src/types.ts`、`web/src/lib/api.ts`、`web/src/lib/ws.ts`、`backend/app/schemas/` 和 `backend/app/api/` 为准；改 wire shape 必须两端同步。
+- Workflow 节点类型包括 `user_input`、`asset`、`generate`、`condition`、`output`。每个 workflow 最多一个 `user_input` 和一个 `output`；`output` 是唯一终点节点，不能出边。
+- 应用默认 Agent 保存在 `graph.agent`；App 级 Tools 排除项保存在 `graph.tools.disabled_tool_ids`；运行创建时写入 `graph._runtime_tools.allowed_tool_ids` 快照。
+- `asset` 节点契约：`text.content`、`url.urls[]`、`file.uploads[]`、`drawing.upload`。文件和画板上传引用跨用户克隆时必须复制到目标用户。
+- `generate.output_contract` 支持 `json`、`html`、`artifact`；自由文本不设置契约。JSON 必须提供 strict object `json_schema`；HTML 只通过 `{"html":"..."}` wrapper 校验并原样保存；artifact 必须提供 `artifact_kind` 且只接受运行工作区内文件 `path`。`output` 节点保持 HTML-only 最终展示节点，并内部使用 HTML wrapper 契约。
+- 运行结果区只有 `输出` 和 `文件` 两类视图；文件产物通过 `GET /api/runs/{run_id}/artifacts` 返回签名下载链接，禁止向前端泄漏 runtime 本地绝对路径。
+- 每次 run 保存启动时 `graph` 快照。执行、恢复、历史回放、rerun-from 和 run 态前端视图使用 run 快照，不受后续 App graph 编辑影响。
+- Run 执行按依赖驱动；ready 节点可并发执行。线性单下游 LLM 链可复用 Agent session；fan-out、fan-in、并行分支或独立节点使用独立 session。
+- 后端启动会把未完成 run 标记为 `interrupted`；继续运行是节点级恢复，跳过已成功或已跳过节点，不承诺中断节点内部副作用去重。
+- 从历史 run 指定节点重新执行必须创建新 run，使用当前 App graph 快照，并只复用起点前可复用的成功/跳过祖先 step；旧 run 永远只读。
+- 桌面 condition 分支测试通过新 run snapshot 中的 `condition_branch_override` 强制分支，不修改 App graph。
+- Apps、Versions、Runs、Steps、Uploads、runtime workspace 等用户业务数据必须按当前登录用户隔离；禁止用外部传入的 `user_id` 决定资源归属。
+- 发布应用支持公开可克隆、公开仅运行和私有。`run_only` 市场应用对非 owner 可运行但不可克隆，且 App、Run、SSE、Trace、artifacts 响应必须脱敏 graph、prompt、内部 step 日志和来源节点标题。
+- `backend/seeds/gallery.json` 同步出的内置模板归属 `system_gallery`，源应用只读；模板通过 `gallery=true` 获取，普通市场通过 `market=true` 获取且不包含 `system_gallery`。
+- Settings、Skills、MCP、Agent config、支持模型、Instructions 和 Prompt Templates 是全局共享数据；写操作必须走 admin 权限。
+- MCP/Skills 默认只在普通运行中按 App 允许列表注入；只有 `planning_enabled=true` 的 Tool 才能进入 NL compile、Prompt Assistant 和运行期 ask_user preflight 的 planning/read-only 阶段。
+- NL compile 是持久化两阶段流程：`POST /api/nlcompile` 只生成可确认方案，`POST /api/nlcompile/{compile_id}/apply` 才返回 `new_graph`；active/refine/resume/cancel 以 `nlcompile_sessions` 为事实来源。
+- Prompt Assistant 使用统一 `/api/prompt-assistant` 接口和 `prompt_assistant_generations` 持久化等待态；不要新增旧式 `prompt_helper` 命名或 `/api/prompt-helper` 接口。
+- `ask_user` 用于 NL compile 方案阶段、Prompt Assistant 和 app run 中段交互。请求必须包含 `context.title` 和 `context.summary`；模型选项必须是 2-3 个真实选项，包含 `label`、`description`、`recommended`；后端统一追加 `以上都不是`。
+
+## Editing Rules
+
+- 修改前先明确目标、假设和验证方式；只改和当前任务直接相关的文件。
+- 不顺手重构、格式化、改名、移动文件或清理无关代码；保持现有风格，即使它不是最佳实践。
+- 不添加 speculative features、提前抽象、插件机制或用户没要求的扩展点。
+- 发现无关问题时只在回复中说明，不擅自修改。
+- 修改结构、启动方式、接口契约、节点类型、runtime 边界或业务行为后，同步更新相关 `README.md` / `AGENTS.md` / 正式文档。
+- 开发阶段修改任何 seed 后，必须同步开发数据库和 `deploy` 数据库，或在回复中明确说明未同步的原因；Settings 保存 Prompt Template 会同步写回 prompt seed，修改 prompt seed 还必须确认变量名与 `backend/app/services/prompts.py` 调用一致。
+- 不修改 `.serena/`、runtime 生成物、部署副本、日志、数据库、缓存和 ignored 目录，除非用户明确要求。
+
+## Verification Commands
+
+- 前端类型检查：`cd web && npm run typecheck`
+- 前端构建：`cd web && npm run build`
+- 后端测试：`cd backend && uv sync && uv run pytest -q`
+- 后端编译：`cd backend && uv run python -m compileall app scripts`
+- 迁移验证：`cd backend && uv run alembic upgrade head && uv run alembic current && uv run alembic check`
+- 文档格式：`git diff --check`
+
+## Documentation Rules
+
+- 项目正式名称统一写作 Mira。
+- README 可以说明 Mira 参考 Google Opal，但必须声明非 Google 官方项目、非官方关联。
+- 文档路径示例优先使用相对路径；不要把本地工作区路径写成项目名。
+- 不引用不存在的文档路径。

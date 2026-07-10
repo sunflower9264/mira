@@ -1,0 +1,2235 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+  <title>Mira Mobile H5 Prototype</title>
+  <style>
+    :root {
+      --bg: #f4f5f7;
+      --surface: #ffffff;
+      --ink: #0b0b0f;
+      --muted: rgba(11, 11, 15, 0.56);
+      --soft: rgba(11, 11, 15, 0.06);
+      --line: rgba(11, 11, 15, 0.1);
+      --blue: #2563eb;
+      --green: #10b981;
+      --amber: #f59e0b;
+      --red: #dc2626;
+      --violet: #7c3aed;
+      --orange: #f97316;
+      --shadow: 0 16px 42px rgba(15, 23, 42, 0.12);
+      --radius: 18px;
+      color-scheme: light;
+      font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
+      scrollbar-width: none;
+    }
+
+    *::-webkit-scrollbar {
+      display: none;
+    }
+
+    html,
+    body {
+      width: 100%;
+      min-height: 100%;
+      margin: 0;
+      background: #e9ecf1;
+      color: var(--ink);
+    }
+
+    body {
+      overflow: hidden;
+    }
+
+    button,
+    input,
+    textarea,
+    select {
+      font: inherit;
+    }
+
+    button {
+      cursor: pointer;
+    }
+
+    [hidden] {
+      display: none !important;
+    }
+
+    .app {
+      position: relative;
+      width: 100%;
+      height: 100dvh;
+      max-width: 430px;
+      margin: 0 auto;
+      overflow: hidden;
+      background:
+        radial-gradient(circle at 18% -5%, rgba(37, 99, 235, 0.1), transparent 32%),
+        radial-gradient(circle at 88% 4%, rgba(16, 185, 129, 0.12), transparent 30%),
+        var(--bg);
+      box-shadow: 0 0 0 1px rgba(11, 11, 15, 0.08), 0 28px 80px rgba(15, 23, 42, 0.22);
+    }
+
+    .screen {
+      position: absolute;
+      inset: 0;
+      display: none;
+      min-height: 0;
+      flex-direction: column;
+      overflow: hidden;
+      background: var(--bg);
+    }
+
+    .screen.active {
+      display: flex;
+    }
+
+    .screen.login {
+      background:
+        linear-gradient(180deg, rgba(11, 11, 15, 0.06), rgba(11, 11, 15, 0.78)),
+        linear-gradient(135deg, #111827, #1e3a8a 48%, #065f46);
+      color: #fff;
+    }
+
+    .topbar {
+      position: relative;
+      z-index: 5;
+      flex: none;
+      border-bottom: 1px solid rgba(11, 11, 15, 0.06);
+      background: rgba(255, 255, 255, 0.9);
+      padding: calc(12px + env(safe-area-inset-top)) 14px 10px;
+      backdrop-filter: blur(18px);
+    }
+
+    .top-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .title {
+      min-width: 0;
+      flex: 1;
+    }
+
+    .title strong {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 16px;
+      letter-spacing: 0;
+    }
+
+    .title span {
+      display: block;
+      margin-top: 2px;
+      overflow: hidden;
+      color: rgba(11, 11, 15, 0.44);
+      font-size: 11px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .icon-button {
+      display: grid;
+      width: 40px;
+      height: 40px;
+      flex: none;
+      place-items: center;
+      border: 0;
+      border-radius: 999px;
+      background: transparent;
+      color: rgba(11, 11, 15, 0.66);
+      font-size: 18px;
+    }
+
+    .icon-button:active,
+    .icon-button.active {
+      background: rgba(11, 11, 15, 0.07);
+      color: var(--ink);
+    }
+
+    .account-button {
+      display: inline-flex;
+      max-width: 112px;
+      height: 40px;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      border: 1px solid rgba(11, 11, 15, 0.08);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.72);
+      color: rgba(11, 11, 15, 0.7);
+      padding: 0 12px;
+      font-size: 12px;
+      font-weight: 720;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .account-button:active {
+      background: rgba(11, 11, 15, 0.06);
+      color: var(--ink);
+    }
+
+    .main {
+      min-height: 0;
+      flex: 1;
+      overflow-y: auto;
+      padding: 14px 14px calc(18px + env(safe-area-inset-bottom));
+      overscroll-behavior-y: contain;
+    }
+
+    .main.no-nav {
+      padding-bottom: calc(18px + env(safe-area-inset-bottom));
+    }
+
+    .footer {
+      position: relative;
+      z-index: 6;
+      flex: none;
+      border-top: 1px solid rgba(11, 11, 15, 0.06);
+      background: rgba(255, 255, 255, 0.92);
+      padding: 12px 14px calc(14px + env(safe-area-inset-bottom));
+      backdrop-filter: blur(18px);
+    }
+
+    .stack {
+      display: grid;
+      gap: 12px;
+      align-content: start;
+      grid-auto-rows: max-content;
+    }
+
+    .brand-mark {
+      display: grid;
+      width: 42px;
+      height: 42px;
+      place-items: center;
+      border-radius: 15px;
+      background: var(--ink);
+      color: #fff;
+      font-weight: 820;
+      letter-spacing: 0;
+    }
+
+    .login-body {
+      display: flex;
+      min-height: 0;
+      flex: 1;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: calc(38px + env(safe-area-inset-top)) 20px calc(22px + env(safe-area-inset-bottom));
+    }
+
+    .login-body h1 {
+      margin: 22px 0 0;
+      font-size: 44px;
+      line-height: 0.96;
+      letter-spacing: 0;
+    }
+
+    .login-body p {
+      max-width: 300px;
+      margin: 12px 0 0;
+      color: rgba(255, 255, 255, 0.72);
+      font-size: 14px;
+      line-height: 1.65;
+    }
+
+    .login-card {
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: 24px;
+      background: rgba(255, 255, 255, 0.12);
+      padding: 14px;
+      backdrop-filter: blur(18px);
+    }
+
+    .login-card input {
+      width: 100%;
+      margin-bottom: 9px;
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.14);
+      color: white;
+      outline: 0;
+      padding: 12px;
+      font-size: 16px;
+    }
+
+    .login-card input::placeholder {
+      color: rgba(255, 255, 255, 0.58);
+    }
+
+    .search {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 12px;
+      border: 1px solid rgba(11, 11, 15, 0.1);
+      border-radius: 999px;
+      background: #fff;
+      padding: 10px 13px;
+      box-shadow: 0 6px 18px rgba(15, 23, 42, 0.04);
+    }
+
+    .search input {
+      width: 100%;
+      min-width: 0;
+      border: 0;
+      outline: 0;
+      background: transparent;
+      font-size: 16px;
+    }
+
+    .segmented {
+      display: grid;
+      gap: 4px;
+      padding: 4px;
+      border-radius: 999px;
+      background: rgba(11, 11, 15, 0.06);
+    }
+
+    .segmented.cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .segmented.cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .segmented.cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+
+    .segmented button {
+      min-width: 0;
+      height: 34px;
+      border: 0;
+      border-radius: 999px;
+      background: transparent;
+      color: rgba(11, 11, 15, 0.5);
+      font-size: 12px;
+      font-weight: 720;
+    }
+
+    .segmented button.active {
+      background: #fff;
+      color: var(--ink);
+      box-shadow: 0 4px 14px rgba(15, 23, 42, 0.08);
+    }
+
+    .card {
+      border: 1px solid rgba(11, 11, 15, 0.09);
+      border-radius: var(--radius);
+      background: #fff;
+      box-shadow: 0 10px 28px rgba(15, 23, 42, 0.06);
+    }
+
+    .panel {
+      padding: 14px;
+    }
+
+    .panel-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+
+    .panel h3,
+    .app-card h3 {
+      margin: 0;
+      font-size: 16px;
+      line-height: 1.15;
+      letter-spacing: 0;
+    }
+
+    .panel p,
+    .app-card p {
+      margin: 6px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.6;
+    }
+
+    .app-card {
+      position: relative;
+      min-height: 176px;
+      overflow: hidden;
+      border-radius: 24px;
+      background:
+        linear-gradient(120deg, rgba(0, 0, 0, 0.86), rgba(0, 0, 0, 0.24)),
+        linear-gradient(135deg, #172554, #14532d 58%, #0f172a);
+      color: #fff;
+      box-shadow: var(--shadow);
+      cursor: pointer;
+    }
+
+    .app-card.alt {
+      background:
+        linear-gradient(120deg, rgba(0, 0, 0, 0.82), rgba(0, 0, 0, 0.2)),
+        linear-gradient(135deg, #4c1d95, #1e3a8a 56%, #111827);
+    }
+
+    .app-card.warm {
+      background:
+        linear-gradient(120deg, rgba(0, 0, 0, 0.84), rgba(0, 0, 0, 0.2)),
+        linear-gradient(135deg, #7c2d12, #854d0e 54%, #111827);
+    }
+
+    .app-card-inner {
+      display: flex;
+      min-height: 176px;
+      flex-direction: column;
+      justify-content: flex-end;
+      padding: 16px;
+    }
+
+    .app-card p {
+      display: -webkit-box;
+      overflow: hidden;
+      color: rgba(255, 255, 255, 0.7);
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 2;
+    }
+
+    .app-menu-button {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      z-index: 3;
+      display: grid;
+      width: 38px;
+      height: 38px;
+      place-items: center;
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: 999px;
+      background: rgba(0, 0, 0, 0.22);
+      color: rgba(255, 255, 255, 0.9);
+      font-size: 20px;
+      line-height: 1;
+      backdrop-filter: blur(12px);
+    }
+
+    .app-menu-button:active {
+      background: rgba(0, 0, 0, 0.34);
+    }
+
+    .refresh-indicator,
+    .load-more {
+      min-height: 34px;
+      display: grid;
+      place-items: center;
+      color: rgba(11, 11, 15, 0.44);
+      font-size: 12px;
+      font-weight: 720;
+      text-align: center;
+    }
+
+    .refresh-indicator {
+      height: 0;
+      min-height: 0;
+      overflow: hidden;
+      transform: translateY(-8px);
+      transition: height 160ms ease, transform 160ms ease;
+    }
+
+    .refresh-indicator.active {
+      height: 34px;
+      transform: translateY(0);
+    }
+
+    .load-more.done {
+      color: rgba(11, 11, 15, 0.3);
+    }
+
+    .badge-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      align-items: center;
+      margin-bottom: 9px;
+    }
+
+    .app-card:not(.compact) .badge-row {
+      position: absolute;
+      top: 18px;
+      left: 16px;
+      right: 58px;
+      z-index: 2;
+      margin-bottom: 0;
+    }
+
+    .badge {
+      display: inline-flex;
+      min-height: 22px;
+      align-items: center;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.16);
+      color: rgba(255, 255, 255, 0.84);
+      padding: 0 8px;
+      font-size: 10px;
+      font-weight: 720;
+      backdrop-filter: blur(8px);
+    }
+
+    .badge.dark {
+      background: rgba(11, 11, 15, 0.06);
+      color: rgba(11, 11, 15, 0.52);
+    }
+
+    .badge.blue { background: rgba(37, 99, 235, 0.1); color: #1d4ed8; }
+    .badge.green { background: rgba(16, 185, 129, 0.12); color: #047857; }
+    .badge.amber { background: rgba(245, 158, 11, 0.15); color: #b45309; }
+    .badge.red { background: rgba(239, 68, 68, 0.12); color: #b91c1c; }
+
+    .card-actions,
+    .split-row {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+      margin-top: 13px;
+    }
+
+    .mini-button {
+      min-width: 0;
+      min-height: 44px;
+      overflow: hidden;
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.16);
+      color: #fff;
+      font-size: 12px;
+      font-weight: 730;
+      padding: 0 12px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      backdrop-filter: blur(8px);
+    }
+
+    .app-card.compact {
+      min-height: 132px;
+      border-radius: 20px;
+    }
+
+    .app-card.compact .app-card-inner {
+      min-height: 132px;
+      padding: 14px;
+    }
+
+    .app-card.compact .badge-row {
+      margin-bottom: 7px;
+    }
+
+    .mini-button.solid {
+      border-color: #fff;
+      background: #fff;
+      color: var(--ink);
+    }
+
+    .primary-action {
+      display: inline-flex;
+      width: 100%;
+      min-height: 46px;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      border: 0;
+      border-radius: 999px;
+      background: var(--ink);
+      color: #fff;
+      font-size: 14px;
+      font-weight: 760;
+    }
+
+    .primary-action.secondary {
+      border: 1px solid rgba(11, 11, 15, 0.1);
+      background: #fff;
+      color: var(--ink);
+    }
+
+    .primary-action.danger {
+      background: var(--red);
+    }
+
+    .notice {
+      border: 1px solid rgba(245, 158, 11, 0.24);
+      border-radius: 18px;
+      background: rgba(245, 158, 11, 0.1);
+      color: #92400e;
+      padding: 11px 12px;
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    .notice.neutral {
+      border-color: rgba(11, 11, 15, 0.08);
+      background: #fff;
+      color: var(--muted);
+    }
+
+    .field {
+      display: grid;
+      gap: 6px;
+      margin-bottom: 13px;
+    }
+
+    .field label {
+      color: rgba(11, 11, 15, 0.46);
+      font-size: 11px;
+      font-weight: 760;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .field input,
+    .field textarea,
+    .field select {
+      width: 100%;
+      border: 1px solid rgba(11, 11, 15, 0.1);
+      border-radius: 16px;
+      background: #fff;
+      color: var(--ink);
+      outline: 0;
+      padding: 12px;
+      font-size: 16px;
+    }
+
+    .field textarea {
+      min-height: 128px;
+      resize: vertical;
+      line-height: 1.5;
+    }
+
+    .progress {
+      height: 4px;
+      margin-top: 10px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: rgba(11, 11, 15, 0.07);
+    }
+
+    .progress > span {
+      display: block;
+      height: 100%;
+      border-radius: inherit;
+      background: var(--ink);
+    }
+
+    .timeline {
+      display: grid;
+      gap: 9px;
+    }
+
+    .step-card,
+    .option-card,
+    .settings-item {
+      border: 1px solid rgba(11, 11, 15, 0.08);
+      border-radius: 18px;
+      background: #fff;
+      padding: 12px;
+    }
+
+    .step-card-head {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .status-dot {
+      width: 10px;
+      height: 10px;
+      flex: none;
+      border-radius: 999px;
+      background: rgba(11, 11, 15, 0.18);
+    }
+
+    .status-dot.running { background: var(--blue); box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.12); }
+    .status-dot.success { background: var(--green); }
+    .status-dot.waiting { background: var(--amber); }
+    .status-dot.failed { background: var(--red); }
+
+    .step-card strong,
+    .option-card strong,
+    .settings-item strong {
+      display: block;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 13px;
+    }
+
+    .step-card span,
+    .option-card span span,
+    .settings-item span {
+      color: rgba(11, 11, 15, 0.45);
+      font-size: 11px;
+    }
+
+    .code-box {
+      margin-top: 10px;
+      overflow: auto;
+      border-radius: 14px;
+      background: rgba(11, 11, 15, 0.04);
+      padding: 10px;
+      color: rgba(11, 11, 15, 0.72);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 11px;
+      line-height: 1.55;
+      white-space: pre-wrap;
+    }
+
+    .result-frame {
+      min-height: 360px;
+      overflow: hidden;
+      border: 1px solid rgba(11, 11, 15, 0.08);
+      border-radius: 20px;
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(245, 247, 250, 0.94)),
+        repeating-linear-gradient(135deg, rgba(11, 11, 15, 0.04), rgba(11, 11, 15, 0.04) 1px, transparent 1px, transparent 14px);
+      padding: 16px;
+    }
+
+    .result-frame h2 {
+      margin: 0;
+      font-size: 24px;
+      line-height: 1.08;
+      letter-spacing: 0;
+    }
+
+    .result-frame p {
+      color: rgba(11, 11, 15, 0.58);
+      font-size: 12px;
+      line-height: 1.6;
+    }
+
+    .result-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+      margin-top: 14px;
+    }
+
+    .metric {
+      border-radius: 16px;
+      background: #fff;
+      padding: 11px;
+      box-shadow: 0 8px 20px rgba(15, 23, 42, 0.06);
+    }
+
+    .metric strong {
+      display: block;
+      font-size: 18px;
+    }
+
+    .metric span {
+      display: block;
+      margin-top: 3px;
+      color: rgba(11, 11, 15, 0.48);
+      font-size: 10px;
+    }
+
+    .composer {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px;
+      align-items: center;
+      border: 1px solid rgba(11, 11, 15, 0.1);
+      border-radius: 999px;
+      background: #fff;
+      padding: 6px;
+      box-shadow: 0 8px 26px rgba(15, 23, 42, 0.08);
+    }
+
+    .composer input {
+      min-width: 0;
+      border: 0;
+      outline: 0;
+      background: transparent;
+      padding: 0 10px;
+      font-size: 16px;
+    }
+
+    .composer button {
+      display: grid;
+      width: 36px;
+      height: 36px;
+      place-items: center;
+      border: 0;
+      border-radius: 999px;
+      background: var(--ink);
+      color: #fff;
+      font-size: 17px;
+    }
+
+    .canvas-area {
+      position: relative;
+      flex: 1;
+      min-height: 0;
+      overflow: hidden;
+      touch-action: none;
+      background:
+        linear-gradient(rgba(148, 163, 184, 0.18) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(148, 163, 184, 0.18) 1px, transparent 1px),
+        #f7f8fb;
+      background-size: 22px 22px;
+    }
+
+    .canvas-area .topbar {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 0;
+    }
+
+    .editor-tabs {
+      margin-top: 12px;
+    }
+
+    .editor-panel {
+      position: absolute;
+      inset: 0;
+    }
+
+    .editor-panel[hidden] {
+      display: none;
+    }
+
+    .editor-content-panel {
+      top: calc(116px + env(safe-area-inset-top));
+      overflow-y: auto;
+      background: var(--bg);
+      padding: 14px 14px calc(18px + env(safe-area-inset-bottom));
+    }
+
+    .canvas-scroll {
+      position: absolute;
+      inset: calc(116px + env(safe-area-inset-top)) 0 calc(86px + env(safe-area-inset-bottom)) 0;
+      overflow: auto;
+      overscroll-behavior: contain;
+      touch-action: pan-x pan-y;
+    }
+
+    .canvas-content {
+      position: relative;
+      width: 440px;
+      height: 710px;
+      transform-origin: 0 0;
+    }
+
+    .rf-node {
+      position: absolute;
+      z-index: 1;
+      width: 176px;
+      border: 1px solid rgba(11, 11, 15, 0.1);
+      border-radius: 16px;
+      background: #fff;
+      padding: 11px 12px;
+      box-shadow: 0 10px 26px rgba(15, 23, 42, 0.11);
+    }
+
+    .rf-node.selected {
+      border-color: rgba(37, 99, 235, 0.9);
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.2), 0 12px 30px rgba(15, 23, 42, 0.14);
+    }
+
+    .node-type {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      color: rgba(11, 11, 15, 0.46);
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .node-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      background: var(--blue);
+    }
+
+    .node-dot.input { background: #facc15; }
+    .node-dot.output { background: var(--green); }
+    .node-dot.condition { background: var(--orange); }
+
+    .rf-node strong {
+      display: block;
+      margin-top: 8px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 13px;
+    }
+
+    .rf-node p {
+      display: -webkit-box;
+      margin: 5px 0 0;
+      overflow: hidden;
+      color: rgba(11, 11, 15, 0.5);
+      font-size: 11px;
+      line-height: 1.45;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 2;
+    }
+
+    .edge {
+      position: absolute;
+      z-index: 0;
+      height: 2px;
+      transform-origin: left center;
+      border-top: 2px dashed rgba(15, 23, 42, 0.3);
+    }
+
+    .edge::after {
+      content: "";
+      position: absolute;
+      right: -2px;
+      top: -5px;
+      width: 8px;
+      height: 8px;
+      transform: rotate(45deg);
+      border-right: 2px solid rgba(15, 23, 42, 0.35);
+      border-top: 2px solid rgba(15, 23, 42, 0.35);
+    }
+
+    .floating-tools {
+      position: absolute;
+      right: 12px;
+      bottom: calc(96px + env(safe-area-inset-bottom));
+      z-index: 8;
+      display: grid;
+      gap: 8px;
+      background: transparent;
+    }
+
+    .tool-cluster {
+      display: grid;
+      gap: 5px;
+      border: 1px solid rgba(11, 11, 15, 0.08);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.88);
+      padding: 5px;
+      box-shadow: 0 12px 28px rgba(15, 23, 42, 0.1);
+      backdrop-filter: blur(18px);
+    }
+
+    .floating-tools button,
+    .canvas-add-node {
+      display: grid;
+      width: 40px;
+      height: 40px;
+      place-items: center;
+      border: 0;
+      border-radius: 999px;
+      background: transparent;
+      color: rgba(11, 11, 15, 0.62);
+      font-size: 16px;
+    }
+
+    .canvas-add-node {
+      position: absolute;
+      left: 12px;
+      bottom: calc(96px + env(safe-area-inset-bottom));
+      z-index: 9;
+      border: 1px solid rgba(11, 11, 15, 0.08);
+      background: var(--ink);
+      color: #fff;
+      box-shadow: 0 12px 28px rgba(15, 23, 42, 0.18);
+    }
+
+    .canvas-composer {
+      position: absolute;
+      left: 12px;
+      right: 12px;
+      bottom: calc(12px + env(safe-area-inset-bottom));
+      z-index: 10;
+    }
+
+    .option-card {
+      display: flex;
+      width: 100%;
+      align-items: flex-start;
+      gap: 10px;
+      text-align: left;
+    }
+
+    .option-card.selected,
+    .option-card:active {
+      border-color: rgba(11, 11, 15, 0.38);
+      background: rgba(11, 11, 15, 0.03);
+    }
+
+    .option-icon {
+      display: grid;
+      width: 34px;
+      height: 34px;
+      flex: none;
+      place-items: center;
+      border-radius: 14px;
+      background: rgba(11, 11, 15, 0.06);
+      color: var(--ink);
+      font-size: 17px;
+    }
+
+    .settings-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .settings-tabs {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 6px;
+      margin-top: 12px;
+    }
+
+    .settings-tabs button {
+      min-width: 0;
+      height: 34px;
+      overflow: hidden;
+      border: 0;
+      border-radius: 999px;
+      background: rgba(11, 11, 15, 0.06);
+      color: rgba(11, 11, 15, 0.52);
+      padding: 0 8px;
+      font-size: 12px;
+      font-weight: 720;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .settings-tabs button.active {
+      background: #fff;
+      color: var(--ink);
+      box-shadow: 0 4px 14px rgba(15, 23, 42, 0.08);
+    }
+
+    .settings-panel[hidden] {
+      display: none;
+    }
+
+    .metric-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 9px;
+    }
+
+    .app-choice {
+      display: grid;
+      gap: 9px;
+    }
+
+    .app-choice .option-card {
+      align-items: center;
+    }
+
+    .app-thumb {
+      display: grid;
+      width: 44px;
+      height: 44px;
+      flex: none;
+      place-items: center;
+      border-radius: 16px;
+      background: linear-gradient(135deg, #111827, #14532d);
+      color: #fff;
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .settings-item {
+      display: grid;
+      grid-template-columns: 38px minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .settings-item-icon {
+      display: grid;
+      width: 38px;
+      height: 38px;
+      place-items: center;
+      border-radius: 15px;
+      background: rgba(11, 11, 15, 0.06);
+      color: var(--ink);
+    }
+
+    .toggle {
+      width: 42px;
+      height: 24px;
+      border-radius: 999px;
+      background: var(--ink);
+      padding: 3px;
+    }
+
+    .toggle::after {
+      content: "";
+      display: block;
+      width: 18px;
+      height: 18px;
+      margin-left: 18px;
+      border-radius: 999px;
+      background: #fff;
+    }
+
+    .sheet {
+      position: absolute;
+      inset: 0;
+      z-index: 80;
+      display: none;
+      align-items: flex-end;
+      background: rgba(0, 0, 0, 0.36);
+      backdrop-filter: blur(2px);
+    }
+
+    .sheet.active {
+      display: flex;
+    }
+
+    .sheet-panel {
+      width: 100%;
+      max-height: 88dvh;
+      overflow: hidden;
+      border: 1px solid rgba(11, 11, 15, 0.1);
+      border-radius: 24px 24px 0 0;
+      background: #fff;
+      box-shadow: 0 -24px 80px rgba(0, 0, 0, 0.22);
+    }
+
+    .sheet-handle {
+      display: none;
+    }
+
+    .sheet-header {
+      display: flex;
+      height: 54px;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      border-bottom: 1px solid rgba(11, 11, 15, 0.06);
+      padding: 0 14px;
+    }
+
+    .sheet-header strong {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 15px;
+    }
+
+    .sheet-body {
+      max-height: calc(88dvh - 66px);
+      overflow-y: auto;
+      padding: 14px 14px calc(18px + env(safe-area-inset-bottom));
+    }
+
+    .toast {
+      position: absolute;
+      left: 14px;
+      right: 14px;
+      bottom: calc(74px + env(safe-area-inset-bottom));
+      z-index: 100;
+      display: none;
+      border-radius: 18px;
+      background: rgba(11, 11, 15, 0.92);
+      color: #fff;
+      padding: 12px 14px;
+      font-size: 12px;
+      line-height: 1.5;
+      box-shadow: 0 18px 42px rgba(15, 23, 42, 0.24);
+    }
+
+    .toast.active {
+      display: block;
+    }
+
+    @media (max-width: 430px) {
+      .app {
+        max-width: none;
+        box-shadow: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app" id="app">
+    <section class="screen login active" data-screen="login">
+      <main class="login-body">
+        <div>
+          <div class="brand-mark" style="background:#fff;color:#0b0b0f;">M</div>
+          <h1>Mira</h1>
+          <p>手机上直接构建、运行和发布 AI app。这里是纯 H5 原型，所有数据和状态都由前端模拟。</p>
+        </div>
+        <div class="login-card">
+          <input value="admin" aria-label="用户名" />
+          <input value="password" type="password" aria-label="密码" />
+          <button class="primary-action" data-screen-target="home">登录</button>
+        </div>
+      </main>
+    </section>
+
+    <section class="screen" data-screen="home">
+      <header class="topbar">
+        <div class="top-row">
+          <div class="title">
+            <strong>Mira</strong>
+            <span>迷你AI应用</span>
+          </div>
+          <button class="account-button" data-open-sheet="account-menu" aria-label="账户菜单">sunflower</button>
+          <button class="icon-button" data-screen-target="settings" aria-label="设置">⚙</button>
+        </div>
+        <div class="search"><span>⌕</span><input placeholder="搜索应用" /></div>
+        <div class="segmented cols-3" style="margin-top:12px;" data-tabs>
+          <button class="active" data-tab="my-apps">我的应用</button>
+          <button data-tab="recent">最近运行</button>
+          <button data-tab="market">市场</button>
+        </div>
+      </header>
+      <main class="main stack" data-home-main>
+        <div class="refresh-indicator" data-refresh-indicator>下拉刷新</div>
+        <div class="tab-panel stack active" data-panel="my-apps"></div>
+        <div class="tab-panel stack" data-panel="recent" hidden></div>
+        <div class="tab-panel stack" data-panel="market" hidden></div>
+      </main>
+      <footer class="footer" data-home-create-footer>
+        <button class="primary-action" data-screen-target="ai-flow">＋ 新建 AI 应用</button>
+      </footer>
+    </section>
+
+    <section class="screen" data-screen="run-idle">
+      <header class="topbar">
+        <div class="top-row">
+          <button class="icon-button" data-screen-target="home" aria-label="返回">‹</button>
+          <div class="title"><strong>Campaign Brief Builder</strong><span>待运行 · Codex</span></div>
+          <button class="icon-button" data-open-sheet="app-page-menu" aria-label="应用页菜单">⋯</button>
+        </div>
+        <div class="progress"><span style="width:0%"></span></div>
+      </header>
+      <main class="main stack">
+        <article class="app-card compact">
+          <div class="app-card-inner">
+            <div class="badge-row"><span class="badge">草稿</span><span class="badge">5 nodes</span></div>
+            <h3>Campaign Brief Builder</h3>
+            <p>输入 campaign 目标，Mira 会串联素材、判断和输出节点生成 HTML brief。</p>
+          </div>
+        </article>
+        <div class="notice neutral">预检通过：1 个输入节点、3 个 LLM 节点、1 个输出节点。运行将使用启动时的 graph 快照。</div>
+        <div class="panel card">
+          <div class="panel-head">
+            <div><h3>运行输入</h3><p>支持文字和附件，附件会先上传再启动。</p></div>
+          </div>
+          <div class="field" style="margin-bottom:0;">
+            <textarea data-run-input required aria-required="true">为一个面向 B2B SaaS 的 AI workflow 产品写 launch brief。</textarea>
+          </div>
+        </div>
+      </main>
+      <footer class="footer">
+        <button class="primary-action" data-start-run>▶ 开始运行</button>
+      </footer>
+    </section>
+
+    <section class="screen" data-screen="run-live">
+      <header class="topbar">
+        <div class="top-row">
+          <button class="icon-button" data-screen-target="run-idle" aria-label="返回">‹</button>
+          <div class="title"><strong>Campaign Brief Builder</strong><span>运行中 · 3/5</span></div>
+          <button class="icon-button" data-screen-target="edit-canvas" aria-label="编辑">✎</button>
+        </div>
+        <div class="progress"><span style="width:62%"></span></div>
+      </header>
+      <main class="main stack">
+        <div class="notice">本次运行使用启动时快照。你现在的编辑只会影响下一次运行。</div>
+        <div class="segmented cols-2"><button data-screen-target="run-result">结果</button><button class="active">过程</button></div>
+        <div class="timeline">
+          <div class="step-card"><div class="step-card-head"><span class="status-dot success"></span><div><strong>用户输入</strong><span>用户输入 · 成功</span></div></div></div>
+          <div class="step-card"><div class="step-card-head"><span class="status-dot success"></span><div><strong>读取素材</strong><span>素材 · 成功</span></div></div></div>
+          <div class="step-card">
+            <div class="step-card-head"><span class="status-dot running"></span><div><strong>生成 Brief</strong><span>生成 · running</span></div></div>
+            <div class="code-box">Thinking through audience segments...
+Drafting narrative and measurable goals...</div>
+          </div>
+          <button class="option-card" data-open-sheet="ask-user"><span class="option-icon">?</span><span><strong>判断渠道</strong><span>等待用户补充 · 点击回答</span></span></button>
+          <div class="step-card"><div class="step-card-head"><span class="status-dot"></span><div><strong>输出 HTML</strong><span>输出 · 等待中</span></div></div></div>
+        </div>
+      </main>
+      <footer class="footer">
+        <button class="primary-action danger" data-toast="已停止模拟运行。">■ 停止运行</button>
+      </footer>
+    </section>
+
+    <section class="screen" data-screen="run-result">
+      <header class="topbar">
+        <div class="top-row">
+          <button class="icon-button" data-screen-target="home" aria-label="返回">‹</button>
+          <div class="title"><strong>Campaign Brief Builder</strong><span>成功 · 5/5</span></div>
+          <button class="icon-button" data-open-sheet="history" aria-label="历史">☰</button>
+        </div>
+        <div class="progress"><span style="width:100%"></span></div>
+      </header>
+      <main class="main stack">
+        <div class="segmented cols-2"><button class="active">结果</button><button data-screen-target="run-live">过程</button></div>
+        <div class="result-frame">
+          <h2>Launch Brief</h2>
+          <p>Position Mira as a fast, visual way to turn AI workflows into shareable apps.</p>
+          <div class="result-grid">
+            <div class="metric"><strong>3</strong><span>audiences</span></div>
+            <div class="metric"><strong>7</strong><span>assets</span></div>
+            <div class="metric"><strong>12</strong><span>claims</span></div>
+            <div class="metric"><strong>HTML</strong><span>contract</span></div>
+          </div>
+        </div>
+        <div class="panel card">
+          <div class="panel-head"><div><h3>文件</h3><p>artifact contract 产物通过签名链接下载。</p></div><span class="badge green">2 files</span></div>
+          <button class="primary-action secondary" data-toast="静态原型不会下载真实文件。">下载 brief.html</button>
+        </div>
+      </main>
+      <footer class="footer">
+        <button class="primary-action" data-screen-target="run-idle">↻ 新运行</button>
+      </footer>
+    </section>
+
+    <section class="screen" data-screen="edit-canvas">
+      <div class="canvas-area">
+        <header class="topbar">
+          <div class="top-row">
+            <button class="icon-button" data-screen-target="home" aria-label="返回">‹</button>
+            <div class="title"><strong>Campaign Brief Builder</strong><span>保存中... · 草稿</span></div>
+            <button class="icon-button" data-open-sheet="editor-menu" aria-label="更多">⋯</button>
+          </div>
+          <div class="segmented cols-3 editor-tabs" data-editor-tabs>
+            <button class="active" data-editor-tab="canvas">画布</button>
+            <button data-editor-tab="preview">预览</button>
+            <button data-editor-tab="console">控制台</button>
+          </div>
+        </header>
+        <div class="editor-panel" data-editor-panel="canvas">
+          <div class="canvas-scroll" aria-label="可触摸平移的画布">
+            <div class="canvas-content">
+              <div class="edge" style="left:108px;top:105px;width:128px;transform:rotate(18deg);"></div>
+              <div class="edge" style="left:238px;top:176px;width:96px;transform:rotate(68deg);"></div>
+              <article class="rf-node" style="left:28px;top:28px;" data-open-sheet="node-editor">
+                <div class="node-type"><span class="node-dot input"></span>Input</div>
+                <strong>用户输入</strong>
+                <p>Campaign 目标与受众。</p>
+              </article>
+              <article class="rf-node selected" style="left:132px;top:116px;" data-open-sheet="node-editor">
+                <div class="node-type"><span class="node-dot"></span>Generate</div>
+                <strong>生成 Brief</strong>
+                <p>输出结构化 campaign brief。</p>
+              </article>
+              <article class="rf-node" style="left:156px;top:288px;" data-open-sheet="node-editor">
+                <div class="node-type"><span class="node-dot condition"></span>Condition</div>
+                <strong>判断渠道</strong>
+                <p>true / false 分支。</p>
+              </article>
+              <article class="rf-node" style="left:70px;top:458px;" data-open-sheet="node-editor">
+                <div class="node-type"><span class="node-dot output"></span>Output</div>
+                <strong>输出 HTML</strong>
+                <p>最终展示节点。</p>
+              </article>
+            </div>
+          </div>
+          <button class="canvas-add-node" data-open-sheet="add-node" aria-label="添加节点">＋</button>
+          <div class="floating-tools">
+            <div class="tool-cluster" aria-label="画布视图工具">
+              <button data-toast="画布已适配屏幕">⤢</button>
+              <button data-toast="放大一级">＋</button>
+              <button data-toast="缩小一级">−</button>
+            </div>
+            <div class="tool-cluster" aria-label="历史操作">
+              <button data-toast="撤销一步">↺</button>
+              <button data-toast="重做一步">↻</button>
+            </div>
+          </div>
+          <div class="canvas-composer">
+            <div class="composer"><input placeholder="描述你想怎么改这个应用..." /><button data-open-sheet="ai-plan">↑</button></div>
+          </div>
+        </div>
+        <main class="editor-panel editor-content-panel stack" data-editor-panel="preview" hidden>
+          <article class="app-card compact">
+            <div class="app-card-inner">
+              <div class="badge-row"><span class="badge">草稿</span><span class="badge">5 nodes</span></div>
+              <h3>Campaign Brief Builder</h3>
+              <p>输入 campaign 目标，Mira 会串联素材、判断和输出节点生成 HTML brief。</p>
+            </div>
+          </article>
+          <div class="notice neutral">预检通过：1 个输入节点、3 个 LLM 节点、1 个输出节点。运行将使用启动时的 graph 快照。</div>
+          <div class="panel card">
+            <div class="panel-head"><div><h3>运行输入</h3><p>支持文字和附件，附件会先上传再启动。</p></div></div>
+            <div class="field" style="margin-bottom:0;"><textarea>为一个面向 B2B SaaS 的 AI workflow 产品写 launch brief。</textarea></div>
+          </div>
+          <button class="primary-action" data-toast="已启动模拟预览运行。">▶ 开始预览运行</button>
+          <div class="result-frame">
+            <h2>Launch Brief</h2>
+            <p>Position Mira as a fast, visual way to turn AI workflows into shareable apps.</p>
+            <div class="result-grid">
+              <div class="metric"><strong>3</strong><span>audiences</span></div>
+              <div class="metric"><strong>7</strong><span>assets</span></div>
+              <div class="metric"><strong>HTML</strong><span>contract</span></div>
+            </div>
+          </div>
+          <div class="panel card">
+            <div class="panel-head"><div><h3>文件</h3><p>artifact contract 产物通过签名链接下载。</p></div><span class="badge green">2 files</span></div>
+            <button class="primary-action secondary" data-toast="静态原型不会下载真实文件。">下载 brief.html</button>
+          </div>
+        </main>
+        <main class="editor-panel editor-content-panel stack" data-editor-panel="console" hidden>
+          <div class="panel card">
+            <div class="panel-head"><div><h3>运行概览</h3><p>run_7f3a · 运行中 · 3/5 · 错误 0 · 8.4s</p></div><button class="primary-action secondary" style="width:auto;min-height:36px;padding:0 13px;" data-open-sheet="trace">查看 Trace</button></div>
+            <div class="progress"><span style="width:62%"></span></div>
+          </div>
+          <div class="notice">当前活动节点：生成 Brief。正在汇总受众、目标和可发布的 HTML section。</div>
+          <div class="timeline">
+            <div class="step-card"><div class="step-card-head"><span class="status-dot success"></span><div><strong>用户输入</strong><span>user_input · 成功 · 42 ms</span></div><button class="mini-button solid" data-open-sheet="trace">Trace</button></div></div>
+            <div class="step-card"><div class="step-card-head"><span class="status-dot success"></span><div><strong>读取素材</strong><span>asset · 成功 · 138 ms</span></div></div></div>
+            <div class="step-card">
+              <div class="step-card-head"><span class="status-dot running"></span><div><strong>生成 Brief</strong><span>generate · running · 8.2s</span></div><button class="mini-button solid" data-open-sheet="trace">Trace</button></div>
+              <div class="code-box">info 16:21:08 Session reused
+tool 16:21:10 Reading uploaded assets
+info 16:21:13 Streaming HTML sections</div>
+            </div>
+            <div class="step-card">
+              <div class="step-card-head"><span class="status-dot waiting"></span><div><strong>判断渠道</strong><span>condition · 命中 true 分支</span></div></div>
+              <div class="split-row">
+                <button class="primary-action secondary" data-toast="已模拟测试 true 分支。">测试 true</button>
+                <button class="primary-action secondary" data-toast="已模拟测试 false 分支。">测试 false</button>
+              </div>
+            </div>
+            <div class="step-card"><div class="step-card-head"><span class="status-dot"></span><div><strong>输出 HTML</strong><span>output · 等待中</span></div><button class="mini-button solid" data-open-sheet="trace">Trace</button></div></div>
+          </div>
+          <div class="panel card">
+            <div class="panel-head"><div><h3>文件产物</h3><p>brief.html · launch-assets.zip</p></div><span class="badge green">2 files</span></div>
+          </div>
+        </main>
+      </div>
+    </section>
+
+    <section class="screen" data-screen="ai-flow">
+      <header class="topbar">
+        <div class="top-row">
+          <button class="icon-button" data-screen-target="edit-canvas" aria-label="返回">‹</button>
+          <div class="title"><strong>AI 改造</strong><span>两阶段确认 · ask_user ready</span></div>
+          <button class="icon-button" data-open-sheet="ai-plan">✦</button>
+        </div>
+      </header>
+      <main class="main stack">
+        <div class="panel card">
+          <div class="panel-head"><div><h3>自然语言编辑</h3><p>适合手机端快速改结构、补节点、调整输出契约。</p></div><span class="badge blue">NL compile</span></div>
+          <div class="field"><textarea>增加一个素材节点读取竞品信息，并让输出节点生成更适合市场页的 HTML。</textarea></div>
+          <button class="primary-action" data-open-sheet="ai-plan">生成方案</button>
+        </div>
+        <div class="panel card">
+          <h3>最近方案</h3>
+          <p>新增素材节点、更新生成节点 prompt、把输出契约改成 HTML。</p>
+          <div class="code-box">Plan status: waiting for confirmation
+Risk: output node source remains unchanged</div>
+        </div>
+      </main>
+    </section>
+
+    <section class="screen" data-screen="publish">
+      <header class="topbar">
+        <div class="top-row">
+          <button class="icon-button" data-screen-target="edit-canvas" aria-label="返回">‹</button>
+          <div class="title"><strong>发布</strong><span>草稿 · 有未发布更改</span></div>
+        </div>
+      </header>
+      <main class="main stack">
+        <div class="panel card">
+          <div class="panel-head"><div><h3>发布模式</h3><p>发布前会运行 workflow lint，并自动创建发布版本。</p></div><span class="badge amber">lint ready</span></div>
+          <button class="option-card selected"><span class="option-icon">◎</span><span><strong>公开：允许克隆</strong><span>用户可运行、查看节点并克隆成草稿。</span></span></button>
+          <button class="option-card"><span class="option-icon">▶</span><span><strong>公开：仅运行</strong><span>用户只能运行，看不到 graph 和 prompt。</span></span></button>
+          <button class="option-card"><span class="option-icon">⌾</span><span><strong>仅自己可见</strong><span>不进入市场。</span></span></button>
+        </div>
+        <div class="notice neutral">预检通过。0 errors, 1 warning：输出节点 prompt 建议补充空态说明。</div>
+      </main>
+      <footer class="footer">
+        <button class="primary-action" data-toast="已模拟发布，未写入后端。">发布应用</button>
+      </footer>
+    </section>
+
+    <section class="screen" data-screen="versions">
+      <header class="topbar">
+        <div class="top-row">
+          <button class="icon-button" data-screen-target="edit-canvas" aria-label="返回">‹</button>
+          <div class="title"><strong>历史版本</strong><span>12 snapshots · latest published</span></div>
+          <button class="icon-button" data-open-sheet="create-version">＋</button>
+        </div>
+      </header>
+      <main class="main stack">
+        <div class="field"><input placeholder="备注（可选）" /></div>
+        <button class="primary-action" data-open-sheet="create-version">创建快照</button>
+        <div class="timeline">
+          <div class="step-card"><div class="step-card-head"><span class="status-dot success"></span><div><strong>已发布 v3</strong><span>刚刚 · 可克隆为新应用</span></div></div></div>
+          <div class="step-card"><div class="step-card-head"><span class="status-dot"></span><div><strong>移动端重构前</strong><span>2 小时前 · 手动快照</span></div></div></div>
+          <div class="step-card"><div class="step-card-head"><span class="status-dot"></span><div><strong>已发布 v2</strong><span>昨天 · published</span></div></div></div>
+        </div>
+      </main>
+    </section>
+
+    <section class="screen" data-screen="settings">
+      <header class="topbar">
+        <div class="top-row">
+          <button class="icon-button" data-screen-target="home" aria-label="返回">‹</button>
+          <div class="title"><strong>系统设置</strong></div>
+        </div>
+        <div class="settings-tabs" data-settings-tabs>
+          <button class="active" data-settings-tab="agents">Agent 设置</button>
+          <button data-settings-tab="instructions">全局指令</button>
+          <button data-settings-tab="prompts">提示词管理</button>
+          <button data-settings-tab="skills">Skills</button>
+          <button data-settings-tab="mcp">MCP</button>
+        </div>
+      </header>
+      <main class="main stack">
+        <div class="settings-panel stack" data-settings-panel="agents">
+          <div class="metric-grid">
+            <div class="panel card"><h3>当前状态</h3><p>Claude Code 可用 · Codex 可用</p></div>
+            <div class="panel card"><h3>启用能力</h3><p>2 Agents · 2 Skills · 1 MCP</p></div>
+          </div>
+          <div class="settings-list">
+            <div class="settings-item"><span class="settings-item-icon">C</span><div><strong>Claude Code</strong><span>已启用 · 可用 · settings.json</span></div><span class="toggle"></span></div>
+            <div class="settings-item"><span class="settings-item-icon">X</span><div><strong>Codex</strong><span>已启用 · 可用 · config.toml + auth.json</span></div><span class="toggle"></span></div>
+          </div>
+          <div class="panel card">
+            <div class="panel-head"><div><h3>Claude Code 配置文件</h3><p>~/.claude/settings.json · 支持模型：claude-sonnet-4, claude-opus-4</p></div><button class="icon-button" data-toast="已模拟刷新 Agent 状态。">↻</button></div>
+            <div class="field"><label>settings.json</label><textarea>{
+  "model": "claude-sonnet-4",
+  "permissions": { "allow": ["Bash", "Read", "Edit"] }
+}</textarea></div>
+          </div>
+          <div class="panel card">
+            <div class="panel-head"><div><h3>Codex 配置文件</h3><p>~/.codex/config.toml · 支持模型：gpt-5.4, gpt-5.4-codex</p></div><button class="icon-button" data-toast="已模拟刷新 Agent 状态。">↻</button></div>
+            <div class="field"><label>config.toml</label><textarea>model = "gpt-5.4"
+[mcp_servers.serena]
+command = "uvx"</textarea></div>
+            <div class="field"><label>auth.json</label><textarea>{
+  "OPENAI_API_KEY": "sk-..."
+}</textarea></div>
+          </div>
+        </div>
+
+        <div class="settings-panel stack" data-settings-panel="instructions" hidden>
+          <div class="panel card">
+            <div class="panel-head"><div><h3>CLAUDE.md</h3><p>Claude Code 全局指令 · ~/.claude/CLAUDE.md</p></div></div>
+            <div class="field"><label>文件内容</label><textarea>你是 Mira 的运行期 Agent。严格遵守用户隔离、运行快照和工具权限。</textarea></div>
+          </div>
+          <div class="panel card">
+            <div class="panel-head"><div><h3>AGENTS.md</h3><p>Codex 全局指令 · ~/.codex/AGENTS.md</p></div></div>
+            <div class="field"><label>文件内容</label><textarea>优先使用项目既有模式，修改前理解上下文，禁止泄漏 runtime 本地路径。</textarea></div>
+          </div>
+          <button class="primary-action" data-toast="全局指令已模拟保存。">保存全局指令</button>
+        </div>
+
+        <div class="settings-panel stack" data-settings-panel="prompts" hidden>
+          <div class="panel card">
+            <h3>运行时提示词</h3>
+            <p>保存会同步数据库和 seed 文件；变量名必须与调用方一致。</p>
+          </div>
+          <div class="settings-list">
+            <div class="settings-item"><span class="settings-item-icon">N</span><div><strong>NL Compile</strong><span>nlcompile · $goal / $graph / $context · 07-05 22:30</span></div><button class="icon-button" data-open-sheet="prompt-editor">›</button></div>
+            <div class="settings-item"><span class="settings-item-icon">P</span><div><strong>Prompt Assistant</strong><span>prompt_assistant · $prompt / $node · 07-05 22:32</span></div><button class="icon-button" data-open-sheet="prompt-editor">›</button></div>
+            <div class="settings-item"><span class="settings-item-icon">G</span><div><strong>Graph Layout</strong><span>graph_layout · $nodes / $edges · 07-05 22:34</span></div><button class="icon-button" data-open-sheet="prompt-editor">›</button></div>
+          </div>
+        </div>
+
+        <div class="settings-panel stack" data-settings-panel="skills" hidden>
+          <div class="panel card">
+            <div class="panel-head"><div><h3>Global Skills</h3><p>上传 .zip 技能包，可分别控制启用和规划阶段可用。</p></div><button class="icon-button" data-toast="已模拟选择 Skill 压缩包。">＋</button></div>
+          </div>
+          <div class="settings-list">
+            <div class="settings-item"><span class="settings-item-icon">D</span><div><strong>design-md</strong><span>已启用 · 规划可用 · design-md.zip · 46.2 KB · 07-03 10:12</span></div><button class="icon-button" data-open-sheet="skill-preview">›</button></div>
+            <div class="settings-item"><span class="settings-item-icon">F</span><div><strong>frontend-design</strong><span>已启用 · 规划不可用 · frontend-design.zip · 28.7 KB · 07-03 10:18</span></div><button class="icon-button" data-open-sheet="skill-preview">›</button></div>
+          </div>
+        </div>
+
+        <div class="settings-panel stack" data-settings-panel="mcp" hidden>
+          <div class="panel card">
+            <div class="panel-head"><div><h3>HTTP MCP Server</h3><p>配置 HTTP server、作用 Agent、Headers、环境变量和规划阶段可用性。</p></div><button class="icon-button" data-open-sheet="mcp-editor">＋</button></div>
+          </div>
+          <div class="settings-list">
+            <div class="settings-item"><span class="settings-item-icon">M</span><div><strong>serena</strong><span>已启用 · 规划可用 · Claude Code / Codex · 1 Header · 2 环境变量</span></div><button class="icon-button" data-open-sheet="mcp-editor">›</button></div>
+            <div class="settings-item"><span class="settings-item-icon">W</span><div><strong>web-search</strong><span>已禁用 · 规划不可用 · Codex · 0 Headers · 1 环境变量</span></div><button class="icon-button" data-open-sheet="mcp-editor">›</button></div>
+          </div>
+        </div>
+      </main>
+      <footer class="footer">
+        <button class="primary-action" data-toast="系统设置已模拟保存。">保存当前设置</button>
+      </footer>
+    </section>
+
+    <div class="sheet" data-sheet="node-editor">
+      <div class="sheet-panel">
+        <div class="sheet-handle"></div>
+        <header class="sheet-header"><strong>生成 Brief</strong><button class="icon-button" data-close-sheet>×</button></header>
+        <div class="sheet-body">
+          <div class="split-row">
+            <div class="field"><label>模型</label><select><option>Agent 默认模型</option><option>gpt-5.4</option></select></div>
+            <div class="field"><label>推理等级</label><select><option>medium</option><option>high</option></select></div>
+          </div>
+          <div class="field"><label>标题</label><input value="生成 Brief" /></div>
+          <div class="field"><label>输出契约</label><select><option>HTML</option><option>结构化 JSON</option><option>Artifact 文件</option></select></div>
+          <div class="field"><label>Prompt</label><textarea>你是资深 campaign strategist。根据用户输入和素材，输出清晰、可执行、可发布的 brief。</textarea></div>
+          <div class="split-row">
+            <button class="primary-action secondary" data-open-sheet="prompt-assistant">生成提示词</button>
+            <button class="primary-action" data-close-sheet data-toast="节点配置已模拟保存。">保存节点</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="sheet" data-sheet="add-node">
+      <div class="sheet-panel">
+        <div class="sheet-handle"></div>
+        <header class="sheet-header"><strong>添加节点</strong><button class="icon-button" data-close-sheet>×</button></header>
+        <div class="sheet-body stack">
+          <button class="option-card"><span class="option-icon">I</span><span><strong>用户输入</strong><span>一个 workflow 最多一个，当前已存在。</span></span></button>
+          <button class="option-card selected"><span class="option-icon">✦</span><span><strong>生成</strong><span>调用应用 Agent 产出文本、HTML 或文件。</span></span></button>
+          <button class="option-card"><span class="option-icon">?</span><span><strong>判断</strong><span>根据 LLM 判断选择分支。</span></span></button>
+          <button class="option-card"><span class="option-icon">□</span><span><strong>输出</strong><span>最终 HTML 展示节点，当前已存在。</span></span></button>
+          <button class="option-card"><span class="option-icon">＋</span><span><strong>素材</strong><span>文本、URL、文件或画板。</span></span></button>
+        </div>
+      </div>
+    </div>
+
+    <div class="sheet" data-sheet="ai-plan">
+      <div class="sheet-panel">
+        <div class="sheet-handle"></div>
+        <header class="sheet-header"><strong>确认 AI 改造方案</strong><button class="icon-button" data-close-sheet>×</button></header>
+        <div class="sheet-body stack">
+          <div class="notice neutral">目标：加入竞品素材，强化市场页输出，并保持现有输入与输出节点。</div>
+          <div class="panel card"><h3>图结构改动</h3><p>新增 1 个素材节点；更新 2 个 prompt；输出契约保持 HTML。</p></div>
+          <div class="panel card">
+            <h3>模型追问</h3>
+            <p>竞品素材来自文件、URL，还是用户手动输入？</p>
+            <div class="stack" style="margin-top:10px;">
+              <button class="option-card selected"><span class="option-icon">✓</span><span><strong>URL 列表</strong><span>推荐，适合快速验证。</span></span></button>
+              <button class="option-card"><span class="option-icon">F</span><span><strong>文件上传</strong><span>适合内部文档。</span></span></button>
+            </div>
+          </div>
+          <div class="field"><label>补充需求</label><textarea placeholder="例如：竞品 URL、希望新增的字段、输出 HTML 的风格要求">竞品 URL 先用公开市场页，输出强调定位、差异点和 CTA。</textarea></div>
+          <div class="field"><label>素材 URL</label><input value="https://example.com/competitor-a, https://example.com/competitor-b" /></div>
+          <div class="split-row">
+            <button class="primary-action secondary" data-toast="已重新生成一版模拟方案。">重新生成</button>
+            <button class="primary-action" data-close-sheet data-toast="方案已应用到静态画布。">应用方案</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="sheet" data-sheet="prompt-assistant">
+      <div class="sheet-panel">
+        <div class="sheet-handle"></div>
+        <header class="sheet-header"><strong>Prompt Assistant</strong><button class="icon-button" data-close-sheet>×</button></header>
+        <div class="sheet-body stack">
+          <div class="composer"><input value="让提示词更稳定地产出 HTML" /><button data-toast="已发送模拟请求。">↑</button></div>
+          <div class="panel card">
+            <h3>追问</h3>
+            <p>HTML 输出需要偏营销页、报告页，还是 dashboard card？</p>
+            <button class="option-card selected"><span class="option-icon">A</span><span><strong>营销页</strong><span>有 section、CTA 和价值主张。</span></span></button>
+            <button class="option-card"><span class="option-icon">B</span><span><strong>报告页</strong><span>以摘要、证据和结论为主。</span></span></button>
+          </div>
+          <button class="primary-action" data-close-sheet data-toast="提示词已模拟应用。">提交并应用提示词</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="sheet" data-sheet="ask-user">
+      <div class="sheet-panel">
+        <div class="sheet-handle"></div>
+        <header class="sheet-header"><strong>需要补充选择</strong><button class="icon-button" data-close-sheet>×</button></header>
+        <div class="sheet-body stack">
+          <div class="notice neutral">渠道判断需要确认首发平台，提交后继续模拟运行。</div>
+          <button class="option-card selected"><span class="option-icon">A</span><span><strong>Product Hunt + LinkedIn</strong><span>更适合 B2B SaaS launch。</span></span></button>
+          <button class="option-card"><span class="option-icon">B</span><span><strong>Twitter / X</strong><span>更适合创作者和开发者扩散。</span></span></button>
+          <div class="field"><label>自定义选择</label><input placeholder="也可以直接输入其他渠道组合" /></div>
+          <div class="field"><label>补充说明</label><textarea placeholder="可选">首发优先 Product Hunt，LinkedIn 用于创始人账号同步分发。</textarea></div>
+          <button class="primary-action secondary" data-toast="已模拟添加附件。">＋ 添加附件</button>
+          <button class="primary-action" data-screen-target="run-result" data-toast="选择已提交，模拟运行完成。">提交并继续</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="sheet" data-sheet="run-settings">
+      <div class="sheet-panel">
+        <div class="sheet-handle"></div>
+        <header class="sheet-header"><strong>运行设置</strong><button class="icon-button" data-close-sheet>×</button></header>
+        <div class="sheet-body">
+          <div class="field"><label>Agent</label><select><option>Codex</option><option>Claude Code</option></select></div>
+          <div class="field"><label>统一模型</label><select><option>Agent 默认模型</option><option>gpt-5.4</option></select></div>
+          <div class="field"><label>禁用 Tools</label><input value="web_search, shell_exec" /></div>
+          <button class="primary-action" data-close-sheet data-toast="运行设置已模拟保存。">保存运行设置</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="sheet" data-sheet="history">
+      <div class="sheet-panel">
+        <div class="sheet-handle"></div>
+        <header class="sheet-header"><strong>运行历史</strong><button class="icon-button" data-close-sheet>×</button></header>
+        <div class="sheet-body timeline">
+          <button class="option-card" data-screen-target="run-result"><span class="option-icon">✓</span><span><strong>Campaign Brief Builder</strong><span>历史运行 · 成功 · 2026-07-03 10:21</span></span></button>
+          <button class="option-card" data-screen-target="run-live"><span class="option-icon">!</span><span><strong>Campaign Brief Builder</strong><span>历史运行 · 失败 · 可修复运行</span></span></button>
+        </div>
+      </div>
+    </div>
+
+    <div class="sheet" data-sheet="app-page-menu">
+      <div class="sheet-panel">
+        <div class="sheet-handle"></div>
+        <header class="sheet-header"><strong>应用操作</strong><button class="icon-button" data-close-sheet>×</button></header>
+        <div class="sheet-body stack">
+          <button class="option-card" data-screen-target="edit-canvas">
+            <span class="option-icon">✎</span>
+            <span><strong>编辑</strong><span>进入画布调整应用流程。</span></span>
+          </button>
+          <button class="option-card" data-open-sheet="history">
+            <span class="option-icon">↺</span>
+            <span><strong>历史运行</strong><span>查看最近的运行结果和失败记录。</span></span>
+          </button>
+          <button class="option-card" data-open-sheet="run-settings">
+            <span class="option-icon">⚙</span>
+            <span><strong>运行设置</strong><span>调整本应用运行时 Agent、模型和 Tools。</span></span>
+          </button>
+          <button class="option-card" data-screen-target="settings">
+            <span class="option-icon">G</span>
+            <span><strong>全局设置</strong><span>进入全局 Agent、Prompt、Skills、MCP 配置。</span></span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div class="sheet" data-sheet="account-menu">
+      <div class="sheet-panel">
+        <div class="sheet-handle"></div>
+        <header class="sheet-header"><strong>sunflower</strong><button class="icon-button" data-close-sheet>×</button></header>
+        <div class="sheet-body stack">
+          <div class="notice neutral">当前登录用户 · 迷你AI应用工作区</div>
+          <button class="primary-action secondary" data-screen-target="login">退出登录</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="sheet" data-sheet="app-actions">
+      <div class="sheet-panel">
+        <div class="sheet-handle"></div>
+        <header class="sheet-header"><strong>应用操作</strong><button class="icon-button" data-close-sheet>×</button></header>
+        <div class="sheet-body stack">
+          <button class="option-card" data-action-visible="mine" data-open-sheet="rename-app">
+            <span class="option-icon">T</span>
+            <span><strong>重命名</strong><span>修改当前应用在列表中的显示名称。</span></span>
+          </button>
+          <button class="option-card" data-action-visible="mine" data-open-sheet="delete-app">
+            <span class="option-icon">!</span>
+            <span><strong>删除</strong><span>删除前需要再次确认。</span></span>
+          </button>
+          <button class="option-card" data-action-visible="market" data-screen-target="run-idle">
+            <span class="option-icon">▶</span>
+            <span><strong>运行</strong><span>进入当前应用的运行页。</span></span>
+          </button>
+          <button class="option-card" data-action-visible="market" data-open-sheet="clone">
+            <span class="option-icon">⧉</span>
+            <span><strong>克隆</strong><span>创建一份当前用户可编辑的草稿。</span></span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div class="sheet" data-sheet="rename-app">
+      <div class="sheet-panel">
+        <div class="sheet-handle"></div>
+        <header class="sheet-header"><strong>重命名应用</strong><button class="icon-button" data-close-sheet>×</button></header>
+        <div class="sheet-body">
+          <div class="field">
+            <label>应用名称</label>
+            <input value="Campaign Brief Builder" aria-label="应用名称" />
+          </div>
+          <button class="primary-action" data-close-sheet data-toast="应用名称已模拟更新。">保存名称</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="sheet" data-sheet="delete-app">
+      <div class="sheet-panel">
+        <div class="sheet-handle"></div>
+        <header class="sheet-header"><strong>删除应用？</strong><button class="icon-button" data-close-sheet>×</button></header>
+        <div class="sheet-body stack">
+          <div class="notice neutral">删除会从我的应用中移除当前应用；如果已有运行记录，会保留历史数据。</div>
+          <div class="split-row">
+            <button class="primary-action secondary" data-close-sheet>取消</button>
+            <button class="primary-action danger" data-close-sheet data-toast="应用已模拟删除。">确认删除</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="sheet" data-sheet="editor-menu">
+      <div class="sheet-panel">
+        <div class="sheet-handle"></div>
+        <header class="sheet-header"><strong>应用菜单</strong><button class="icon-button" data-close-sheet>×</button></header>
+        <div class="sheet-body stack">
+          <button class="option-card" data-screen-target="publish"><span class="option-icon">☁</span><span><strong>发布</strong><span>公开、仅运行或私有。</span></span></button>
+          <button class="option-card" data-screen-target="versions"><span class="option-icon">↧</span><span><strong>历史版本</strong><span>创建快照、克隆版本。</span></span></button>
+          <button class="option-card" data-screen-target="settings"><span class="option-icon">⚙</span><span><strong>系统设置</strong><span>全局 Agent、Prompt、Skills、MCP。</span></span></button>
+        </div>
+      </div>
+    </div>
+
+    <div class="sheet" data-sheet="clone">
+      <div class="sheet-panel">
+        <div class="sheet-handle"></div>
+        <header class="sheet-header"><strong>克隆应用</strong><button class="icon-button" data-close-sheet>×</button></header>
+        <div class="sheet-body stack">
+          <div class="notice neutral">克隆会创建当前用户草稿，并清空 graph 中的 agent_session_id。</div>
+          <button class="primary-action" data-screen-target="edit-canvas" data-toast="已创建静态草稿。">克隆并编辑</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="sheet" data-sheet="prompt-editor">
+      <div class="sheet-panel">
+        <div class="sheet-handle"></div>
+        <header class="sheet-header"><strong>编辑提示词 · Prompt Assistant</strong><button class="icon-button" data-close-sheet>×</button></header>
+        <div class="sheet-body stack">
+          <div class="notice neutral">key: prompt_assistant · 变量：$prompt / $node / $context · 更新：07-05 22:32</div>
+          <div class="field"><label>描述</label><input value="帮助用户稳定生成和改写节点 Prompt" /></div>
+          <div class="field"><label>Prompt Template</label><textarea>你是 Mira 的 Prompt Assistant。必须输出严格 JSON，并在信息不足时使用 ask_user。
+
+输入：
+- 当前节点：$node
+- 用户目标：$prompt
+- 上下文：$context
+
+输出必须包含可直接应用的 prompt_patch。</textarea></div>
+          <div class="split-row">
+            <button class="primary-action secondary" data-close-sheet>取消</button>
+            <button class="primary-action" data-close-sheet data-toast="提示词已模拟保存并同步。">保存并同步</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="sheet" data-sheet="skill-preview">
+      <div class="sheet-panel">
+        <div class="sheet-handle"></div>
+        <header class="sheet-header"><strong>Skill 预览</strong><button class="icon-button" data-close-sheet>×</button></header>
+        <div class="sheet-body stack">
+          <div class="notice neutral">design-md.zip · 46.2 KB · 已启用 · 规划可用</div>
+          <div class="code-box"># design-md
+
+用于参考品牌设计系统，输出 UI 规则、色彩、排版、组件和响应式建议。
+
+## Usage
+- 对齐现有产品气质
+- 生成前端页面视觉方案
+- 检查组件一致性</div>
+          <div class="settings-item"><span class="settings-item-icon">E</span><div><strong>启用 Skill</strong><span>关闭后普通运行不会注入该技能包。</span></div><span class="toggle"></span></div>
+          <div class="settings-item"><span class="settings-item-icon">P</span><div><strong>规划阶段可用</strong><span>允许 NL compile、Prompt Assistant 和 ask_user preflight 使用。</span></div><span class="toggle"></span></div>
+          <button class="primary-action" data-close-sheet data-toast="Skill 设置已模拟保存。">保存 Skill 设置</button>
+          <button class="primary-action danger" data-close-sheet data-toast="Skill 已模拟删除。">删除 Skill</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="sheet" data-sheet="mcp-editor">
+      <div class="sheet-panel">
+        <div class="sheet-handle"></div>
+        <header class="sheet-header"><strong>MCP Server</strong><button class="icon-button" data-close-sheet>×</button></header>
+        <div class="sheet-body stack">
+          <div class="field"><label>名称</label><input value="serena" /></div>
+          <div class="field"><label>HTTP URL</label><input value="http://localhost:9121/mcp" /></div>
+          <div class="field"><label>作用 Agent</label><select><option>Claude Code / Codex</option><option>Claude Code</option><option>Codex</option></select></div>
+          <div class="settings-item"><span class="settings-item-icon">P</span><div><strong>规划阶段可用</strong><span>允许 NL compile、Prompt Assistant 和 ask_user preflight 使用</span></div><span class="toggle"></span></div>
+          <div class="field"><label>Headers</label><input value="Authorization: Bearer ${SERENA_TOKEN}" /></div>
+          <div class="field"><label>环境变量名</label><input value="SERENA_TOKEN, SERENA_WORKSPACE" /></div>
+          <div class="settings-item"><span class="settings-item-icon">E</span><div><strong>启用 MCP</strong><span>关闭后普通运行不会注入该 HTTP server。</span></div><span class="toggle"></span></div>
+          <div class="split-row">
+            <button class="primary-action secondary" data-close-sheet>取消</button>
+            <button class="primary-action" data-close-sheet data-toast="MCP 配置已模拟保存。">保存 MCP</button>
+          </div>
+          <button class="primary-action danger" data-close-sheet data-toast="MCP 已模拟删除。">删除 MCP</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="sheet" data-sheet="trace">
+      <div class="sheet-panel">
+        <div class="sheet-handle"></div>
+        <header class="sheet-header"><strong>Trace · 生成 Brief</strong><button class="icon-button" data-close-sheet>×</button></header>
+        <div class="sheet-body stack">
+          <div class="metric-grid">
+            <div class="panel card"><h3>状态</h3><p>运行中 · generate</p></div>
+            <div class="panel card"><h3>耗时</h3><p>8.2s · session a13f</p></div>
+          </div>
+          <div class="panel card">
+            <h3>实际 Prompt</h3>
+            <div class="code-box">你是资深 campaign strategist。根据用户输入和素材，输出清晰、可执行、可发布的 HTML brief。</div>
+          </div>
+          <div class="panel card">
+            <h3>上下文与输入</h3>
+            <div class="code-box">{
+  "user_input": "为一个面向 B2B SaaS 的 AI workflow 产品写 launch brief",
+  "assets": ["pricing.md", "positioning-notes.txt"]
+}</div>
+          </div>
+          <div class="panel card">
+            <h3>Agent 过程</h3>
+            <div class="code-box">thinking: map audience segments
+tool_call: read_file pricing.md
+tool_result: 8 claims extracted
+delta: drafting HTML section</div>
+          </div>
+          <div class="panel card">
+            <h3>最终结果</h3>
+            <div class="code-box">{"html":"&lt;section&gt;Launch Brief...&lt;/section&gt;"}</div>
+          </div>
+          <div class="panel card">
+            <div class="panel-head"><div><h3>Artifacts</h3><p>brief.html · launch-assets.zip</p></div><span class="badge green">2 files</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="sheet" data-sheet="create-version">
+      <div class="sheet-panel">
+        <div class="sheet-handle"></div>
+        <header class="sheet-header"><strong>创建快照</strong><button class="icon-button" data-close-sheet>×</button></header>
+        <div class="sheet-body">
+          <div class="field"><label>备注</label><input placeholder="例如：移动端重构前" /></div>
+          <button class="primary-action" data-close-sheet data-toast="快照已模拟创建。">创建版本</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  </div>
+
+  <script>
+    const screens = Array.from(document.querySelectorAll('[data-screen]'));
+    const sheets = Array.from(document.querySelectorAll('[data-sheet]'));
+    const homeMain = document.querySelector('[data-home-main]');
+    const homeCreateFooter = document.querySelector('[data-home-create-footer]');
+    const refreshIndicator = document.querySelector('[data-refresh-indicator]');
+    const toast = document.getElementById('toast');
+    let toastTimer;
+    let pullStartY = 0;
+    let pullDistance = 0;
+    let touchCurrentY = 0;
+    let pullingHomeList = false;
+
+    const screenTitles = {
+      login: 'Mira Mobile H5 Prototype',
+      home: 'Mira · Home',
+      'run-idle': 'Mira · Run',
+      'run-live': 'Mira · Running',
+      'run-result': 'Mira · Result',
+      'edit-canvas': 'Mira · Canvas',
+      'ai-flow': 'Mira · AI Flow',
+      publish: 'Mira · Publish',
+      versions: 'Mira · Versions',
+      settings: 'Mira · Settings',
+    };
+
+    const homePageSize = 4;
+    const appListState = {
+      'my-apps': { page: 1, loading: false },
+      recent: { page: 1, loading: false },
+      market: { page: 1, loading: false },
+    };
+
+    const appListData = {
+      'my-apps': [
+        { title: 'Campaign Brief Builder', desc: '从用户输入和素材生成结构化 campaign brief，并输出 HTML 预览。', badges: ['草稿', '5 nodes'], tone: '', kind: 'mine' },
+        { title: 'Research Digest', desc: '输入主题，生成摘要、风险点和引用检查清单。', badges: ['已发布', 'run only'], tone: 'alt', kind: 'mine' },
+        { title: 'Customer Email Studio', desc: '根据客户阶段生成跟进邮件、CTA 和 A/B subject。', badges: ['草稿', '4 nodes'], tone: 'warm', kind: 'mine' },
+        { title: 'Sales Call Recap', desc: '整理通话纪要，提取风险、下一步和 CRM 更新建议。', badges: ['私有', '6 nodes'], tone: '', kind: 'mine' },
+        { title: 'Support Macro Writer', desc: '把工单上下文转成客服回复和知识库更新草稿。', badges: ['草稿', '3 nodes'], tone: 'alt', kind: 'mine' },
+        { title: 'Launch Checklist', desc: '按目标市场生成上线检查清单和 owner 分配。', badges: ['已发布', '5 nodes'], tone: 'warm', kind: 'mine' },
+        { title: 'Meeting Follow-up', desc: '把会议输入转成行动项、邮件和项目状态摘要。', badges: ['草稿', '4 nodes'], tone: '', kind: 'mine' },
+      ],
+      recent: [
+        { title: 'Campaign Brief Builder', desc: '最近运行过的应用，点击卡片进入运行页。', badges: ['最近运行', '5 nodes'], tone: '' },
+        { title: 'Research Digest', desc: '最近运行过的应用，点击卡片进入运行页。', badges: ['最近运行', 'run only'], tone: 'alt' },
+        { title: 'Landing Page Writer', desc: '最近运行过的市场应用，点击卡片进入运行页。', badges: ['最近运行', '市场'], tone: 'warm' },
+        { title: 'Sales Call Recap', desc: '昨天运行，用于整理销售电话和下一步。', badges: ['最近运行', '成功'], tone: '' },
+        { title: 'Support Macro Writer', desc: '本周运行，用于生成客服宏和知识库草稿。', badges: ['最近运行', '成功'], tone: 'alt' },
+        { title: 'Launch Checklist', desc: '上次运行生成了上线前检查事项。', badges: ['最近运行', '成功'], tone: 'warm' },
+        { title: 'Meeting Follow-up', desc: '最近运行生成了会议后续动作。', badges: ['最近运行', '成功'], tone: '' },
+      ],
+      market: [
+        { title: 'Landing Page Writer', desc: '根据定位自动生成落地页文案和 HTML section。', badges: ['市场', '3 nodes'], tone: 'warm', kind: 'market' },
+        { title: 'Product FAQ Builder', desc: '从产品说明生成 FAQ、限制条件和客服提示。', badges: ['市场', '4 nodes'], tone: '', kind: 'market' },
+        { title: 'Investor Update Draft', desc: '生成投资人月报结构、指标摘要和风险说明。', badges: ['市场', '5 nodes'], tone: 'alt', kind: 'market' },
+        { title: 'SEO Cluster Planner', desc: '按关键词生成内容集群、页面目标和内部链接建议。', badges: ['市场', '6 nodes'], tone: 'warm', kind: 'market' },
+        { title: 'Hiring Scorecard', desc: '根据岗位描述生成面试问题和评分 rubrics。', badges: ['市场', '4 nodes'], tone: '', kind: 'market' },
+        { title: 'Changelog Writer', desc: '把功能清单转成用户可读的发布说明。', badges: ['市场', '3 nodes'], tone: 'alt', kind: 'market' },
+        { title: 'Competitive Battlecard', desc: '生成竞品对比、异议处理和销售话术。', badges: ['市场', '5 nodes'], tone: 'warm', kind: 'market' },
+      ],
+    };
+
+    function closeSheets() {
+      sheets.forEach((sheet) => sheet.classList.remove('active'));
+    }
+
+    function showToast(message) {
+      if (!message) return;
+      window.clearTimeout(toastTimer);
+      toast.textContent = message;
+      toast.classList.add('active');
+      toastTimer = window.setTimeout(() => toast.classList.remove('active'), 1800);
+    }
+
+    function activeHomeTab() {
+      return document.querySelector('[data-tabs] [data-tab].active')?.dataset.tab || 'my-apps';
+    }
+
+    function escapeHTML(value) {
+      return String(value).replace(/[&<>"']/g, (char) => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;',
+      }[char]));
+    }
+
+    function renderAppCard(app) {
+      const toneClass = app.tone ? ` ${app.tone}` : '';
+      const actions = app.kind
+        ? `<button class="app-menu-button" data-open-sheet="app-actions" data-actions-kind="${app.kind}" aria-label="应用操作">⋯</button>`
+        : '';
+      return `
+          <article class="app-card${toneClass}" data-screen-target="run-idle">
+            ${actions}
+            <div class="app-card-inner">
+              <div class="badge-row">${app.badges.map((badge) => `<span class="badge">${escapeHTML(badge)}</span>`).join('')}</div>
+              <h3>${escapeHTML(app.title)}</h3>
+              <p>${escapeHTML(app.desc)}</p>
+            </div>
+          </article>`;
+    }
+
+    function renderAppList(tabName) {
+      const panel = document.querySelector(`[data-panel="${tabName}"]`);
+      if (!panel) return;
+      const state = appListState[tabName];
+      const apps = appListData[tabName] || [];
+      const visibleApps = apps.slice(0, state.page * homePageSize);
+      const hasMore = visibleApps.length < apps.length;
+      const loadText = state.loading ? '正在加载更多应用…' : (hasMore ? '上拉加载更多' : '没有更多应用了');
+      panel.innerHTML = `${visibleApps.map(renderAppCard).join('')}
+        <div class="load-more${hasMore ? '' : ' done'}" data-load-more>${loadText}</div>`;
+    }
+
+    function renderHomeLists() {
+      Object.keys(appListState).forEach(renderAppList);
+    }
+
+    function loadNextHomePage(tabName = activeHomeTab()) {
+      const state = appListState[tabName];
+      const apps = appListData[tabName] || [];
+      if (!state || state.loading || state.page * homePageSize >= apps.length) return;
+      state.loading = true;
+      renderAppList(tabName);
+      window.setTimeout(() => {
+        state.page += 1;
+        state.loading = false;
+        renderAppList(tabName);
+      }, 260);
+    }
+
+    function refreshHomeTab(tabName = activeHomeTab()) {
+      appListState[tabName].page = 1;
+      appListState[tabName].loading = false;
+      renderAppList(tabName);
+      if (homeMain) homeMain.scrollTop = 0;
+      showToast('列表已刷新。');
+    }
+
+    function updateRefreshIndicator(active, text = '下拉刷新') {
+      if (!refreshIndicator) return;
+      refreshIndicator.textContent = text;
+      refreshIndicator.classList.toggle('active', active);
+    }
+
+    function showScreen(name, options = {}) {
+      if (!screens.some((screen) => screen.dataset.screen === name)) return;
+      screens.forEach((screen) => {
+        screen.classList.toggle('active', screen.dataset.screen === name);
+      });
+      closeSheets();
+      document.title = screenTitles[name] || screenTitles.home;
+      if (!options.skipHash) {
+        window.history.replaceState(null, '', `#${name}`);
+      }
+    }
+
+    function openSheet(name) {
+      closeSheets();
+      const sheet = document.querySelector(`[data-sheet="${name}"]`);
+      if (sheet) sheet.classList.add('active');
+    }
+
+    function configureAppActions(kind) {
+      document.querySelectorAll('[data-action-visible]').forEach((item) => {
+        const visibleKinds = item.dataset.actionVisible.split(/\s+/);
+        item.hidden = !visibleKinds.includes(kind);
+      });
+    }
+
+    function switchEditorTab(tabName) {
+      document.querySelectorAll('[data-editor-tab]').forEach((button) => {
+        button.classList.toggle('active', button.dataset.editorTab === tabName && button.closest('[data-editor-tabs]'));
+      });
+      document.querySelectorAll('[data-editor-panel]').forEach((panel) => {
+        panel.hidden = panel.dataset.editorPanel !== tabName;
+      });
+    }
+
+    document.addEventListener('click', (event) => {
+      const target = event.target.closest('[data-screen-target], [data-open-sheet], [data-close-sheet], [data-toast], [data-start-run], .sheet, .option-card, [data-tab], [data-settings-tab], [data-editor-tab]');
+      if (!target) return;
+
+      if (target.matches('[data-editor-tab]')) {
+        switchEditorTab(target.dataset.editorTab);
+        return;
+      }
+
+      if (target.matches('[data-settings-tab]')) {
+        const tabName = target.dataset.settingsTab;
+        const group = target.closest('[data-settings-tabs]');
+        group.querySelectorAll('[data-settings-tab]').forEach((button) => {
+          button.classList.toggle('active', button === target);
+        });
+        document.querySelectorAll('[data-settings-panel]').forEach((panel) => {
+          const active = panel.dataset.settingsPanel === tabName;
+          panel.hidden = !active;
+        });
+      }
+
+      if (target.matches('[data-tab]')) {
+        const tabName = target.dataset.tab;
+        const group = target.closest('[data-tabs]');
+        group.querySelectorAll('[data-tab]').forEach((button) => {
+          button.classList.toggle('active', button === target);
+        });
+        document.querySelectorAll('.tab-panel').forEach((panel) => {
+          const active = panel.dataset.panel === tabName;
+          panel.hidden = !active;
+          panel.classList.toggle('active', active);
+        });
+        if (homeCreateFooter) {
+          homeCreateFooter.hidden = tabName !== 'my-apps';
+        }
+        if (homeMain) homeMain.scrollTop = 0;
+      }
+
+      if (target.matches('.option-card')) {
+        const list = target.parentElement;
+        if (list) {
+          list.querySelectorAll(':scope > .option-card').forEach((card) => card.classList.remove('selected'));
+          target.classList.add('selected');
+        }
+      }
+
+      if (target.matches('[data-close-sheet]')) {
+        closeSheets();
+      }
+
+      if (target.matches('.sheet') && target === event.target) {
+        closeSheets();
+      }
+
+      if (target.dataset.openSheet) {
+        if (target.dataset.openSheet === 'app-actions') {
+          configureAppActions(target.dataset.actionsKind || 'mine');
+        }
+        openSheet(target.dataset.openSheet);
+        return;
+      }
+
+      if (target.matches('[data-start-run]')) {
+        const runInput = document.querySelector('[data-run-input]');
+        if (runInput && !runInput.value.trim()) {
+          runInput.focus();
+          showToast('请先填写运行输入。');
+          return;
+        }
+        showScreen('run-live');
+        showToast('已启动模拟运行，不会请求后端。');
+        return;
+      }
+
+      if (target.dataset.screenTarget) {
+        showScreen(target.dataset.screenTarget);
+      }
+
+      if (target.dataset.toast) {
+        showToast(target.dataset.toast);
+      }
+    });
+
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') closeSheets();
+    });
+
+    if (homeMain) {
+      homeMain.addEventListener('scroll', () => {
+        if (document.querySelector('.screen.active')?.dataset.screen !== 'home') return;
+        const nearBottom = homeMain.scrollTop + homeMain.clientHeight >= homeMain.scrollHeight - 48;
+        if (nearBottom) loadNextHomePage();
+      });
+
+      homeMain.addEventListener('touchstart', (event) => {
+        if (document.querySelector('.screen.active')?.dataset.screen !== 'home') return;
+        pullStartY = event.touches[0].clientY;
+        touchCurrentY = pullStartY;
+        pullDistance = 0;
+        pullingHomeList = homeMain.scrollTop <= 0;
+      }, { passive: true });
+
+      homeMain.addEventListener('touchmove', (event) => {
+        touchCurrentY = event.touches[0].clientY;
+        if (!pullingHomeList) return;
+        pullDistance = Math.max(0, touchCurrentY - pullStartY);
+        if (pullDistance > 10 && homeMain.scrollTop <= 0) {
+          event.preventDefault();
+          updateRefreshIndicator(true, pullDistance > 68 ? '松开刷新' : '下拉刷新');
+        }
+      }, { passive: false });
+
+      homeMain.addEventListener('touchend', () => {
+        const wasPullingHomeList = pullingHomeList;
+        if (wasPullingHomeList && pullDistance > 68) {
+          refreshHomeTab();
+        }
+        if (!wasPullingHomeList) {
+          const atBottom = homeMain.scrollTop + homeMain.clientHeight >= homeMain.scrollHeight - 48;
+          const pulledUp = pullStartY - touchCurrentY > 40;
+          if (atBottom && pulledUp) loadNextHomePage();
+        }
+        pullingHomeList = false;
+        pullDistance = 0;
+        updateRefreshIndicator(false);
+      });
+    }
+
+    function bootFromUrl() {
+      const params = new URLSearchParams(window.location.search);
+      const hashScreen = (window.location.hash || '').replace(/^#\/?/, '').split('?')[0];
+      const requested = hashScreen || params.get('screen') || 'login';
+      showScreen(requested, { skipHash: true });
+      if (params.get('sheet')) openSheet(params.get('sheet'));
+    }
+
+    window.addEventListener('hashchange', bootFromUrl);
+    renderHomeLists();
+    bootFromUrl();
+  </script>
+</body>
+</html>
