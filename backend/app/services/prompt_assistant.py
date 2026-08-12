@@ -646,7 +646,7 @@ def build_prompt_assistant_prompt(
 	- output_contract 可选形状：
 	  - {"type":"json","json_schema":{"type":"object","additionalProperties":false,"properties":{...},"required":[...]}}
 	  - {"type":"html"}
-	  - {"type":"artifact","artifact_kind":"image|code|html|markdown|csv|excel|docx|ppt|pdf|archive|file"}
+	  - {"type":"artifact","artifact_kind":"image|code|html|markdown|csv|excel|docx|ppt|pdf|archive|zip|file","validate_office_documents":true|false（可选）}
 	- 自由文本是默认选择；普通写作、总结、分析、推荐、草稿和说明类节点不需要 output_contract，返回 null。
 	- 只有用户明确要求 JSON、结构化字段、固定字段，或下游明显需要机器读取字段时，才建议 json，并给出 strict object JSON Schema：根 type 必须是 object，additionalProperties 必须是 false，required 必须包含所有 properties 字段。
 	- 只有用户明确要求当前 generate 节点直接产出可嵌入预览的 HTML 片段时，才建议 html；最终展示通常由 output 节点负责，不要为了“好看”给中间 generate 节点套 html。
@@ -839,6 +839,9 @@ def _clean_output_contract(value: Any) -> dict[str, Any] | None:
         max_count = value.get("max_count")
         if isinstance(max_count, int) and not isinstance(max_count, bool):
             cleaned["max_count"] = max_count
+        validate_office = value.get("validate_office_documents")
+        if isinstance(validate_office, bool):
+            cleaned["validate_office_documents"] = validate_office
     error = validate_output_contract_config(
         {"id": "prompt_assistant", "type": "generate", "title": "提示词助手", "output_contract": cleaned}
     )

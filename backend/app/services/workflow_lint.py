@@ -201,6 +201,27 @@ def lint_workflow(
 
     for node_id, node in by_id.items():
         node_type = node.get("type")
+        if "ask_user_enabled" in node:
+            if node_type != "generate":
+                issues.append(
+                    _issue(
+                        "error",
+                        "ask_user_enabled_unsupported",
+                        "运行前追问配置不受支持",
+                        f"节点「{_label(node)}」只有 generate 支持 ask_user_enabled",
+                        node_id=node_id,
+                    )
+                )
+            elif not isinstance(node.get("ask_user_enabled"), bool):
+                issues.append(
+                    _issue(
+                        "error",
+                        "ask_user_enabled_invalid",
+                        "运行前追问配置非法",
+                        f"节点「{_label(node)}」ask_user_enabled 必须是 bool",
+                        node_id=node_id,
+                    )
+                )
         contract_error = validate_output_contract_config(node)
         if contract_error:
             issues.append(_issue("error", "output_contract_invalid", "输出契约配置非法", contract_error, node_id=node_id))

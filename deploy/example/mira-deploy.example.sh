@@ -21,6 +21,10 @@ UV_CACHE_DIR="$DEPLOY_ROOT/.uv-cache"
 
 BACKEND_PID="$RUN_DIR/backend.pid"
 NGINX_CONF="$NGINX_PREFIX/conf/nginx.conf"
+OFFICE_VALIDATOR_USER="mira-office-validator"
+OFFICE_VALIDATOR_GROUP="mira-office-validator"
+OFFICE_SANDBOX_HELPER="/usr/local/libexec/mira-office-sandbox"
+OFFICE_SANDBOX_SUDOERS="/etc/sudoers.d/mira-office-sandbox"
 
 need_cmd() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -254,6 +258,140 @@ prepare_backend() {
   )
 }
 
+as_root() {
+  if [ "$(id -u)" -eq 0 ]; then
+    "$@"
+  else
+    sudo "$@"
+  fi
+}
+
+install_office_sandbox() {
+  need_cmd sudo
+  need_cmd setfacl
+  need_cmd pdfinfo
+  if ! command -v libreoffice >/dev/null 2>&1 && ! command -v soffice >/dev/null 2>&1; then
+    echo "[mira-deploy] missing command: libreoffice or soffice" >&2
+    return 1
+  fi
+  helper_source="$BACKEND_DEPLOY/scripts/mira_office_sandbox.py"
+  if [ ! -f "$helper_source" ]; then
+    echo "[mira-deploy] missing Office sandbox helper source: $helper_source" >&2
+    return 1
+  fi
+
+  if ! getent group "$OFFICE_VALIDATOR_GROUP" >/dev/null 2>&1; then
+    as_root /usr/sbin/groupadd --system "$OFFICE_VALIDATOR_GROUP"
+  fi
+  if ! getent passwd "$OFFICE_VALIDATOR_USER" >/dev/null 2>&1; then
+    as_root /usr/sbin/useradd \
+      --system \
+      --gid "$OFFICE_VALIDATOR_GROUP" \
+      --no-create-home \
+      --home-dir /nonexistent \
+      --shell /usr/sbin/nologin \
+      "$OFFICE_VALIDATOR_USER"
+  fi
+  if [ "$(id -gn "$OFFICE_VALIDATOR_USER")" != "$OFFICE_VALIDATOR_GROUP" ]; then
+    echo "[mira-deploy] Office validator has an unexpected primary group" >&2
+    return 1
+  fi
+  validator_groups=$(id -Gn "$OFFICE_VALIDATOR_USER")
+  if [ "$validator_groups" != "$OFFICE_VALIDATOR_GROUP" ]; then
+    echo "[mira-deploy] Office validator must not belong to supplementary groups: $validator_groups" >&2
+    return 1
+  fi
+
+  as_root /usr/bin/install -d -o root -g root -m 0755 /usr/local/libexec
+  as_root /usr/bin/install -o root -g root -m 0755 "$helper_source" "$OFFICE_SANDBOX_HELPER"
+
+  deploy_user=$(id -un)
+  case "$deploy_user" in
+    ""|*[!A-Za-z0-9_-]*)
+      echo "[mira-deploy] unsupported deploy username for sudoers: $deploy_user" >&2
+      return 1
+      ;;
+  esac
+  if [ "$deploy_user" != "root" ]; then
+    sudoers_tmp=$(mktemp /tmp/mira-office-sudoers.XXXXXXXXXX)
+    printf '%s ALL=(root) NOPASSWD: %s *\n' "$deploy_user" "$OFFICE_SANDBOX_HELPER" >"$sudoers_tmp"
+    if ! as_root /usr/sbin/visudo -cf "$sudoers_tmp" >/dev/null; then
+      rm -f "$sudoers_tmp"
+      return 1
+    fi
+    if ! as_root /usr/bin/install -o root -g root -m 0440 "$sudoers_tmp" "$OFFICE_SANDBOX_SUDOERS"; then
+      rm -f "$sudoers_tmp"
+      return 1
+    fi
+    rm -f "$sudoers_tmp"
+  fi
+
+  helper_owner=$(stat -c '%U:%G:%a' "$OFFICE_SANDBOX_HELPER")
+  if [ "$helper_owner" != "root:root:755" ]; then
+    echo "[mira-deploy] unexpected Office sandbox helper ownership/mode: $helper_owner" >&2
+    return 1
+  fi
+  echo "[mira-deploy] Office validator groups: $validator_groups"
+}
+
+office_sandbox_smoke() (
+  set -eu
+  job_root=$(mktemp -d /tmp/mira-office-smoke-XXXXXXXXXX)
+  marker=$(mktemp "$REPO_ROOT/.mira-office-sandbox-marker.XXXXXXXXXX")
+  cleanup_office_smoke() {
+    rm -rf -- "$job_root"
+    rm -f -- "$marker"
+  }
+  trap cleanup_office_smoke 0 1 2 15
+
+  mkdir -p "$job_root/input" "$job_root/output" "$job_root/profile" "$job_root/home" "$job_root/tmp"
+  printf 'mira-office-smoke\n' >"$job_root/input/smoke.txt"
+  printf 'validator must not read this repository marker\n' >"$marker"
+  chmod 0644 "$marker"
+  python3 - "$job_root/input/001.docx" <<'PY'
+import sys
+import zipfile
+
+path = sys.argv[1]
+with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as document:
+    document.writestr(
+        "[Content_Types].xml",
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+        '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+        '<Default Extension="xml" ContentType="application/xml"/>'
+        '<Override PartName="/word/document.xml" '
+        'ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
+        "</Types>",
+    )
+    document.writestr(
+        "_rels/.rels",
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        '<Relationship Id="rId1" '
+        'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" '
+        'Target="word/document.xml"/>'
+        "</Relationships>",
+    )
+    document.writestr(
+        "word/document.xml",
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        "<w:body><w:p><w:r><w:t>Mira Office sandbox smoke</w:t></w:r></w:p></w:body>"
+        "</w:document>",
+    )
+PY
+  smoke_acl="u:$OFFICE_VALIDATOR_USER:rwx,u:$(id -u):rwx"
+  setfacl -Rm "$smoke_acl" "$job_root"
+  setfacl -Rdm "$smoke_acl" "$job_root"
+
+  signal_pid=$$
+  if is_running "$BACKEND_PID"; then
+    signal_pid=$(cat "$BACKEND_PID")
+  fi
+  echo "[mira-deploy] running Office isolation smoke"
+  sudo -n "$OFFICE_SANDBOX_HELPER" smoke "$job_root" "$marker" "$signal_pid"
+)
+
 start_backend() {
   stop_backend
   setsid -f sh -c '
@@ -276,6 +414,8 @@ start() {
   ensure_commands
   mkdirs
   prepare_backend
+  install_office_sandbox
+  office_sandbox_smoke
   stop
   start_backend
   start_nginx

@@ -256,8 +256,9 @@ class WorkflowLintOut(BaseModel):
 class PromptAssistantOutputContractOut(BaseModel):
     type: Literal["json", "html", "artifact"]
     json_schema: dict | None = None
-    artifact_kind: Literal["image", "code", "html", "markdown", "csv", "excel", "docx", "ppt", "pdf", "archive", "file"] | None = None
+    artifact_kind: Literal["image", "code", "html", "markdown", "csv", "excel", "docx", "ppt", "pdf", "archive", "zip", "file"] | None = None
     max_count: int | None = None
+    validate_office_documents: bool | None = None
 
 
 class PromptAssistantCompletedOut(BaseModel):

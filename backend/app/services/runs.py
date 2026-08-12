@@ -488,6 +488,7 @@ async def cancel_run_record(db: AsyncSession, run_id: str, user_id: str) -> bool
         if step.status in {"pending", "running", "waiting_for_user"}:
             step.status = "cancelled"
             step.finished_at = run.finished_at
+            step.agent_session_id = None
     await db.commit()
     return True
 

@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -9,6 +9,7 @@ from app.utils import now_utc
 
 class Run(Base):
     __tablename__ = "runs"
+    __table_args__ = (Index("ix_runs_owner_app_started_id", "owner_id", "app_id", "started_at", "id"),)
 
     id: Mapped[str] = mapped_column(String(80), primary_key=True)
     app_id: Mapped[str] = mapped_column(ForeignKey("apps.id", ondelete="CASCADE"), index=True)
@@ -28,6 +29,7 @@ class Run(Base):
 
 class Step(Base):
     __tablename__ = "steps"
+    __table_args__ = (Index("ix_steps_run_ordering_id", "run_id", "ordering", "id"),)
 
     id: Mapped[str] = mapped_column(String(80), primary_key=True)
     run_id: Mapped[str] = mapped_column(ForeignKey("runs.id", ondelete="CASCADE"), index=True)

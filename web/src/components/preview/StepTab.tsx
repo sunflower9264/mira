@@ -175,6 +175,20 @@ function GenerateEditor({
           onChange={(output_contract) => patchNode(node.id, { output_contract } as Partial<WorkflowNode>)}
         />
       </div>
+      <label className="inline-flex w-fit items-center gap-2 rounded-full bg-[#F9F9F9] px-3 py-2 text-xs font-medium text-black/65">
+        <input
+          type="checkbox"
+          checked={node.ask_user_enabled !== false}
+          onChange={(event) =>
+            patchNode(
+              node.id,
+              { ask_user_enabled: event.target.checked ? undefined : false } as Partial<WorkflowNode>,
+            )
+          }
+          className="h-3.5 w-3.5 accent-black"
+        />
+        运行前允许追问
+      </label>
       {settings && !hasSelectedAgent && <div className="text-xs text-red-600">请先在应用页选择已启用 Agent。</div>}
       <PromptField node={node} value={node.prompt ?? ''} onChange={updatePrompt} nodeLabel={node.title || '生成'} />
     </EditorShell>
@@ -556,6 +570,7 @@ const OUTPUT_CONTRACT_OPTIONS: { label: string; value: OutputContractOptionValue
   { label: 'PPT', value: 'artifact:ppt' },
   { label: 'PDF', value: 'artifact:pdf' },
   { label: '压缩包', value: 'artifact:archive' },
+  { label: 'ZIP 压缩包', value: 'artifact:zip' },
   { label: '其他文件', value: 'artifact:file' },
 ];
 
@@ -740,11 +755,25 @@ function PromptField({
     const state = useEditorStore.getState();
     const stateApp = state.app;
     if (!stateApp || stateApp.id !== app?.id) return;
-    const nodeStillExists = stateApp.graph.nodes.some((item) => item.id === node.id);
-    if (!nodeStillExists) return;
+    const currentNode = stateApp.graph.nodes.find((item) => item.id === node.id);
+    if (!currentNode) return;
     const patch = { prompt: result.prompt } as Partial<WorkflowNode>;
-    if (node.type === 'generate' && result.output_contract) {
-      (patch as Partial<GenerateNode>).output_contract = result.output_contract;
+    if (currentNode.type === 'generate' && result.output_contract) {
+      const { validate_office_documents, ...contract } = result.output_contract;
+      const nextContract: NodeOutputContract =
+        typeof validate_office_documents === 'boolean'
+          ? { ...contract, validate_office_documents }
+          : contract;
+      if (
+        validate_office_documents == null &&
+        currentNode.output_contract?.type === 'artifact' &&
+        currentNode.output_contract.validate_office_documents === true &&
+        nextContract.type === 'artifact' &&
+        nextContract.artifact_kind === currentNode.output_contract.artifact_kind
+      ) {
+        nextContract.validate_office_documents = true;
+      }
+      (patch as Partial<GenerateNode>).output_contract = nextContract;
     }
     state.patchNode(node.id, patch);
     if (mountedRef.current) {

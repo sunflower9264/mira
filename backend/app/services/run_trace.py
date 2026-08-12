@@ -8,9 +8,9 @@ from app.models import App, Run, RunEvent, Step, StepLog
 from app.schemas import RunStepTraceOut, RunTraceArtifactOut, RunTraceChunkOut
 from app.services.artifacts import signed_run_artifact_download_url
 from app.services.apps import should_redact_app_source
+from app.services.run_artifacts import catalog_run_artifacts
 from app.services.run_output_sanitizer import RunSanitizeContext, build_run_sanitize_context, sanitize_run_text, sanitize_run_value
 from app.services.run_serializer import log_to_out, step_to_out
-from app.services.runtime_paths import run_workspace
 from app.utils import loads
 
 LLM_NODE_TYPES = {"generate", "condition", "output"}
@@ -60,7 +60,7 @@ async def get_run_step_trace(db: AsyncSession, run_id: str, node_id: str, user_i
         prompt = ""
 
     chunks, chunks_truncated, raw_text = await _trace_chunks(db, run, node_id, sanitize_context)
-    artifacts, artifacts_truncated = _trace_artifacts(run)
+    artifacts, artifacts_truncated = await _trace_artifacts(db, run, node_id)
 
     return RunStepTraceOut(
         run_id=run.id,
@@ -132,26 +132,25 @@ async def _trace_chunks(
     return chunks, truncated, "".join(text_parts)
 
 
-def _trace_artifacts(run: Run) -> tuple[list[RunTraceArtifactOut], bool]:
-    workspace = run_workspace(run.owner_id, run.app_id, run.id).resolve()
-    if not workspace.exists():
-        return [], False
-    artifacts: list[RunTraceArtifactOut] = []
-    truncated = False
-    for path in sorted((item for item in workspace.rglob("*") if item.is_file()), key=lambda item: item.as_posix()):
-        if len(artifacts) >= TRACE_ARTIFACT_LIMIT:
-            truncated = True
-            break
-        try:
-            relative = path.resolve().relative_to(workspace).as_posix()
-        except ValueError:
-            continue
-        artifacts.append(
-            RunTraceArtifactOut(
-                path=relative,
-                name=path.name,
-                size=path.stat().st_size,
-                download_url=signed_run_artifact_download_url(run, relative),
-            )
+async def _trace_artifacts(
+    db: AsyncSession,
+    run: Run,
+    node_id: str,
+) -> tuple[list[RunTraceArtifactOut], bool]:
+    catalog, truncated = await catalog_run_artifacts(
+        db,
+        run,
+        node_id=node_id,
+        limit=TRACE_ARTIFACT_LIMIT,
+    )
+    return [
+        RunTraceArtifactOut(
+            path=entry.relative_path,
+            name=entry.name,
+            size=entry.size,
+            sha256=entry.sha256,
+            integrity=entry.integrity,
+            download_url=signed_run_artifact_download_url(run, entry.relative_path, entry.sha256),
         )
-    return artifacts, truncated
+        for entry in catalog
+    ], truncated

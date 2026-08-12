@@ -143,6 +143,8 @@ class RunTraceArtifactOut(BaseModel):
     path: str
     name: str
     size: int
+    sha256: str
+    integrity: Literal["verified", "modified", "legacy_unverified"]
     download_url: str
 
 
@@ -151,6 +153,8 @@ class RunArtifactOut(BaseModel):
     name: str
     path: str | None = None
     size: int | None = None
+    sha256: str
+    integrity: Literal["verified", "modified", "legacy_unverified"]
     download_url: str
     source_node_id: str | None = None
     source_node_title: str | None = None

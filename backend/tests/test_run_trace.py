@@ -163,10 +163,7 @@ def test_run_step_trace_returns_llm_debug_payload(auth_client, enable_claude_age
     assert str(uploads_dir("user_admin")) not in json.dumps(body)
     assert "download_url" in body["chunks"][1]["text"]
     assert body["output"]
-    assert body["artifacts"][0]["path"] == "report.txt"
-    assert body["artifacts"][0]["name"] == "report.txt"
-    assert body["artifacts"][0]["download_url"].startswith(f"/api/runs/{run_id}/artifacts/report.txt")
-    assert "/runtime/workspaces/" not in body["artifacts"][0]["download_url"]
+    assert body["artifacts"] == []
 
 
 def test_run_step_trace_rejects_non_llm_node(auth_client, enable_claude_agent):

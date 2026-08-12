@@ -5,16 +5,32 @@ import argparse
 import json
 import os
 import re
+import shutil
 import signal
+import stat
 import subprocess
 import sys
 import tarfile
 import tempfile
 import time
+import urllib.error
 import urllib.request
 import zipfile
+import zlib
 from pathlib import Path
 from typing import Any
+
+
+MAX_ARCHIVE_MEMBERS = 10_000
+MAX_ARCHIVE_EXPANDED_BYTES = 1024 * 1024 * 1024
+URL_PATTERN = re.compile(r"[a-zA-Z][a-zA-Z0-9+.-]*://[^\s]+")
+RUNTIME_PATH_REDACTIONS = (
+    ("/home/mira", "<runtime-home>"),
+    ("/usr/local", "<system>"),
+    ("/opt/mira", "<mira-runtime>"),
+    ("/var/tmp", "<tmp>"),
+    ("/tmp", "<tmp>"),
+)
 
 
 def main() -> int:
@@ -25,9 +41,12 @@ def main() -> int:
     parser.add_argument("--archive-out", default="", help="Output zip path. Defaults to <out-dir>.zip.")
     parser.add_argument("--port", type=int, default=3210)
     parser.add_argument("--max-routes", type=int, default=10)
+    parser.add_argument("--min-screenshots", type=int, default=1)
     parser.add_argument("--install-timeout", type=int, default=240)
     parser.add_argument("--startup-timeout", type=int, default=90)
     args = parser.parse_args()
+    if args.min_screenshots < 1:
+        parser.error("--min-screenshots must be at least 1")
 
     cwd = Path.cwd()
     archive = _resolve_path(cwd, args.archive)
@@ -36,11 +55,16 @@ def main() -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
     log_path = out_dir / "capture-log.txt"
     manifest_path = out_dir / "screenshot-manifest.json"
+    path_redactions = [(str(cwd.resolve()), "<workspace>")]
+    if archive != cwd and cwd not in archive.parents:
+        path_redactions.append((str(archive), "<archive>"))
+    if archive_out != cwd and cwd not in archive_out.parents:
+        path_redactions.append((str(archive_out), "<archive-out>"))
 
     log: list[str] = []
     manifest: dict[str, Any] = {
         "ok": False,
-        "archive": str(archive),
+        "archive": _display_path(archive, cwd, placeholder="<archive>"),
         "project_root": "",
         "base_url": f"http://127.0.0.1:{args.port}",
         "screenshots": [],
@@ -49,12 +73,14 @@ def main() -> int:
     }
 
     def note(message: str) -> None:
-        log.append(message)
-        print(message, flush=True)
+        safe_message = _redact_paths(message, path_redactions)
+        log.append(safe_message)
+        print(safe_message, flush=True)
 
     server: subprocess.Popen[str] | None = None
     with tempfile.TemporaryDirectory(prefix="mira-capture-") as temp:
         temp_dir = Path(temp)
+        path_redactions.append((str(temp_dir), "<runtime-temp>"))
         try:
             if not archive.exists():
                 raise RuntimeError(f"archive not found: {archive}")
@@ -62,32 +88,48 @@ def main() -> int:
             _extract_archive(archive, temp_dir)
             project_root = _find_project_root(temp_dir)
             manifest["project_root"] = str(project_root.relative_to(temp_dir))
-            note(f"project root: {project_root}")
+            note(f"project root: {manifest['project_root']}")
 
             routes = _route_items(args.routes_json, project_root, args.max_routes)
             if not routes:
                 routes = [{"route": "/", "page_name": "首页"}]
             note("routes: " + ", ".join(item["route"] for item in routes))
 
+            install_command = "ci" if (project_root / "package-lock.json").is_file() else "install"
             _run(
-                ["npm", "install", "--no-audit", "--no-fund"],
+                ["npm", install_command, "--no-audit", "--no-fund"],
                 cwd=project_root,
                 timeout=args.install_timeout,
                 note=note,
                 env=_node_env(project_root, args.port),
             )
+            package = json.loads((project_root / "package.json").read_text(encoding="utf-8"))
+            scripts = package.get("scripts") if isinstance(package, dict) else None
+            for script_name in ("db:init", "db:seed"):
+                if isinstance(scripts, dict) and isinstance(scripts.get(script_name), str):
+                    _run(
+                        ["npm", "run", script_name],
+                        cwd=project_root,
+                        timeout=args.install_timeout,
+                        note=note,
+                        env=_node_env(project_root, args.port),
+                    )
             server = _start_dev_server(project_root, args.port, note)
             _wait_for_url(f"http://127.0.0.1:{args.port}/", args.startup_timeout, note)
 
             for index, item in enumerate(routes, start=1):
-                _capture_route(index, item, args.port, out_dir, manifest, note)
+                _capture_route(index, item, args.port, out_dir, manifest, note, path_redactions)
 
-            manifest["ok"] = bool(manifest["screenshots"])
-            if not manifest["ok"]:
-                manifest["warnings"].append("No screenshots were captured successfully.")
+            screenshot_count = len(manifest["screenshots"])
+            if screenshot_count < args.min_screenshots:
+                message = f"captured {screenshot_count} screenshot(s); minimum required is {args.min_screenshots}"
+                manifest["failures"].append({"stage": "minimum_screenshots", "message": message})
+                note(message)
+            manifest["ok"] = screenshot_count >= args.min_screenshots and not manifest["failures"]
         except Exception as exc:  # noqa: BLE001
-            manifest["failures"].append({"stage": "capture", "message": str(exc)})
-            note(f"capture failed: {exc}")
+            message = _redact_paths(str(exc), path_redactions)
+            manifest["failures"].append({"stage": "capture", "message": message})
+            note(f"capture failed: {message}")
         finally:
             if server is not None:
                 _stop_process(server, note)
@@ -96,7 +138,7 @@ def main() -> int:
             _zip_dir(out_dir, archive_out)
             note(f"wrote archive: {archive_out}")
 
-    return 0
+    return 0 if manifest["ok"] else 1
 
 
 def _resolve_path(cwd: Path, value: str) -> Path:
@@ -111,27 +153,108 @@ def _resolve_output_dir(cwd: Path, value: str) -> Path:
     return path
 
 
+def _display_path(path: Path, root: Path, *, placeholder: str) -> str:
+    try:
+        return path.resolve().relative_to(root.resolve()).as_posix()
+    except (OSError, ValueError):
+        return placeholder
+
+
+def _redact_paths(message: str, redactions: list[tuple[str, str]]) -> str:
+    chunks: list[str] = []
+    offset = 0
+    for match in URL_PATTERN.finditer(message):
+        chunks.append(_redact_path_segment(message[offset : match.start()], redactions))
+        chunks.append(match.group(0))
+        offset = match.end()
+    chunks.append(_redact_path_segment(message[offset:], redactions))
+    return "".join(chunks)
+
+
+def _redact_path_segment(message: str, redactions: list[tuple[str, str]]) -> str:
+    safe_message = message
+    for value, placeholder in sorted(redactions, key=lambda item: len(item[0]), reverse=True):
+        if value and value != os.sep:
+            safe_message = safe_message.replace(value, placeholder)
+    for root, placeholder in RUNTIME_PATH_REDACTIONS:
+        safe_message = re.sub(
+            rf"(?<![\w/]){re.escape(root)}(?=/|$|[\s'\"`),.:;\]])",
+            placeholder,
+            safe_message,
+        )
+    return safe_message
+
+
 def _extract_archive(archive: Path, target: Path) -> None:
     suffixes = "".join(archive.suffixes).lower()
     if suffixes.endswith(".zip"):
         with zipfile.ZipFile(archive) as zf:
-            for member in zf.infolist():
-                _ensure_safe_member(target, member.filename)
-            zf.extractall(target)
+            members = zf.infolist()
+            _ensure_archive_limits(len(members), [member.file_size for member in members if not member.is_dir()])
+            normalized_names: set[str] = set()
+            validated_members: list[tuple[zipfile.ZipInfo, str]] = []
+            for member in members:
+                normalized_name = _ensure_safe_member(target, member.filename)
+                if normalized_name in normalized_names:
+                    raise RuntimeError(f"duplicate archive member path: {normalized_name}")
+                normalized_names.add(normalized_name)
+                _ensure_safe_zip_member_type(member)
+                validated_members.append((member, normalized_name))
+            for member, normalized_name in validated_members:
+                destination = target / normalized_name
+                if member.is_dir():
+                    destination.mkdir(parents=True, exist_ok=True)
+                    continue
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    with zf.open(member) as source, destination.open("wb") as output:
+                        shutil.copyfileobj(source, output)
+                except (EOFError, NotImplementedError, OSError, RuntimeError, zipfile.BadZipFile, zlib.error) as exc:
+                    destination.unlink(missing_ok=True)
+                    raise RuntimeError(f"invalid ZIP member data: {normalized_name}") from exc
         return
     if suffixes.endswith((".tar", ".tar.gz", ".tgz", ".tar.bz2", ".tbz2", ".tar.xz", ".txz")):
         with tarfile.open(archive) as tf:
-            for member in tf.getmembers():
+            members = tf.getmembers()
+            _ensure_archive_limits(len(members), [member.size for member in members if member.isfile()])
+            for member in members:
                 _ensure_safe_member(target, member.name)
+                if not (member.isfile() or member.isdir()):
+                    raise RuntimeError(f"unsafe archive member type: {member.name}")
             tf.extractall(target)
         return
     raise RuntimeError(f"unsupported archive type: {archive.name}")
 
 
-def _ensure_safe_member(root: Path, name: str) -> None:
-    resolved = (root / name).resolve()
+def _ensure_safe_member(root: Path, name: str) -> str:
+    normalized = name.replace("\\", "/")
+    if normalized.startswith("/") or re.match(r"^[a-zA-Z]:", normalized) or ".." in Path(normalized).parts:
+        raise RuntimeError(f"unsafe archive member path: {name}")
+    normalized = Path(normalized).as_posix()
+    resolved = (root / normalized).resolve()
     if resolved != root and root not in resolved.parents:
         raise RuntimeError(f"unsafe archive member path: {name}")
+    return normalized
+
+
+def _ensure_safe_zip_member_type(member: zipfile.ZipInfo) -> None:
+    if member.is_dir():
+        return
+    file_type = stat.S_IFMT(member.external_attr >> 16)
+    if file_type not in (0, stat.S_IFREG):
+        raise RuntimeError(f"unsafe archive member type: {member.filename}")
+
+
+def _ensure_archive_limits(member_count: int, expanded_sizes: list[int]) -> None:
+    if member_count > MAX_ARCHIVE_MEMBERS:
+        raise RuntimeError(f"archive member count exceeds limit: {member_count} > {MAX_ARCHIVE_MEMBERS}")
+    if any(size < 0 for size in expanded_sizes):
+        raise RuntimeError("archive expanded size is invalid")
+    expanded_size = sum(expanded_sizes)
+    if expanded_size > MAX_ARCHIVE_EXPANDED_BYTES:
+        raise RuntimeError(
+            f"archive expanded size exceeds limit: {expanded_size} > {MAX_ARCHIVE_EXPANDED_BYTES}"
+        )
 
 
 def _find_project_root(root: Path) -> Path:
@@ -288,37 +411,68 @@ def _wait_for_url(url: str, timeout: int, note) -> None:
     raise RuntimeError(f"server did not become ready at {url}: {last_error}")
 
 
-def _capture_route(index: int, item: dict[str, str], port: int, out_dir: Path, manifest: dict[str, Any], note) -> None:
+def _check_route_url(url: str) -> int:
+    try:
+        with urllib.request.urlopen(url, timeout=10) as response:
+            status = response.status
+    except urllib.error.HTTPError as exc:
+        status = exc.code
+        exc.close()
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(f"route request failed: {url}: {exc}") from exc
+    if status >= 400:
+        raise RuntimeError(f"route returned HTTP {status}: {url}")
+    return status
+
+
+def _capture_route(
+    index: int,
+    item: dict[str, str],
+    port: int,
+    out_dir: Path,
+    manifest: dict[str, Any],
+    note,
+    path_redactions: list[tuple[str, str]],
+) -> None:
     route = _normalize_route(item["route"])
     url = f"http://127.0.0.1:{port}{route}"
     filename = f"SP-{index:02d}-{_slug(route)}.png"
     output = out_dir / filename
-    chromium_home = out_dir / ".chromium"
-    chromium_home.mkdir(parents=True, exist_ok=True)
-    command = [
-        "chromium",
-        "--headless=new",
-        "--no-sandbox",
-        "--disable-crash-reporter",
-        "--disable-crashpad",
-        "--disable-dev-shm-usage",
-        "--hide-scrollbars",
-        "--window-size=1440,1000",
-        "--virtual-time-budget=3000",
-        f"--user-data-dir={chromium_home}",
-        f"--screenshot={output}",
-        url,
-    ]
-    note("$ " + " ".join(command))
-    env = os.environ.copy()
-    env.update(
-        {
-            "HOME": str(chromium_home),
-            "XDG_CONFIG_HOME": str(chromium_home / "config"),
-            "XDG_CACHE_HOME": str(chromium_home / "cache"),
-        }
-    )
-    result = subprocess.run(command, env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=45)
+    try:
+        status = _check_route_url(url)
+        note(f"route ready: {url} (HTTP {status})")
+    except RuntimeError as exc:
+        message = _redact_paths(str(exc), path_redactions)
+        manifest["failures"].append({"route": route, "message": message})
+        note(f"failed to capture {route}: {message}")
+        return
+    with tempfile.TemporaryDirectory(prefix="mira-chromium-") as chromium_temp:
+        chromium_home = Path(chromium_temp)
+        path_redactions.append((str(chromium_home), "<runtime-temp>"))
+        command = [
+            "chromium",
+            "--headless=new",
+            "--no-sandbox",
+            "--disable-crash-reporter",
+            "--disable-crashpad",
+            "--disable-dev-shm-usage",
+            "--hide-scrollbars",
+            "--window-size=1440,1000",
+            "--virtual-time-budget=3000",
+            f"--user-data-dir={chromium_home}",
+            f"--screenshot={output}",
+            url,
+        ]
+        note("$ " + " ".join(command))
+        env = os.environ.copy()
+        env.update(
+            {
+                "HOME": str(chromium_home),
+                "XDG_CONFIG_HOME": str(chromium_home / "config"),
+                "XDG_CACHE_HOME": str(chromium_home / "cache"),
+            }
+        )
+        result = subprocess.run(command, env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=45)
     if result.returncode == 0 and output.exists() and output.stat().st_size > 0:
         manifest["screenshots"].append(
             {
@@ -332,8 +486,9 @@ def _capture_route(index: int, item: dict[str, str], port: int, out_dir: Path, m
         )
         note(f"captured {route} -> {output}")
         return
-    manifest["failures"].append({"route": route, "message": (result.stdout or "").strip()[-1000:]})
-    note(f"failed to capture {route}: {(result.stdout or '').strip()[-1000:]}")
+    message = _redact_paths((result.stdout or "").strip()[-1000:], path_redactions)
+    manifest["failures"].append({"route": route, "message": message})
+    note(f"failed to capture {route}: {message}")
 
 
 def _slug(route: str) -> str:
@@ -362,9 +517,12 @@ def _stop_process(process: subprocess.Popen[str], note) -> None:
 def _zip_dir(source: Path, output: Path) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-        for path in sorted(source.rglob("*")):
-            if path.is_file():
-                zf.write(path, path.relative_to(source.parent))
+        for path in sorted(source.iterdir()):
+            if path.is_symlink() or not path.is_file():
+                continue
+            if path.suffix.lower() != ".png" and path.name not in {"screenshot-manifest.json", "capture-log.txt"}:
+                continue
+            zf.write(path, path.relative_to(source.parent))
 
 
 if __name__ == "__main__":

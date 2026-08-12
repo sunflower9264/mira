@@ -3,17 +3,37 @@ from __future__ import annotations
 import json
 import mimetypes
 import re
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
 from jsonschema import Draft202012Validator, ValidationError, SchemaError
 
+from app.services.artifacts import file_sha256
+from app.services.office_documents import (
+    OFFICE_VALIDATION_TIMEOUT_SECONDS,
+    OfficeValidationUnavailable,
+    validate_office_documents,
+)
+from app.services.text_integrity import (
+    UNICODE_REPLACEMENT_ERROR,
+    contains_unicode_replacement,
+    validate_artifact_text_integrity,
+)
+
 
 OutputContractType = Literal["json", "html", "artifact"]
 CONTRACT_TYPES = {"json", "html", "artifact"}
-ARTIFACT_KINDS = {"image", "code", "html", "markdown", "csv", "excel", "docx", "ppt", "pdf", "archive", "file"}
-CONTRACT_KEYS = {"type", "json_schema", "artifact_kind", "max_count"}
+ARTIFACT_KINDS = {"image", "code", "html", "markdown", "csv", "excel", "docx", "ppt", "pdf", "archive", "zip", "file"}
+CONTRACT_KEYS = {
+    "type",
+    "json_schema",
+    "artifact_kind",
+    "max_count",
+    "validate_office_documents",
+}
 JSON_SCHEMA_KEYS = {
     "$schema",
     "type",
@@ -44,7 +64,11 @@ ARTIFACT_EXTENSIONS = {
     "ppt": {".pptx", ".ppt"},
     "pdf": {".pdf"},
     "archive": {".zip", ".tar", ".gz", ".tgz", ".rar", ".7z"},
+    "zip": {".zip"},
 }
+ARTIFACT_MANIFEST_VERSION = 1
+ARTIFACT_RESERVED_TOP_LEVEL_DIRS = {".uploads"}
+OFFICE_VALIDATION_ARTIFACT_KINDS = {"docx", "excel", "ppt", "zip", "file"}
 _FENCED_RE = re.compile(r"^```(?:json|JSON|markdown|md|text)?\s*(.*?)\s*```$", re.DOTALL)
 
 
@@ -53,6 +77,7 @@ class ContractValidationResult:
     ok: bool
     output: Any = None
     error: str | None = None
+    repairable: bool = True
 
 
 def output_contract_for_node(node: dict[str, Any]) -> dict[str, Any] | None:
@@ -70,12 +95,16 @@ def normalize_output_contract_config(contract: Any) -> Any:
         return contract
     output_type = contract.get("type")
     if output_type == "json":
-        return {key: value for key, value in contract.items() if key not in {"artifact_kind", "max_count"}}
+        return {
+            key: value
+            for key, value in contract.items()
+            if key not in {"artifact_kind", "max_count", "validate_office_documents"}
+        }
     if output_type == "html":
         return {
             key: value
             for key, value in contract.items()
-            if key not in {"json_schema", "artifact_kind", "max_count"}
+            if key not in {"json_schema", "artifact_kind", "max_count", "validate_office_documents"}
         }
     if output_type == "artifact":
         return {key: value for key, value in contract.items() if key != "json_schema"}
@@ -116,10 +145,18 @@ def validate_output_contract_config(node: dict[str, Any]) -> str | None:
             not isinstance(max_count, int) or isinstance(max_count, bool) or max_count < 1 or max_count > 50
         ):
             return f"节点「{label}」output_contract.max_count 必须是 1-50 的整数"
+        validate_office = contract.get("validate_office_documents")
+        if validate_office is not None and not isinstance(validate_office, bool):
+            return f"节点「{label}」output_contract.validate_office_documents 必须是 bool"
+        if validate_office is True and artifact_kind not in OFFICE_VALIDATION_ARTIFACT_KINDS:
+            supported = ", ".join(sorted(OFFICE_VALIDATION_ARTIFACT_KINDS))
+            return f"节点「{label}」validate_office_documents 仅支持 artifact_kind：{supported}"
     elif artifact_kind is not None:
         return f"节点「{label}」只有 artifact 输出契约支持 artifact_kind"
     elif "max_count" in contract:
         return f"节点「{label}」只有 artifact 输出契约支持 max_count"
+    elif "validate_office_documents" in contract:
+        return f"节点「{label}」只有 artifact 输出契约支持 validate_office_documents"
     return None
 
 
@@ -218,6 +255,8 @@ def contract_prompt_suffix(node: dict[str, Any]) -> str:
         hint = _artifact_kind_hint(contract.get("artifact_kind"))
         if hint:
             lines.append(hint)
+        if contract.get("validate_office_documents") is True:
+            lines.append("产物必须包含 Office 文档，且每个文档都必须能被实际打开并转换出至少一页 PDF。")
     return "\n".join(lines)
 
 
@@ -230,6 +269,7 @@ def validate_contract_output(
     text: str,
     *,
     workspace: Path | None = None,
+    cancelled: Callable[[], bool] | None = None,
 ) -> ContractValidationResult:
     if node.get("type") == "output":
         return _validate_html_output(text)
@@ -239,12 +279,16 @@ def validate_contract_output(
     if contract is None:
         if not text.strip():
             return ContractValidationResult(ok=False, error="输出不能为空")
+        if contains_unicode_replacement(text):
+            return ContractValidationResult(ok=False, error=UNICODE_REPLACEMENT_ERROR)
         return ContractValidationResult(ok=True, output=text)
     output_type = contract["type"]
     if output_type == "json":
         parsed = _parse_json_output(text)
         if not parsed.ok:
             return parsed
+        if contains_unicode_replacement(parsed.output):
+            return ContractValidationResult(ok=False, error=UNICODE_REPLACEMENT_ERROR)
         try:
             Draft202012Validator(contract["json_schema"]).validate(parsed.output)
         except ValidationError as exc:
@@ -253,8 +297,50 @@ def validate_contract_output(
     if output_type == "html":
         return _validate_html_output(text)
     if output_type == "artifact":
-        return _validate_artifact_output(contract, text, workspace=workspace)
+        return _validate_artifact_output(contract, text, workspace=workspace, cancelled=cancelled)
     return ContractValidationResult(ok=True, output=text)
+
+
+def artifact_output_for_storage(
+    node: dict[str, Any],
+    output: Any,
+    *,
+    workspace: Path,
+) -> Any:
+    contract = output_contract_for_node(node)
+    if not isinstance(contract, dict) or contract.get("type") != "artifact":
+        return output
+    if not isinstance(output, list):
+        raise ValueError("artifact 校验结果不是数组")
+
+    workspace_resolved = workspace.resolve()
+    artifact_kind = str(contract.get("artifact_kind") or "file")
+    manifest: list[dict[str, Any]] = []
+    for index, item in enumerate(output, start=1):
+        if not isinstance(item, dict):
+            raise ValueError(f"第 {index} 个 artifact 校验结果不是对象")
+        path_text = item.get("path")
+        if not isinstance(path_text, str) or not path_text.strip():
+            raise ValueError(f"第 {index} 个 artifact 校验结果缺少 path")
+        resolved = _resolve_workspace_path(workspace_resolved, path_text)
+        if resolved is None or not resolved.is_file():
+            raise ValueError(f"第 {index} 个 artifact 文件不存在")
+        relative = resolved.relative_to(workspace_resolved).as_posix()
+        if _is_reserved_artifact_path(relative):
+            raise ValueError(f"第 {index} 个 artifact 位于上传暂存目录")
+        name = item.get("name")
+        display_name = name.strip() if isinstance(name, str) and name.strip() else resolved.name
+        manifest.append(
+            {
+                "path": relative,
+                "name": display_name,
+                "size": resolved.stat().st_size,
+                "sha256": file_sha256(resolved),
+                "artifact_kind": artifact_kind,
+                "manifest_version": ARTIFACT_MANIFEST_VERSION,
+            }
+        )
+    return manifest
 
 
 def _validate_schema_subset(schema: dict[str, Any], *, path: str, root: bool = False) -> str | None:
@@ -304,6 +390,8 @@ def _validate_html_output(text: str) -> ContractValidationResult:
     html = parsed.output.get("html")
     if not isinstance(html, str) or not html.strip():
         return ContractValidationResult(ok=False, error="HTML 输出必须包含非空 html 字符串")
+    if contains_unicode_replacement(html):
+        return ContractValidationResult(ok=False, error=UNICODE_REPLACEMENT_ERROR)
     return ContractValidationResult(ok=True, output=html)
 
 
@@ -312,7 +400,13 @@ def _validate_artifact_output(
     text: str,
     *,
     workspace: Path | None,
+    cancelled: Callable[[], bool] | None,
 ) -> ContractValidationResult:
+    office_deadline = (
+        time.monotonic() + OFFICE_VALIDATION_TIMEOUT_SECONDS
+        if contract.get("validate_office_documents") is True
+        else None
+    )
     if workspace is None:
         return ContractValidationResult(ok=False, error="artifact 输出缺少工作区上下文")
     parsed = _parse_json_output(text)
@@ -321,41 +415,87 @@ def _validate_artifact_output(
     artifacts = parsed.output.get("artifacts")
     if not isinstance(artifacts, list) or not artifacts:
         return ContractValidationResult(ok=False, error="artifact 输出必须包含非空 artifacts 数组")
+    max_count = contract.get("max_count")
+    if not isinstance(max_count, int) or isinstance(max_count, bool):
+        max_count = 10
+    if len(artifacts) > max_count:
+        return ContractValidationResult(ok=False, error=f"artifact 数量超过 max_count={max_count}")
     normalized: list[dict[str, str]] = []
     artifact_kind = str(contract.get("artifact_kind") or "file")
+    workspace_resolved = workspace.resolve()
+    seen_paths: set[str] = set()
     for index, item in enumerate(artifacts, start=1):
         if not isinstance(item, dict):
             return ContractValidationResult(ok=False, error=f"第 {index} 个 artifact 必须是对象")
         path_text = item.get("path")
         if not isinstance(path_text, str) or not path_text.strip():
             return ContractValidationResult(ok=False, error=f"第 {index} 个 artifact 必须包含非空 path")
+        if "\ufffd" in path_text:
+            return ContractValidationResult(ok=False, error=f"第 {index} 个 artifact.path 包含损坏字符 U+FFFD")
         if "download_url" in item:
             return ContractValidationResult(ok=False, error=f"第 {index} 个 artifact 不允许返回 download_url")
-        resolved = _resolve_workspace_path(workspace, path_text)
+        resolved = _resolve_workspace_path(workspace_resolved, path_text)
         if resolved is None:
             return ContractValidationResult(ok=False, error=f"第 {index} 个 artifact.path 不在运行工作区内")
         if not resolved.exists() or not resolved.is_file():
             return ContractValidationResult(ok=False, error=f"第 {index} 个 artifact.path 文件不存在")
-        file_error = _validate_artifact_file(resolved, artifact_kind)
+        relative = resolved.relative_to(workspace_resolved).as_posix()
+        if _is_reserved_artifact_path(relative):
+            return ContractValidationResult(ok=False, error=f"第 {index} 个 artifact 位于上传暂存目录")
+        if relative in seen_paths:
+            return ContractValidationResult(ok=False, error=f"第 {index} 个 artifact.path 与前面的产物重复")
+        seen_paths.add(relative)
+        try:
+            file_error = _validate_artifact_file(
+                resolved,
+                artifact_kind,
+                validate_office=contract.get("validate_office_documents") is True,
+                cancelled=cancelled,
+                office_deadline=office_deadline,
+            )
+        except OfficeValidationUnavailable as exc:
+            return ContractValidationResult(ok=False, error=str(exc), repairable=False)
         if file_error:
             return ContractValidationResult(ok=False, error=f"第 {index} 个 artifact 文件无效：{file_error}")
         name = item.get("name")
         display_name = name.strip() if isinstance(name, str) and name.strip() else resolved.name
+        if "\ufffd" in display_name:
+            return ContractValidationResult(ok=False, error=f"第 {index} 个 artifact.name 包含损坏字符 U+FFFD")
         normalized.append({"path": str(resolved), "name": display_name})
     return ContractValidationResult(ok=True, output=normalized)
 
 
-def _validate_artifact_file(path: Path, artifact_kind: str) -> str | None:
+def _validate_artifact_file(
+    path: Path,
+    artifact_kind: str,
+    *,
+    validate_office: bool = False,
+    cancelled: Callable[[], bool] | None = None,
+    office_deadline: float | None = None,
+) -> str | None:
     extensions = ARTIFACT_EXTENSIONS.get(artifact_kind)
     suffix = path.suffix.lower()
     if extensions is not None and suffix not in extensions:
         return f"扩展名 {suffix or '(none)'} 不符合 {artifact_kind}"
+    integrity_error = validate_artifact_text_integrity(path)
+    if integrity_error:
+        return integrity_error
+    if validate_office:
+        office_error = validate_office_documents(path, cancelled=cancelled, deadline=office_deadline)
+        if office_error:
+            return office_error
     if artifact_kind == "html":
-        text = path.read_text(encoding="utf-8", errors="ignore")
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            return f"HTML 无法按严格 UTF-8 读取：{exc}"
         result = _validate_html_output(json.dumps({"html": text}, ensure_ascii=False))
         return None if result.ok else result.error
     if artifact_kind == "csv":
-        sample = path.read_text(encoding="utf-8-sig", errors="ignore").splitlines()
+        try:
+            sample = path.read_text(encoding="utf-8-sig").splitlines()
+        except (OSError, UnicodeDecodeError) as exc:
+            return f"CSV 无法按严格 UTF-8 读取：{exc}"
         if not sample:
             return "CSV 为空"
         column_count = len(sample[0].split(","))
@@ -377,9 +517,15 @@ def _resolve_workspace_path(workspace: Path, path_text: str) -> Path | None:
         resolved = candidate.resolve()
         workspace_resolved = workspace.resolve()
         resolved.relative_to(workspace_resolved)
-    except (OSError, ValueError):
+    except (OSError, RuntimeError, ValueError):
         return None
     return resolved
+
+
+def _is_reserved_artifact_path(relative_path: str) -> bool:
+    parts = Path(relative_path).parts
+    first_part = parts[0] if parts else ""
+    return first_part in ARTIFACT_RESERVED_TOP_LEVEL_DIRS
 
 
 def _parse_json_output(text: str) -> ContractValidationResult:
@@ -407,6 +553,7 @@ def _artifact_kind_label(value: Any) -> str:
         "ppt": "PPT 演示文稿产物",
         "pdf": "PDF 文件产物",
         "archive": "压缩包产物",
+        "zip": "ZIP 压缩包产物",
         "file": "文件产物",
     }
     return labels.get(str(value), "文件产物")
@@ -424,5 +571,6 @@ def _artifact_kind_hint(value: Any) -> str:
         "ppt": "PPT 产物应优先生成 .pptx 文件，并返回该文件路径。",
         "pdf": "PDF 产物应生成 .pdf 文件，并返回该文件路径。",
         "archive": "压缩包产物应优先生成 .zip 或 .tar 文件，并返回该文件路径。",
+        "zip": "ZIP 压缩包产物应生成 .zip 文件，并返回该文件路径。",
     }
     return hints.get(str(value), "")

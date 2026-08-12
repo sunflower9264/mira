@@ -263,7 +263,12 @@ type LooseOutputContract = NodeOutputContract & Record<string, unknown>;
 function sanitizeOutputContract(contract: NodeOutputContract): NodeOutputContract {
   const loose = contract as LooseOutputContract;
   if (contract.type === 'json') {
-    const { artifact_kind: _artifact_kind, max_count: _max_count, ...cleaned } = loose;
+    const {
+      artifact_kind: _artifact_kind,
+      max_count: _max_count,
+      validate_office_documents: _validate_office_documents,
+      ...cleaned
+    } = loose;
     return cleaned as NodeOutputContract;
   }
   if (contract.type === 'html') {
@@ -271,6 +276,7 @@ function sanitizeOutputContract(contract: NodeOutputContract): NodeOutputContrac
       json_schema: _json_schema,
       artifact_kind: _artifact_kind,
       max_count: _max_count,
+      validate_office_documents: _validate_office_documents,
       ...cleaned
     } = loose;
     return cleaned as NodeOutputContract;
@@ -519,11 +525,15 @@ export async function generatePromptAssistant(input: {
   return request<PromptAssistantResponse>('/api/prompt-assistant/generate', { method: 'POST', body: input, signal });
 }
 
+type PromptAssistantOutputContract = Omit<NodeOutputContract, 'validate_office_documents'> & {
+  validate_office_documents?: boolean | null;
+};
+
 export type PromptAssistantResponse =
   | {
       status: 'completed';
       prompt: string;
-      output_contract?: NodeOutputContract | null;
+      output_contract?: PromptAssistantOutputContract | null;
     }
   | {
       status: 'waiting_for_user';

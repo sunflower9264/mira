@@ -772,6 +772,125 @@ def test_patch_app_rejects_invalid_artifact_kind(auth_client):
     assert "artifact 输出契约必须包含有效 artifact_kind" in response.json()["detail"]
 
 
+def test_patch_app_accepts_zip_artifact_kind(auth_client):
+    created = auth_client.post("/api/apps", json={"name": "ZipArtifact"}).json()
+    response = auth_client.patch(
+        f"/api/apps/{created['id']}",
+        json={
+            "graph": {
+                "nodes": [
+                    {
+                        "id": "n_gen",
+                        "type": "generate",
+                        "position": {"x": 0, "y": 0},
+                        "title": "Generate",
+                        "prompt": "ok",
+                        "output_contract": {"type": "artifact", "artifact_kind": "zip"},
+                    },
+                ],
+                "edges": [],
+            }
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["graph"]["nodes"][0]["output_contract"] == {
+        "type": "artifact",
+        "artifact_kind": "zip",
+    }
+
+
+def test_patch_app_accepts_office_document_validation(auth_client):
+    created = auth_client.post("/api/apps", json={"name": "OfficeValidation"}).json()
+    response = auth_client.patch(
+        f"/api/apps/{created['id']}",
+        json={
+            "graph": {
+                "nodes": [
+                    {
+                        "id": "n_gen",
+                        "type": "generate",
+                        "position": {"x": 0, "y": 0},
+                        "title": "Generate",
+                        "prompt": "ok",
+                        "output_contract": {
+                            "type": "artifact",
+                            "artifact_kind": "zip",
+                            "validate_office_documents": True,
+                        },
+                    },
+                ],
+                "edges": [],
+            }
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["graph"]["nodes"][0]["output_contract"] == {
+        "type": "artifact",
+        "artifact_kind": "zip",
+        "validate_office_documents": True,
+    }
+
+
+def test_patch_app_rejects_non_bool_office_document_validation(auth_client):
+    created = auth_client.post("/api/apps", json={"name": "InvalidOfficeValidation"}).json()
+    response = auth_client.patch(
+        f"/api/apps/{created['id']}",
+        json={
+            "graph": {
+                "nodes": [
+                    {
+                        "id": "n_gen",
+                        "type": "generate",
+                        "position": {"x": 0, "y": 0},
+                        "title": "Generate",
+                        "prompt": "ok",
+                        "output_contract": {
+                            "type": "artifact",
+                            "artifact_kind": "zip",
+                            "validate_office_documents": "true",
+                        },
+                    },
+                ],
+                "edges": [],
+            }
+        },
+    )
+
+    assert response.status_code == 400
+    assert "validate_office_documents 必须是 bool" in response.json()["detail"]
+
+
+def test_patch_app_rejects_office_validation_for_non_office_artifact_kind(auth_client):
+    created = auth_client.post("/api/apps", json={"name": "InvalidOfficeArtifactKind"}).json()
+    response = auth_client.patch(
+        f"/api/apps/{created['id']}",
+        json={
+            "graph": {
+                "nodes": [
+                    {
+                        "id": "n_gen",
+                        "type": "generate",
+                        "position": {"x": 0, "y": 0},
+                        "title": "Generate",
+                        "prompt": "ok",
+                        "output_contract": {
+                            "type": "artifact",
+                            "artifact_kind": "image",
+                            "validate_office_documents": True,
+                        },
+                    },
+                ],
+                "edges": [],
+            }
+        },
+    )
+
+    assert response.status_code == 400
+    assert "validate_office_documents 仅支持 artifact_kind" in response.json()["detail"]
+
+
 def test_patch_app_normalizes_stale_output_contract_fields(auth_client):
     created = auth_client.post("/api/apps", json={"name": "StaleOutputContract"}).json()
     response = auth_client.patch(
@@ -828,6 +947,56 @@ def test_patch_app_rejects_json_field_level_output_contract(auth_client):
     assert "不支持的字段" in response.json()["detail"]
 
 
+def test_patch_app_rejects_non_boolean_ask_user_enabled(auth_client):
+    created = auth_client.post("/api/apps", json={"name": "InvalidAskUserEnabled"}).json()
+    response = auth_client.patch(
+        f"/api/apps/{created['id']}",
+        json={
+            "graph": {
+                "nodes": [
+                    {
+                        "id": "n_gen",
+                        "type": "generate",
+                        "position": {"x": 0, "y": 0},
+                        "title": "Generate",
+                        "prompt": "ok",
+                        "ask_user_enabled": "false",
+                    },
+                ],
+                "edges": [],
+            }
+        },
+    )
+
+    assert response.status_code == 400
+    assert "ask_user_enabled 必须是 bool" in response.json()["detail"]
+
+
+def test_patch_app_rejects_ask_user_enabled_on_non_generate_node(auth_client):
+    created = auth_client.post("/api/apps", json={"name": "UnsupportedAskUserEnabled"}).json()
+    response = auth_client.patch(
+        f"/api/apps/{created['id']}",
+        json={
+            "graph": {
+                "nodes": [
+                    {
+                        "id": "n_input",
+                        "type": "user_input",
+                        "position": {"x": 0, "y": 0},
+                        "title": "Input",
+                        "input_schema": {"label": "input", "kind": "text"},
+                        "ask_user_enabled": False,
+                    },
+                ],
+                "edges": [],
+            }
+        },
+    )
+
+    assert response.status_code == 400
+    assert "只有 generate 支持 ask_user_enabled" in response.json()["detail"]
+
+
 def test_artifact_kind_prompt_suffix_specializes_file_hint():
     suffix = contract_prompt_suffix(
         {
@@ -843,6 +1012,21 @@ def test_artifact_kind_prompt_suffix_specializes_file_hint():
     assert ".pptx" in suffix
     assert "path" in suffix
     assert "path" in suffix
+
+
+def test_zip_artifact_prompt_suffix_requires_zip_file():
+    suffix = contract_prompt_suffix(
+        {
+            "id": "n_gen",
+            "type": "generate",
+            "title": "Generate",
+            "prompt": "ok",
+            "output_contract": {"type": "artifact", "artifact_kind": "zip"},
+        }
+    )
+
+    assert "ZIP 压缩包产物" in suffix
+    assert "应生成 .zip 文件" in suffix
 
 
 def test_patch_app_rejects_invalid_condition_handle(auth_client):

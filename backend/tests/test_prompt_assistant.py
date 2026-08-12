@@ -796,13 +796,89 @@ def test_prompt_assistant_returns_generate_output_contract(auth_client, enable_c
         "prompt": "生成一个可下载的 PPT 大纲文件。",
         "output_contract": {
             "type": "artifact",
-            "json_schema": None,
-            "artifact_kind": "ppt",
-            "max_count": None,
+        "json_schema": None,
+        "artifact_kind": "ppt",
+        "max_count": None,
+        "validate_office_documents": None,
         },
     }
     assert runtime.last_prompt is not None
     assert "当用户明确要求图片、代码包、HTML 文件" in runtime.last_prompt
+
+
+def test_prompt_assistant_accepts_zip_output_contract(auth_client, enable_claude_agent):
+    enable_claude_agent()
+    app_id = _create_app_with_agent(auth_client)
+    runtime = PromptAssistantRuntime(
+        text=json.dumps(
+            {
+                "prompt": "生成一个可下载的 ZIP 源码包。",
+                "output_contract_json": json.dumps(
+                    {"type": "artifact", "artifact_kind": "zip"},
+                    ensure_ascii=False,
+                ),
+            },
+            ensure_ascii=False,
+        )
+    )
+    set_runtime_override(runtime)
+    try:
+        response = auth_client.post(
+            "/api/prompt-assistant/generate",
+            json=_assistant_payload(app_id=app_id, user_request="生成 ZIP 源码包"),
+        )
+    finally:
+        set_runtime_override(MockRuntime())
+
+    assert response.status_code == 200, response.text
+    assert response.json()["output_contract"] == {
+        "type": "artifact",
+        "json_schema": None,
+        "artifact_kind": "zip",
+        "max_count": None,
+        "validate_office_documents": None,
+    }
+    assert runtime.last_prompt is not None
+    assert "|archive|zip|file" in runtime.last_prompt
+
+
+def test_prompt_assistant_preserves_office_validation_contract(auth_client, enable_claude_agent):
+    enable_claude_agent()
+    app_id = _create_app_with_agent(auth_client)
+    runtime = PromptAssistantRuntime(
+        text=json.dumps(
+            {
+                "prompt": "生成可实际打开的 Office 资料包。",
+                "output_contract_json": json.dumps(
+                    {
+                        "type": "artifact",
+                        "artifact_kind": "zip",
+                        "max_count": 1,
+                        "validate_office_documents": True,
+                    },
+                    ensure_ascii=False,
+                ),
+            },
+            ensure_ascii=False,
+        )
+    )
+    set_runtime_override(runtime)
+    try:
+        response = auth_client.post(
+            "/api/prompt-assistant/generate",
+            json=_assistant_payload(app_id=app_id, user_request="精简提示词但保留 Office 验收"),
+        )
+    finally:
+        set_runtime_override(MockRuntime())
+
+    assert response.status_code == 200, response.text
+    assert response.json()["output_contract"] == {
+        "type": "artifact",
+        "json_schema": None,
+        "artifact_kind": "zip",
+        "max_count": 1,
+        "validate_office_documents": True,
+    }
 
 
 def test_prompt_assistant_drops_json_field_level_contract(auth_client, enable_claude_agent):

@@ -28,16 +28,17 @@
 - `useRunStore.status` 是前端 UI 状态，包含 `idle` / `starting` / 后端真实 run status；只有存在 `runId` 且状态可取消时才能调用 cancel。
 - 刷新或重新进入时通过 `useRunStore.restoreActiveRun` 恢复 active run；`pending`、`running`、`waiting_for_user` 进入 live SSE，`interrupted` 显示继续运行语义，终态 run 才按历史回放展示。
 - 运行和发布前使用 workflow lint；error 阻断，warning 只提示。`can_view_source=false` 的市场应用必须让后端基于真实 graph 预检，前端不展示内部节点/prompt 细节。
-- Run artifacts 通过 `GET /api/runs/:id/artifacts` 展示；前端只使用后端返回的 `download_url`，不拼 runtime 本地路径，也不从 HTML 输出扫描文件链接。
+- Run artifacts 通过 `GET /api/runs/:id/artifacts` 展示，Step Trace 的 artifacts 也由后端返回；两者只包含成功 artifact contract Step 声明的产物，不扫描 workspace。前端契约接收后端返回的 `sha256`、`integrity`（`verified` / `modified` / `legacy_unverified`）和 `download_url`；下载只使用 `download_url`，不拼 runtime 本地路径，也不从 HTML 输出扫描文件链接。
 - Prompt Assistant 生成态当前保存在 `useEditorStore.promptAssistantGenerations`，由 StepTab 发起 generate/resume/cancel；前端尚未通过 active endpoint 做刷新后恢复。若补恢复，必须先补 `lib/api.ts` helper，再接入 Editor/StepTab 恢复流程。
 
 ## Workflow Rules
 
 - Workflow 节点类型是 `user_input`、`asset`、`generate`、`condition`、`output`。最多一个 `user_input` 和一个 `output`；`output` 是终点节点，不能出边。
 - 素材节点字段必须遵守 `types.ts`：文本 `content`，URL `urls[]`，文件 `uploads[]`，画板 `upload`。
-- 应用默认 Agent 写在 `graph.agent`；`generate` / `condition` / `output` 节点只保存 prompt、model、reasoning_effort、output_contract 等节点级字段。
+- 应用默认 Agent 写在 `graph.agent`；`generate` / `condition` / `output` 节点只保存 prompt、model、reasoning_effort、output_contract 等节点级字段，`ask_user_enabled` 仅允许出现在 `generate`。
 - App 级 Tools 排除项写入 `graph.tools.disabled_tool_ids`。Preview、App View 和 Mobile Run 可展示/调整 App 级 Tools；不要把 Tools 重新做成 generate 节点配置。
-- `generate.output_contract` 只在 generate 节点配置，支持 json/html/artifact；普通 generate 默认自由文本且不保存契约。只有下游需要稳定字段、当前节点明确输出 HTML 片段或需要可下载文件产物时才使用契约。JSON 契约必须携带 strict object `json_schema`，artifact 必须携带 `artifact_kind`；`output` 节点固定为 HTML 最终展示。
+- `generate.output_contract` 只在 generate 节点配置，支持 json/html/artifact；普通 generate 默认自由文本且不保存契约。只有下游需要稳定字段、当前节点明确输出 HTML 片段或需要可下载文件产物时才使用契约。JSON 契约必须携带 strict object `json_schema`，artifact 必须携带 `artifact_kind`；`zip` kind 表示只接受真实 `.zip` 文件，`validate_office_documents` 是 artifact-only 的可选严格打开校验；`output` 节点固定为 HTML 最终展示。
+- `generate.ask_user_enabled` 是可选 bool；`false` 完全跳过该节点的运行期 ask_user preflight，省略或 `true` 沿用后端默认判定。不要把该字段扩展到 condition 或 output。
 - 条件分支 edge 必须保持 `source_handle` 与分支 key 对齐；`CONDITION_DEFAULT_BRANCH_KEY` 是系统保留 fallback key。
 - 从历史 run 节点重新执行、失败修复和 condition 分支测试走 `useRunStore.rerunFrom`，创建新 run，不修改来源 run 或 App graph。
 

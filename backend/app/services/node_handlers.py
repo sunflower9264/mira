@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -27,6 +28,7 @@ from app.schemas import RunInputValue
 from app.services.decision_prompts import append_ask_user_none_option, validate_ask_request_groups
 from app.services.artifacts import replace_workspace_paths_for_prompt, replace_workspace_paths_in_html
 from app.services.output_contracts import (
+    ContractValidationResult,
     contract_prompt_suffix,
     contract_repair_description,
     schema_for_contract,
@@ -38,6 +40,7 @@ from app.services.run_hub import RunChannel
 from app.services.runs import attachments_meta
 from app.services.runtime_uploads import RuntimeUploadRef, rewrite_runtime_upload_paths, runtime_upload_context
 from app.services.tools import RuntimeToolConfig
+from app.services.text_integrity import UNICODE_REPLACEMENT_ERROR, contains_unicode_replacement
 from app.services.uploads import resolve_upload
 from app.services.run_serializer import log_to_out
 from app.utils import dumps, loads, new_id, now_utc
@@ -45,6 +48,10 @@ from app.utils import dumps, loads, new_id, now_utc
 logger = logging.getLogger(__name__)
 _TEST_ASK_USER_RE = re.compile(r"\[\[ask_user:\{.*?\}\]\]", re.DOTALL)
 _ASK_USER_PREFLIGHT_MAX_ATTEMPTS = 2
+_OFFICE_VALIDATION_CONCURRENCY = 2
+_OFFICE_VALIDATION_SEMAPHORE = asyncio.Semaphore(_OFFICE_VALIDATION_CONCURRENCY)
+_UNICODE_REPAIR_MARKER = "[[MIRA_CORRUPTED_TEXT]]"
+_UNICODE_REPLACEMENT_ESCAPE_RE = re.compile(r"\\u[fF]{3}[dD]")
 _ASK_USER_PREFLIGHT_OUTPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
@@ -267,7 +274,11 @@ async def _handle_generate(ctx: ExecutionContext, node: dict[str, Any], step: St
 async def _handle_output(ctx: ExecutionContext, node: dict[str, Any], step: Step) -> NodeResult:
     result = await _run_llm(ctx, node, step, expects_text=True)
     if result.status == "success" and isinstance(result.output, str):
-        result.output = replace_workspace_paths_in_html(result.output, _run_from_context(ctx))
+        result.output = await asyncio.to_thread(
+            replace_workspace_paths_in_html,
+            result.output,
+            _run_from_context(ctx),
+        )
     return result
 
 
@@ -470,7 +481,9 @@ async def _run_llm_with_upload_context(
         )
     text = result.total_text or "".join(chunks)
     if expects_text and node.get("type") == "output":
-        validated = validate_contract_output(node, text, workspace=ctx.workspace)
+        validated = await _validate_node_output(ctx, node, text)
+        if ctx.channel.cancel_event.is_set():
+            return NodeResult(status="cancelled", agent_session_id=next_session_id)
         if not validated.ok:
             await _append_log(ctx, step, "warn", f"output 节点最终输出无效：{validated.error}")
             return NodeResult(
@@ -480,8 +493,17 @@ async def _run_llm_with_upload_context(
             )
         output = validated.output
     elif expects_text and node.get("type") == "generate":
-        validated = validate_contract_output(node, text, workspace=ctx.workspace)
+        validated = await _validate_node_output(ctx, node, text)
+        if ctx.channel.cancel_event.is_set():
+            return NodeResult(status="cancelled", agent_session_id=next_session_id)
         if not validated.ok:
+            if not validated.repairable:
+                await _append_log(ctx, step, "error", f"输出契约校验不可用：{validated.error}")
+                return NodeResult(
+                    status="failed",
+                    error=f"输出契约校验不可用：{validated.error or '校验器不可用'}",
+                    agent_session_id=next_session_id,
+                )
             await _append_log(ctx, step, "warn", f"输出契约校验失败，尝试自动修正：{validated.error}")
             repair_result = await _repair_contract_output(
                 ctx,
@@ -630,6 +652,8 @@ def _preflight_state(input_payload: dict[str, Any]) -> dict[str, Any]:
 def _should_run_ask_user_preflight(ctx: ExecutionContext, node: dict[str, Any], task_prompt: str) -> bool:
     if node.get("type") == "output":
         return False
+    if node.get("type") == "generate" and node.get("ask_user_enabled") is False:
+        return False
     if _prompt_forces_ask_user(task_prompt):
         return True
     if node.get("type") == "generate" and isinstance(node.get("output_contract"), dict):
@@ -716,6 +740,8 @@ def _parse_preflight_action(text: str) -> tuple[dict[str, Any] | None, str | Non
     payload = _json_object_from_text(text)
     if payload is None:
         return None, "必须输出合法 JSON 对象"
+    if contains_unicode_replacement(payload):
+        return None, UNICODE_REPLACEMENT_ERROR
     action = payload.get("action")
     if action == "ask":
         return payload, None
@@ -876,16 +902,41 @@ async def _repair_contract_output(
     on_chunk,
     output_schema: dict[str, Any] | None,
 ) -> NodeResult:
+    unicode_repair = (
+        contains_unicode_replacement(original_output)
+        or contains_unicode_replacement(validation_error)
+        or bool(_UNICODE_REPLACEMENT_ESCAPE_RE.search(original_output))
+        or bool(_UNICODE_REPLACEMENT_ESCAPE_RE.search(task_context))
+    )
+    repair_original_output = original_output
+    repair_task_context = task_context
+    repair_validation_error = validation_error
+    if unicode_repair:
+        repair_original_output = _mark_unicode_damage(original_output)
+        repair_task_context = _mark_unicode_damage(task_context)
+        repair_validation_error = validation_error.replace("\ufffd", "U+FFFD")
     template = await get_prompt_content(ctx.db, "output_contract_repair")
     repair_prompt = render_prompt(
         template,
         {
             "contract": contract_repair_description(node),
-            "validation_error": validation_error,
-            "original_output": original_output,
-            "task_context": task_context,
+            "validation_error": repair_validation_error,
+            "original_output": repair_original_output,
+            "task_context": repair_task_context,
         },
     )
+    if unicode_repair:
+        repair_prompt = _append_prompt(
+            repair_prompt,
+            "\n".join(
+                [
+                    "## 损坏字符修复要求",
+                    f"- {_UNICODE_REPAIR_MARKER} 表示原文本在该处已经损坏，不是需要保留的事实。",
+                    "- 根据任务上下文和前后文重写包含该标记的完整字段值或句子，恢复完整语义。",
+                    "- 最终输出不得包含该标记或 U+FFFD，也不得只删除标记后保留残缺词语。",
+                ]
+            ),
+        )
     repair_prompt = rewrite_runtime_upload_paths(repair_prompt)
     repair_chunks: list[str] = []
 
@@ -894,10 +945,15 @@ async def _repair_contract_output(
             repair_chunks.append(chunk.text)
         await on_chunk(chunk)
 
+    repair_session_id = ctx.agent_session_id
+    if unicode_repair:
+        repair_session_id = None
+        ctx.agent_session_id = None
+        step.agent_session_id = None
     try:
         result = await runtime.execute(
             prompt=repair_prompt,
-            session_id=ctx.agent_session_id,
+            session_id=repair_session_id,
             allowed_tools=None,
             model=model,
             reasoning_effort=reasoning_effort,
@@ -929,15 +985,64 @@ async def _repair_contract_output(
             agent_session_id=next_session_id,
         )
     repaired_text = result.total_text or "".join(repair_chunks)
-    validated = validate_contract_output(node, repaired_text, workspace=ctx.workspace)
+    validated = await _validate_node_output(ctx, node, repaired_text)
+    if ctx.channel.cancel_event.is_set():
+        return NodeResult(status="cancelled", agent_session_id=next_session_id)
     if not validated.ok:
+        error = (
+            f"输出契约校验不可用：{validated.error or '校验器不可用'}"
+            if not validated.repairable
+            else f"输出契约校验失败：{_contract_failure_message(node, validated.error or '输出无效')}"
+        )
         return NodeResult(
             status="failed",
-            error=f"输出契约校验失败：{_contract_failure_message(node, validated.error or '输出无效')}",
+            error=error,
             agent_session_id=next_session_id,
         )
     await _append_log(ctx, step, "info", "输出契约自动修正完成")
     return NodeResult(status="success", output=validated.output, agent_session_id=next_session_id)
+
+
+def _mark_unicode_damage(value: str) -> str:
+    marked = value.replace("\ufffd", _UNICODE_REPAIR_MARKER)
+    return _UNICODE_REPLACEMENT_ESCAPE_RE.sub(_UNICODE_REPAIR_MARKER, marked)
+
+
+async def _validate_node_output(
+    ctx: ExecutionContext,
+    node: dict[str, Any],
+    text: str,
+) -> ContractValidationResult:
+    def validate() -> ContractValidationResult:
+        return validate_contract_output(
+            node,
+            text,
+            workspace=ctx.workspace,
+            cancelled=ctx.channel.cancel_event.is_set,
+        )
+
+    contract = node.get("output_contract")
+    office_validation = (
+        isinstance(contract, dict)
+        and contract.get("type") == "artifact"
+        and contract.get("validate_office_documents") is True
+    )
+    if office_validation:
+        acquired = False
+        while not ctx.channel.cancel_event.is_set():
+            try:
+                await asyncio.wait_for(_OFFICE_VALIDATION_SEMAPHORE.acquire(), timeout=0.25)
+                acquired = True
+                break
+            except TimeoutError:
+                continue
+        if not acquired:
+            return ContractValidationResult(ok=False, error="Office 文档深检已取消")
+        try:
+            return await asyncio.to_thread(validate)
+        finally:
+            _OFFICE_VALIDATION_SEMAPHORE.release()
+    return await asyncio.to_thread(validate)
 
 
 def _contract_failure_message(node: dict[str, Any], validation_error: str) -> str:
@@ -964,7 +1069,7 @@ def _validate_ask_request(request: AskUserRequest) -> str | None:
 
 
 async def _compose_prompt(ctx: ExecutionContext, node: dict[str, Any], *, include_ask_user_protocol: bool = True) -> str:
-    prompt = _compose_node_prompt(ctx, node)
+    prompt = await asyncio.to_thread(_compose_node_prompt, ctx, node)
     if include_ask_user_protocol:
         ask_user_protocol = await get_prompt_content(ctx.db, "ask_user_protocol")
         prompt = _append_prompt(prompt, ask_user_protocol)

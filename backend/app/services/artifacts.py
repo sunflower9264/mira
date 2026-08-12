@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import html
 import re
 from datetime import timedelta
@@ -26,13 +27,16 @@ def signed_upload_download_url(user_id: str, upload_id: str) -> str:
     return f"/api/uploads/{quote(upload_id, safe='')}?download_token={quote(token, safe='')}"
 
 
-def signed_run_artifact_download_url(run: Run, relative_path: str) -> str:
-    token = _encode_download_token({
+def signed_run_artifact_download_url(run: Run, relative_path: str, sha256: str | None = None) -> str:
+    payload: dict[str, object] = {
         "kind": "run_artifact",
         "sub": run.owner_id,
         "run_id": run.id,
         "path": relative_path,
-    })
+    }
+    if sha256:
+        payload["sha256"] = sha256
+    token = _encode_download_token(payload)
     encoded_path = quote(relative_path, safe="/")
     return f"/api/runs/{quote(run.id, safe='')}/artifacts/{encoded_path}?download_token={quote(token, safe='')}"
 
@@ -47,7 +51,14 @@ def verify_upload_download_token(upload_id: str, token: str) -> str:
     return user_id
 
 
-def verify_run_artifact_download_token(run_id: str, relative_path: str, token: str) -> str:
+def verify_run_artifact_download_token(
+    run_id: str,
+    relative_path: str,
+    token: str,
+    *,
+    sha256: str | None = None,
+    allow_missing_sha256: bool = False,
+) -> str:
     payload = _decode_download_token(token)
     if (
         payload.get("kind") != "run_artifact"
@@ -58,7 +69,22 @@ def verify_run_artifact_download_token(run_id: str, relative_path: str, token: s
     user_id = payload.get("sub")
     if not isinstance(user_id, str) or not user_id:
         raise HTTPException(status_code=401, detail="下载链接已失效")
+    token_sha256 = payload.get("sha256")
+    if sha256 is not None:
+        if token_sha256 is None:
+            if not allow_missing_sha256:
+                raise HTTPException(status_code=401, detail="下载链接已失效")
+        elif token_sha256 != sha256:
+            raise HTTPException(status_code=401, detail="下载链接已失效")
     return user_id
+
+
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def resolve_run_artifact(run: Run, relative_path: str) -> Path | None:
@@ -138,7 +164,7 @@ def _replacement_for_path(
         return None
     name = path.name or relative
     if path.is_file():
-        url = signed_run_artifact_download_url(run, relative)
+        url = signed_run_artifact_download_url(run, relative, file_sha256(path))
         if mode == "html":
             return f'<a href="{html.escape(url, quote=True)}" download>{html.escape(name)}</a>{suffix}'
         return f'{name} (download_url: {url}){suffix}'

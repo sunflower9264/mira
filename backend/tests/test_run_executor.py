@@ -14,6 +14,9 @@ from sqlalchemy import select
 
 from app.db import SessionLocal
 from app.models import Run, Step
+from app.services.artifacts import file_sha256
+from app.services import output_contracts
+from app.services.office_documents import OfficeValidationUnavailable
 from app.services.run_orchestrator import start_run
 from app.services.runtime_paths import run_workspace, uploads_dir
 from app.runtime.base import AgentChunk, AgentExecutionResult, AgentProviderStatus, AskUserRequest
@@ -286,6 +289,81 @@ class ArtifactContractRuntime:
         )
 
 
+def _minimal_docx_bytes() -> bytes:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as document:
+        document.writestr(
+            "[Content_Types].xml",
+            '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+            '<Override PartName="/word/document.xml" ContentType="application/xml"/>'
+            "</Types>",
+        )
+        document.writestr(
+            "word/document.xml",
+            '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+            "<w:body><w:p/></w:body></w:document>",
+        )
+    return buffer.getvalue()
+
+
+class OfficeArtifactRepairRuntime:
+    def __init__(self) -> None:
+        self.prompts: list[str] = []
+
+    async def detect_status(self) -> AgentProviderStatus:
+        return AgentProviderStatus(
+            installed=True,
+            runnable=True,
+            identity="office-artifact-repair",
+            method="test",
+            checked_at=now_utc(),
+        )
+
+    async def execute(
+        self,
+        *,
+        prompt: str,
+        session_id: str | None,
+        allowed_tools: list[str] | None,
+        model: str | None,
+        reasoning_effort: str | None,
+        cwd: Path,
+        on_chunk,
+        cancel_event: asyncio.Event,
+        on_ask_user=None,
+        runtime_tools=None,
+        runtime_policy="execute",
+        output_schema=None,
+    ) -> AgentExecutionResult:
+        if runtime_policy == "ask_user_plan":
+            text = '{"action":"complete","decision_summary":"无需额外提问。","reason":"测试无需用户决策。"}'
+            await on_chunk(AgentChunk(type="text", text=text))
+            return AgentExecutionResult(session_id=session_id, total_text=text, finished_with="done")
+        if _is_output_prompt(prompt):
+            text = _structured_text("<section>OK</section>", output_schema)
+            await on_chunk(AgentChunk(type="text", text=text))
+            return AgentExecutionResult(
+                session_id=session_id or "office_artifact_repair_session",
+                total_text=text,
+                finished_with="done",
+            )
+        self.prompts.append(prompt)
+        artifact = cwd / "documents.zip"
+        if not artifact.exists():
+            with zipfile.ZipFile(artifact, "w") as bundle:
+                bundle.writestr("document.docx", _minimal_docx_bytes())
+        text = json.dumps(
+            {"artifacts": [{"name": "Documents", "path": str(artifact)}]},
+            ensure_ascii=False,
+        )
+        await on_chunk(AgentChunk(type="text", text=text))
+        return AgentExecutionResult(
+            session_id=session_id or "office_artifact_repair_session",
+            total_text=text,
+            finished_with="done",
+        )
+
+
 class ReusedArtifactPathRuntime:
     async def detect_status(self) -> AgentProviderStatus:
         return AgentProviderStatus(
@@ -318,7 +396,8 @@ class ReusedArtifactPathRuntime:
             text = _structured_text("<section>OK</section>", output_schema)
         elif "write-bundle" in prompt:
             bundle = cwd / "bundle.zip"
-            bundle.write_bytes(b"bundle")
+            with zipfile.ZipFile(bundle, "w", compression=zipfile.ZIP_STORED) as archive:
+                archive.writestr("README.txt", b"bundle")
             text = json.dumps({"artifacts": [{"name": "Bundle", "path": str(bundle)}]}, ensure_ascii=False)
         elif "relative-ref" in prompt:
             text = json.dumps({"code_package_ref": {"path": "bundle.zip"}}, ensure_ascii=False)
@@ -336,6 +415,7 @@ class SequenceRuntime:
     def __init__(self, outputs: list[str]) -> None:
         self.outputs = outputs
         self.prompts: list[str] = []
+        self.session_ids: list[str | None] = []
 
     async def detect_status(self) -> AgentProviderStatus:
         return AgentProviderStatus(
@@ -374,11 +454,12 @@ class SequenceRuntime:
                 total_text=text,
                 finished_with="done",
             )
+        self.session_ids.append(session_id)
         self.prompts.append(prompt)
         text = self.outputs.pop(0) if self.outputs else ""
         await on_chunk(AgentChunk(type="text", text=text))
         return AgentExecutionResult(
-            session_id=session_id or "sequence_session",
+            session_id=session_id or f"sequence_session_{len(self.prompts)}",
             total_text=text,
             finished_with="done",
         )
@@ -1913,14 +1994,18 @@ def test_rerun_from_copies_reused_workspace_artifact_paths(auth_client, enable_c
 
         raw_outputs = asyncio.run(load_raw_outputs())
         bundle_output = raw_outputs["n_bundle"][0]
-        bundle_path = Path(bundle_output["path"])
+        assert bundle_output["path"] == "bundle.zip"
+        assert bundle_output["manifest_version"] == 1
+        bundle_path = run_workspace("user_admin", app_id, rerun_id) / bundle_output["path"]
         assert bundle_path.exists()
-        assert bundle_path.read_bytes() == b"bundle"
-        assert rerun_id in str(bundle_path)
+        assert bundle_output["sha256"] == file_sha256(bundle_path)
+        with zipfile.ZipFile(bundle_path) as archive:
+            assert archive.read("README.txt") == b"bundle"
 
         ref_output = raw_outputs["n_ref"]
         assert ref_output["code_package_ref"]["path"] == "bundle.zip"
-        assert (run_workspace("user_admin", app_id, rerun_id) / "bundle.zip").read_bytes() == b"bundle"
+        with zipfile.ZipFile(run_workspace("user_admin", app_id, rerun_id) / "bundle.zip") as archive:
+            assert archive.read("README.txt") == b"bundle"
     finally:
         set_runtime_override(None)
 
@@ -2567,6 +2652,53 @@ def test_executor_skips_ask_user_preflight_for_output_node(auth_client, enable_c
     assert by_id["n_out"]["output"] == "<section>OK</section>"
 
 
+def test_executor_skips_forced_ask_user_preflight_when_disabled(auth_client, enable_claude_agent):
+    enable_claude_agent()
+    runtime = PreflightScriptRuntime([_complete_action()])
+    set_runtime_override(runtime)
+    try:
+        node = _generate_node("n_gen", prompt="必须先调用 ask_user，再生成纯文本结果")
+        node["ask_user_enabled"] = False
+        graph = {
+            "agent": "claude",
+            "nodes": [node],
+            "edges": [],
+        }
+        app_id = _build_app(auth_client, graph=graph)
+        run = auth_client.post("/api/runs", json={"app_id": app_id, "inputs": {}}).json()
+        final = _wait_for_terminal(auth_client, run["run_id"])
+    finally:
+        set_runtime_override(MockRuntime())
+
+    assert final["status"] == "success", final
+    assert runtime.preflight_prompts == []
+    by_id = {step["node_id"]: step for step in final["steps"]}
+    assert by_id["n_gen"]["output"] == "SCRIPT_RESULT"
+
+
+def test_executor_keeps_ask_user_preflight_when_explicitly_enabled(auth_client, enable_claude_agent):
+    enable_claude_agent()
+    runtime = PreflightScriptRuntime([_complete_action()])
+    set_runtime_override(runtime)
+    try:
+        node = _generate_node("n_gen", prompt="生成纯文本结果")
+        node["ask_user_enabled"] = True
+        graph = {
+            "agent": "claude",
+            "nodes": [node],
+            "edges": [],
+        }
+        app_id = _build_app(auth_client, graph=graph)
+        run = auth_client.post("/api/runs", json={"app_id": app_id, "inputs": {}}).json()
+        final = _wait_for_terminal(auth_client, run["run_id"])
+    finally:
+        set_runtime_override(MockRuntime())
+
+    assert final["status"] == "success", final
+    assert len(runtime.preflight_prompts) == 1
+    assert "生成纯文本结果" in runtime.preflight_prompts[0]
+
+
 def test_executor_skips_preflight_for_contract_generate_with_user_input(auth_client, enable_claude_agent):
     enable_claude_agent()
     runtime = PreflightScriptRuntime([_complete_action()])
@@ -2629,7 +2761,186 @@ def test_executor_repairs_generate_contract_output_once(auth_client, enable_clau
     assert original_output in repair_prompt
     assert "只做通过校验所需的最小结构或格式修正" in repair_prompt
     assert "不要总结、翻译、润色或补充新事实" in repair_prompt
+    assert runtime.session_ids == [None, "sequence_session_1"]
     assert any("输出契约校验失败，尝试自动修正" in log["text"] for log in step["logs"])
+
+
+def test_executor_repairs_office_artifact_validation_once(
+    auth_client,
+    enable_claude_agent,
+    monkeypatch,
+):
+    enable_claude_agent()
+    runtime = OfficeArtifactRepairRuntime()
+    validations: list[Path] = []
+
+    def validate_office(path: Path, **_kwargs) -> str | None:
+        validations.append(path)
+        return "Office 文档无法打开" if len(validations) == 1 else None
+
+    monkeypatch.setattr(output_contracts, "validate_office_documents", validate_office)
+    set_runtime_override(runtime)
+    try:
+        node = _contract_node(
+            "n_gen",
+            prompt="生成 Office 资料包",
+            output_contract={
+                "type": "artifact",
+                "artifact_kind": "zip",
+                "max_count": 1,
+                "validate_office_documents": True,
+            },
+        )
+        node["ask_user_enabled"] = False
+        app_id = _build_app(auth_client, graph={"agent": "claude", "nodes": [node], "edges": []})
+        run = auth_client.post("/api/runs", json={"app_id": app_id, "inputs": {}}).json()
+        final = _wait_for_terminal(auth_client, run["run_id"])
+    finally:
+        set_runtime_override(MockRuntime())
+
+    assert final["status"] == "success", final
+    assert len(validations) == 2
+    assert len(runtime.prompts) == 2
+    assert "Office 文档无法打开" in runtime.prompts[1]
+    manifest = final["steps"][0]["output"]
+    assert manifest[0]["path"] == "documents.zip"
+    assert manifest[0]["manifest_version"] == 1
+
+
+def test_executor_does_not_repair_when_office_validator_is_unavailable(
+    auth_client,
+    enable_claude_agent,
+    monkeypatch,
+):
+    enable_claude_agent()
+    runtime = OfficeArtifactRepairRuntime()
+
+    def unavailable(_path: Path, **_kwargs) -> str | None:
+        raise OfficeValidationUnavailable("Office 文档深检不可用：缺少 pdfinfo")
+
+    monkeypatch.setattr(output_contracts, "validate_office_documents", unavailable)
+    set_runtime_override(runtime)
+    try:
+        node = _contract_node(
+            "n_gen",
+            prompt="生成 Office 资料包",
+            output_contract={
+                "type": "artifact",
+                "artifact_kind": "zip",
+                "max_count": 1,
+                "validate_office_documents": True,
+            },
+        )
+        node["ask_user_enabled"] = False
+        app_id = _build_app(auth_client, graph={"agent": "claude", "nodes": [node], "edges": []})
+        run = auth_client.post("/api/runs", json={"app_id": app_id, "inputs": {}}).json()
+        final = _wait_for_terminal(auth_client, run["run_id"])
+    finally:
+        set_runtime_override(MockRuntime())
+
+    assert final["status"] == "failed"
+    assert len(runtime.prompts) == 1
+    assert "输出契约校验不可用" in (final["steps"][0].get("error") or "")
+
+
+def test_executor_regenerates_unicode_damaged_contract_field_in_fresh_session(
+    auth_client,
+    enable_claude_agent,
+):
+    enable_claude_agent()
+    runtime = SequenceRuntime(['{"title":"设备���面"}', '{"title":"设备页面"}'])
+    set_runtime_override(runtime)
+    try:
+        graph = {
+            "agent": "claude",
+            "nodes": [
+                _contract_node(
+                    "n_gen",
+                    prompt="生成结构化结果",
+                    output_contract=_json_contract("title"),
+                ),
+            ],
+            "edges": [],
+        }
+        app_id = _build_app(auth_client, graph=graph)
+        run = auth_client.post("/api/runs", json={"app_id": app_id, "inputs": {}}).json()
+        final = _wait_for_terminal(auth_client, run["run_id"])
+    finally:
+        set_runtime_override(MockRuntime())
+
+    assert final["status"] == "success", final
+    step = final["steps"][0]
+    assert step["output"] == {"title": "设备页面"}
+    assert runtime.session_ids == [None, None]
+    assert step["agent_session_id"] == "sequence_session_2"
+    repair_prompt = runtime.prompts[1]
+    assert "[[MIRA_CORRUPTED_TEXT]]" in repair_prompt
+    assert "损坏字符修复要求" in repair_prompt
+    assert "设备���面" not in repair_prompt
+    assert "不得只删除标记后保留残缺词语" in repair_prompt
+
+
+def test_executor_marks_escaped_unicode_damage_before_contract_repair(
+    auth_client,
+    enable_claude_agent,
+):
+    enable_claude_agent()
+    runtime = SequenceRuntime(['{"title":"设备\\ufffd面"}', '{"title":"设备页面"}'])
+    set_runtime_override(runtime)
+    try:
+        graph = {
+            "agent": "claude",
+            "nodes": [
+                _contract_node(
+                    "n_gen",
+                    prompt="生成结构化结果",
+                    output_contract=_json_contract("title"),
+                ),
+            ],
+            "edges": [],
+        }
+        app_id = _build_app(auth_client, graph=graph)
+        run = auth_client.post("/api/runs", json={"app_id": app_id, "inputs": {}}).json()
+        final = _wait_for_terminal(auth_client, run["run_id"])
+    finally:
+        set_runtime_override(MockRuntime())
+
+    assert final["status"] == "success", final
+    assert final["steps"][0]["output"] == {"title": "设备页面"}
+    repair_prompt = runtime.prompts[1]
+    assert "[[MIRA_CORRUPTED_TEXT]]" in repair_prompt
+    assert "\\ufffd" not in repair_prompt.lower()
+
+
+def test_executor_rejects_unicode_damage_that_survives_contract_repair(
+    auth_client,
+    enable_claude_agent,
+):
+    enable_claude_agent()
+    runtime = SequenceRuntime(['{"title":"设备���面"}', '{"title":"仍然���坏"}'])
+    set_runtime_override(runtime)
+    try:
+        graph = {
+            "agent": "claude",
+            "nodes": [
+                _contract_node(
+                    "n_gen",
+                    prompt="生成结构化结果",
+                    output_contract=_json_contract("title"),
+                ),
+            ],
+            "edges": [],
+        }
+        app_id = _build_app(auth_client, graph=graph)
+        run = auth_client.post("/api/runs", json={"app_id": app_id, "inputs": {}}).json()
+        final = _wait_for_terminal(auth_client, run["run_id"])
+    finally:
+        set_runtime_override(MockRuntime())
+
+    assert final["status"] == "failed"
+    step = final["steps"][0]
+    assert step["status"] == "failed"
+    assert "U+FFFD" in (step.get("error") or "")
 
 
 def test_executor_fails_when_contract_repair_still_invalid(auth_client, enable_claude_agent):
@@ -3065,15 +3376,7 @@ def test_executor_replaces_workspace_paths_with_signed_download_urls(auth_client
     assert artifacts_response.status_code == 200, artifacts_response.text
     artifacts_body = artifacts_response.json()
     assert artifacts_body["truncated"] is False
-    assert len(artifacts_body["artifacts"]) == 1
-    artifact = artifacts_body["artifacts"][0]
-    assert artifact["name"] == "deliverable.zip"
-    assert artifact["path"] == "deliverable.zip"
-    assert artifact["size"] == len(b"artifact")
-    assert artifact["source_kind"] == "workspace_file"
-    assert artifact["source_node_id"] is None
-    assert artifact["download_url"].startswith(f"/api/runs/{run_id}/artifacts/deliverable.zip")
-    assert "/runtime/workspaces/" not in artifact["download_url"]
+    assert artifacts_body["artifacts"] == []
 
     href = output_html.split('href="', 1)[1].split('"', 1)[0].replace("&amp;", "&")
     headers = dict(auth_client.headers)
@@ -3082,8 +3385,7 @@ def test_executor_replaces_workspace_paths_with_signed_download_urls(auth_client
         downloaded = auth_client.get(href)
     finally:
         auth_client.headers.update(headers)
-    assert downloaded.status_code == 200, downloaded.text
-    assert downloaded.content == b"artifact"
+    assert downloaded.status_code == 404
 
 
 def test_run_artifacts_list_uses_artifact_contract_metadata(auth_client, enable_claude_agent):

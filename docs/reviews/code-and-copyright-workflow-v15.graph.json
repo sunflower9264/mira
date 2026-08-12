@@ -1,0 +1,2332 @@
+{
+  "agent": "codex",
+  "tools": {
+    "disabled_tool_ids": [
+      "skill:skill_99c60286382a4e75829fc03fcd56f276",
+      "skill:skill_477bf1e362254679b881a956821f6362",
+      "skill:skill_92e828b5ecd14770a3897e2f1805d8d9",
+      "skill:skill_b737bd8e189b42c9b02846c061162d46",
+      "skill:skill_a855a8f68a924d7d9f73133b55b00eac"
+    ]
+  },
+  "nodes": [
+    {
+      "id": "n_input_idea",
+      "type": "user_input",
+      "position": {
+        "x": 0,
+        "y": 320
+      },
+      "title": "输入软件想法",
+      "input_schema": {
+        "label": "请描述行业、业务场景或软件想法",
+        "placeholder": "例如：面向制造企业的设备巡检与工单闭环管理平台，需要台账、巡检、异常处理、统计和导出。",
+        "kind": "text",
+        "required": true
+      }
+    },
+    {
+      "id": "n_candidate_directions",
+      "type": "generate",
+      "position": {
+        "x": 420,
+        "y": 320
+      },
+      "title": "候选软件方向",
+      "model": "gpt-5.5",
+      "reasoning_effort": "high",
+      "ask_user_enabled": false,
+      "prompt": "基于用户输入生成 3 个可开发、可运行、可演示的软件方向。\n每个方向必须说明目标用户、核心问题、完整业务闭环、6–10 个核心功能、演示价值、软著适配性和最多 3 项实现风险。\n优先选择无需真实第三方系统或硬件即可完成的 B 端软件；不得编造客户、法规、接口或登记事实。\n本节点只生成候选，不写完整 PRD、代码或软著正文。",
+      "output_contract": {
+        "type": "json",
+        "json_schema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "input_summary": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            "candidates": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  },
+                  "product_name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  },
+                  "target_users": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 512
+                    },
+                    "minItems": 1,
+                    "maxItems": 4
+                  },
+                  "core_problem": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  },
+                  "core_loop": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 512
+                    },
+                    "minItems": 4,
+                    "maxItems": 7
+                  },
+                  "core_features": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 512
+                    },
+                    "minItems": 6,
+                    "maxItems": 10
+                  },
+                  "demo_value": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  },
+                  "copyright_fit": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  },
+                  "implementation_risks": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 512
+                    },
+                    "minItems": 0,
+                    "maxItems": 3
+                  },
+                  "visual_keywords": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 512
+                    },
+                    "minItems": 3,
+                    "maxItems": 5
+                  }
+                },
+                "required": [
+                  "id",
+                  "product_name",
+                  "target_users",
+                  "core_problem",
+                  "core_loop",
+                  "core_features",
+                  "demo_value",
+                  "copyright_fit",
+                  "implementation_risks",
+                  "visual_keywords"
+                ]
+              },
+              "minItems": 3,
+              "maxItems": 3
+            },
+            "recommended_candidate_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            "shared_constraints": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512
+              },
+              "minItems": 3,
+              "maxItems": 8
+            }
+          },
+          "required": [
+            "input_summary",
+            "candidates",
+            "recommended_candidate_id",
+            "shared_constraints"
+          ]
+        }
+      }
+    },
+    {
+      "id": "n_direction_visual_choice",
+      "type": "generate",
+      "position": {
+        "x": 840,
+        "y": 320
+      },
+      "title": "方向与视觉选择",
+      "model": "gpt-5.5",
+      "reasoning_effort": "high",
+      "ask_user_enabled": true,
+      "prompt": "必须先调用 ask_user，一次提交两组选择：\n1. 软件方向：直接使用上游 3 个候选，推荐项排第一。\n2. 产品视觉风格：使用 design-md，从 brand-index 中选择 2–3 个真实 brand_slug，并说明适用原因和代价。\n用户回答后只保留一个软件方向和一个视觉方向；如选择“以上都不是”，按补充文字收敛，不重新扩展无关方向。\n输出的 design profile 必须能由 Next.js 实现，不得虚构品牌规范。",
+      "output_contract": {
+        "type": "json",
+        "json_schema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "selected_candidate_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            "product_name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            "target_users": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512
+              },
+              "minItems": 1,
+              "maxItems": 4
+            },
+            "core_problem": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            "core_loop": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512
+              },
+              "minItems": 4,
+              "maxItems": 7
+            },
+            "selected_visual": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "brand_slug": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512
+                },
+                "reference_file": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512
+                },
+                "rationale": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512
+                },
+                "design_tokens": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  },
+                  "minItems": 4,
+                  "maxItems": 8
+                },
+                "layout_rules": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  },
+                  "minItems": 3,
+                  "maxItems": 6
+                },
+                "forbidden_patterns": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  },
+                  "minItems": 2,
+                  "maxItems": 6
+                }
+              },
+              "required": [
+                "brand_slug",
+                "reference_file",
+                "rationale",
+                "design_tokens",
+                "layout_rules",
+                "forbidden_patterns"
+              ]
+            },
+            "user_decisions": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512
+              },
+              "minItems": 2,
+              "maxItems": 5
+            },
+            "product_constraints": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512
+              },
+              "minItems": 3,
+              "maxItems": 8
+            }
+          },
+          "required": [
+            "selected_candidate_id",
+            "product_name",
+            "target_users",
+            "core_problem",
+            "core_loop",
+            "selected_visual",
+            "user_decisions",
+            "product_constraints"
+          ]
+        }
+      }
+    },
+    {
+      "id": "n_product_spec_draft",
+      "type": "generate",
+      "position": {
+        "x": 1260,
+        "y": 320
+      },
+      "title": "产品与实现规格草案",
+      "model": "gpt-5.5",
+      "reasoning_effort": "high",
+      "ask_user_enabled": false,
+      "prompt": "使用 be-serious，将已选软件方向和视觉方案整理为可直接开发的 V1.0 产品与实现规格草案。\n范围固定为 8–12 个 must-have、5–7 个模块、7–10 个页面、3–5 条闭环流程和 7–12 个数据对象。\n技术边界为 Next.js、TypeScript、npm 和真实 SQLite 持久化；页面、API 或 server actions 必须形成真实读写闭环。\n不加入真实第三方集成、生产级复杂权限或上游未选择的大模块。未知但不阻塞实现的内容放入 open_items。",
+      "output_contract": {
+        "type": "json",
+        "json_schema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "product": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512
+                },
+                "version": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512
+                },
+                "positioning": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512
+                },
+                "target_users": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  },
+                  "minItems": 1,
+                  "maxItems": 4
+                },
+                "core_value": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512
+                }
+              },
+              "required": [
+                "name",
+                "version",
+                "positioning",
+                "target_users",
+                "core_value"
+              ]
+            },
+            "scope": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "must_have": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 512
+                      },
+                      "name": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 512
+                      },
+                      "acceptance": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 512
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "name",
+                      "acceptance"
+                    ]
+                  },
+                  "minItems": 8,
+                  "maxItems": 12
+                },
+                "excluded": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  },
+                  "minItems": 3,
+                  "maxItems": 8
+                }
+              },
+              "required": [
+                "must_have",
+                "excluded"
+              ]
+            },
+            "modules": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  },
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  },
+                  "responsibilities": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 512
+                    },
+                    "minItems": 2,
+                    "maxItems": 5
+                  },
+                  "feature_ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 512
+                    },
+                    "minItems": 1,
+                    "maxItems": 8
+                  }
+                },
+                "required": [
+                  "id",
+                  "name",
+                  "responsibilities",
+                  "feature_ids"
+                ]
+              },
+              "minItems": 5,
+              "maxItems": 7
+            },
+            "pages": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  },
+                  "route": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  },
+                  "purpose": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  },
+                  "key_actions": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 512
+                    },
+                    "minItems": 2,
+                    "maxItems": 6
+                  },
+                  "states": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 512
+                    },
+                    "minItems": 2,
+                    "maxItems": 5
+                  }
+                },
+                "required": [
+                  "name",
+                  "route",
+                  "purpose",
+                  "key_actions",
+                  "states"
+                ]
+              },
+              "minItems": 7,
+              "maxItems": 10
+            },
+            "flows": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  },
+                  "steps": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 512
+                    },
+                    "minItems": 4,
+                    "maxItems": 8
+                  },
+                  "result": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  }
+                },
+                "required": [
+                  "name",
+                  "steps",
+                  "result"
+                ]
+              },
+              "minItems": 3,
+              "maxItems": 5
+            },
+            "data_entities": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  },
+                  "purpose": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  },
+                  "key_fields": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 512
+                    },
+                    "minItems": 4,
+                    "maxItems": 10
+                  }
+                },
+                "required": [
+                  "name",
+                  "purpose",
+                  "key_fields"
+                ]
+              },
+              "minItems": 7,
+              "maxItems": 12
+            },
+            "implementation": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "stack": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  },
+                  "minItems": 3,
+                  "maxItems": 7
+                },
+                "persistence": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512
+                },
+                "required_scripts": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  },
+                  "minItems": 4,
+                  "maxItems": 6
+                },
+                "acceptance_checks": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  },
+                  "minItems": 5,
+                  "maxItems": 10
+                },
+                "forbidden_outputs": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  },
+                  "minItems": 6,
+                  "maxItems": 14
+                }
+              },
+              "required": [
+                "stack",
+                "persistence",
+                "required_scripts",
+                "acceptance_checks",
+                "forbidden_outputs"
+              ]
+            },
+            "copyright_basis": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "application_domain": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512
+                },
+                "functional_summary": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512
+                },
+                "technical_features": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  },
+                  "minItems": 3,
+                  "maxItems": 6
+                }
+              },
+              "required": [
+                "application_domain",
+                "functional_summary",
+                "technical_features"
+              ]
+            },
+            "open_items": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512
+              },
+              "minItems": 0,
+              "maxItems": 5
+            }
+          },
+          "required": [
+            "product",
+            "scope",
+            "modules",
+            "pages",
+            "flows",
+            "data_entities",
+            "implementation",
+            "copyright_basis",
+            "open_items"
+          ]
+        }
+      }
+    },
+    {
+      "id": "n_product_spec_final",
+      "type": "generate",
+      "position": {
+        "x": 1680,
+        "y": 320
+      },
+      "title": "规格确认与定稿",
+      "model": "gpt-5.5",
+      "reasoning_effort": "high",
+      "ask_user_enabled": true,
+      "prompt": "必须先调用 ask_user，让用户确认上游规格草案。只提供一组选择：\n1. 按草案执行（推荐）；2. 收缩为核心闭环；3. 增强演示完整度。\n根据选择和补充文字做一次定稿，不重新发散方向。收缩时仍保留可运行闭环；增强时只加入低风险、可在本期实现的功能。\n最终规格仍须满足既定模块、页面、流程和数据对象数量范围，并记录本次确认结果。",
+      "output_contract": {
+        "type": "json",
+        "json_schema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "product": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512
+                },
+                "version": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512
+                },
+                "positioning": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512
+                },
+                "target_users": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  },
+                  "minItems": 1,
+                  "maxItems": 4
+                },
+                "core_value": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512
+                }
+              },
+              "required": [
+                "name",
+                "version",
+                "positioning",
+                "target_users",
+                "core_value"
+              ]
+            },
+            "scope": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "must_have": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 512
+                      },
+                      "name": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 512
+                      },
+                      "acceptance": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 512
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "name",
+                      "acceptance"
+                    ]
+                  },
+                  "minItems": 8,
+                  "maxItems": 12
+                },
+                "excluded": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  },
+                  "minItems": 3,
+                  "maxItems": 8
+                }
+              },
+              "required": [
+                "must_have",
+                "excluded"
+              ]
+            },
+            "modules": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  },
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  },
+                  "responsibilities": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 512
+                    },
+                    "minItems": 2,
+                    "maxItems": 5
+                  },
+                  "feature_ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 512
+                    },
+                    "minItems": 1,
+                    "maxItems": 8
+                  }
+                },
+                "required": [
+                  "id",
+                  "name",
+                  "responsibilities",
+                  "feature_ids"
+                ]
+              },
+              "minItems": 5,
+              "maxItems": 7
+            },
+            "pages": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  },
+                  "route": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  },
+                  "purpose": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  },
+                  "key_actions": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 512
+                    },
+                    "minItems": 2,
+                    "maxItems": 6
+                  },
+                  "states": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 512
+                    },
+                    "minItems": 2,
+                    "maxItems": 5
+                  }
+                },
+                "required": [
+                  "name",
+                  "route",
+                  "purpose",
+                  "key_actions",
+                  "states"
+                ]
+              },
+              "minItems": 7,
+              "maxItems": 10
+            },
+            "flows": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  },
+                  "steps": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 512
+                    },
+                    "minItems": 4,
+                    "maxItems": 8
+                  },
+                  "result": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  }
+                },
+                "required": [
+                  "name",
+                  "steps",
+                  "result"
+                ]
+              },
+              "minItems": 3,
+              "maxItems": 5
+            },
+            "data_entities": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  },
+                  "purpose": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  },
+                  "key_fields": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 512
+                    },
+                    "minItems": 4,
+                    "maxItems": 10
+                  }
+                },
+                "required": [
+                  "name",
+                  "purpose",
+                  "key_fields"
+                ]
+              },
+              "minItems": 7,
+              "maxItems": 12
+            },
+            "implementation": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "stack": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  },
+                  "minItems": 3,
+                  "maxItems": 7
+                },
+                "persistence": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512
+                },
+                "required_scripts": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  },
+                  "minItems": 4,
+                  "maxItems": 6
+                },
+                "acceptance_checks": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  },
+                  "minItems": 5,
+                  "maxItems": 10
+                },
+                "forbidden_outputs": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  },
+                  "minItems": 6,
+                  "maxItems": 14
+                }
+              },
+              "required": [
+                "stack",
+                "persistence",
+                "required_scripts",
+                "acceptance_checks",
+                "forbidden_outputs"
+              ]
+            },
+            "copyright_basis": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "application_domain": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512
+                },
+                "functional_summary": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512
+                },
+                "technical_features": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  },
+                  "minItems": 3,
+                  "maxItems": 6
+                }
+              },
+              "required": [
+                "application_domain",
+                "functional_summary",
+                "technical_features"
+              ]
+            },
+            "open_items": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512
+              },
+              "minItems": 0,
+              "maxItems": 5
+            },
+            "approval": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "decision": {
+                  "type": "string",
+                  "enum": [
+                    "accepted",
+                    "reduced",
+                    "enhanced",
+                    "customized"
+                  ],
+                  "maxLength": 512
+                },
+                "summary": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512
+                },
+                "applied_changes": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  },
+                  "minItems": 1,
+                  "maxItems": 8
+                }
+              },
+              "required": [
+                "decision",
+                "summary",
+                "applied_changes"
+              ]
+            }
+          },
+          "required": [
+            "product",
+            "scope",
+            "modules",
+            "pages",
+            "flows",
+            "data_entities",
+            "implementation",
+            "copyright_basis",
+            "open_items",
+            "approval"
+          ]
+        }
+      }
+    },
+    {
+      "id": "n_copyright_templates",
+      "type": "asset",
+      "position": {
+        "x": 1680,
+        "y": 780
+      },
+      "title": "软著模板",
+      "asset_kind": "file",
+      "uploads": [
+        {
+          "id": "upl_2acf08c2ccc04f32889d2b54c20d286c",
+          "name": "模板-申请表.docx",
+          "mime": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          "size": 11435,
+          "created_at": "2026-06-08T06:14:34.434764Z"
+        },
+        {
+          "id": "upl_0cc355250f8b47bc8f99cdd74542165f",
+          "name": "模板-功能特点.docx",
+          "mime": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          "size": 11100,
+          "created_at": "2026-06-08T06:14:34.308078Z"
+        },
+        {
+          "id": "upl_202cf869a8614bc69d3a1368b128be7f",
+          "name": "模板-源代码.docx",
+          "mime": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          "size": 1543,
+          "created_at": "2026-06-08T14:43:07.660532Z"
+        },
+        {
+          "id": "upl_8270f45f286c4b1c98b403ccc6a8ca4f",
+          "name": "模板-说明书.docx",
+          "mime": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          "size": 967017,
+          "created_at": "2026-06-08T06:14:33.933841Z"
+        },
+        {
+          "id": "upl_c987e49fb9cd40b28b5b666750960c54",
+          "name": "模板-设计文档.docx",
+          "mime": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          "size": 183522,
+          "created_at": "2026-06-08T06:14:33.643950Z"
+        },
+        {
+          "id": "upl_e61fa277d4bb40a19574a6bfb316d9f9",
+          "name": "模板-产品测试功能表.docx",
+          "mime": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          "size": 27800,
+          "created_at": "2026-06-08T14:43:07.530231Z"
+        },
+        {
+          "id": "upl_fc88ea55620d4350851335673b3276bc",
+          "name": "模板-非嵌入式软件环境表.docx",
+          "mime": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          "size": 12798,
+          "created_at": "2026-06-08T06:14:33.169013Z"
+        },
+        {
+          "id": "upl_86abe75aecb24175bcd229f04bfe8a51",
+          "name": "模板-账号.txt",
+          "mime": "text/plain",
+          "size": 52,
+          "created_at": "2026-06-08T14:43:07.791678Z"
+        }
+      ]
+    },
+    {
+      "id": "n_document_spec",
+      "type": "generate",
+      "position": {
+        "x": 2100,
+        "y": 680
+      },
+      "title": "软著材料规格",
+      "model": "gpt-5.5",
+      "reasoning_effort": "medium",
+      "ask_user_enabled": false,
+      "prompt": "根据最终产品规格生成简洁的软著材料提纲，不读取或生成文件。\nmaterials 的 8 个固定类别各写 2–6 个章节或字段；主体、证件、日期、权利、真实环境和账号只列入 placeholder_fields。\n每项一句，不展开正文，不重复产品规格、截图路由、源码规则或验收结论。",
+      "output_contract": {
+        "type": "json",
+        "json_schema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "placeholder_fields": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 48
+              },
+              "minItems": 6,
+              "maxItems": 12
+            },
+            "materials": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "application_form": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  },
+                  "minItems": 2,
+                  "maxItems": 6
+                },
+                "feature_summary": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  },
+                  "minItems": 2,
+                  "maxItems": 6
+                },
+                "source_code": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  },
+                  "minItems": 2,
+                  "maxItems": 6
+                },
+                "user_manual": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  },
+                  "minItems": 2,
+                  "maxItems": 6
+                },
+                "design_document": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  },
+                  "minItems": 2,
+                  "maxItems": 6
+                },
+                "test_matrix": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  },
+                  "minItems": 2,
+                  "maxItems": 6
+                },
+                "environment_sheet": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  },
+                  "minItems": 2,
+                  "maxItems": 6
+                },
+                "account_text": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  },
+                  "minItems": 2,
+                  "maxItems": 6
+                }
+              },
+              "required": [
+                "application_form",
+                "feature_summary",
+                "source_code",
+                "user_manual",
+                "design_document",
+                "test_matrix",
+                "environment_sheet",
+                "account_text"
+              ]
+            }
+          },
+          "required": [
+            "placeholder_fields",
+            "materials"
+          ]
+        }
+      }
+    },
+    {
+      "id": "n_source_package",
+      "type": "generate",
+      "position": {
+        "x": 2100,
+        "y": 160
+      },
+      "title": "生成产品源码包",
+      "model": "gpt-5.5",
+      "reasoning_effort": "xhigh",
+      "ask_user_enabled": false,
+      "prompt": "使用 design-md 和 frontend-design，严格按最终规格生成真实可运行的 Next.js + TypeScript + SQLite 产品源码包，并以“方向与视觉选择”的 selected_visual 作为唯一视觉基准。\n核心页面必须通过 API route 或 server action 真实读写 SQLite；不得用 localStorage、硬编码数组或静态 JSON 代替业务数据。\n必须包含 package.json、package-lock.json、README、数据库初始化/种子脚本、清晰的页面与服务端代码，以及 software-copyright-evidence.json。\n用户界面只使用业务语言，禁止出现“演示后台”“真实 SQLite 后端”“模拟数据”等工程自证文案。\n最终验证必须使用 npm ci，依次完成数据库初始化、种子、build、启动和核心页面/API 的 HTTP 检查，并写入 runtime-verification.json。\n压缩包不得包含 node_modules、.next、缓存、日志、数据库运行文件、密钥或第三方源码；最终只生成并返回 product-source.zip。",
+      "output_contract": {
+        "type": "artifact",
+        "artifact_kind": "zip",
+        "max_count": 1
+      }
+    },
+    {
+      "id": "n_code_audit",
+      "type": "generate",
+      "position": {
+        "x": 2520,
+        "y": 160
+      },
+      "title": "代码审计与证据",
+      "model": "gpt-5.5",
+      "reasoning_effort": "high",
+      "ask_user_enabled": false,
+      "prompt": "解压并检查上游源码包，以真实文件和 runtime-verification.json 为准，不信任文字自述，也不修改源码包。\n检查 lockfile、archive 清洁度、构建与 HTTP 证据、SQLite schema 和真实读写路径、页面路由、业务功能映射，以及用户界面是否含工程自证文案。\n重新统计业务源码文件、语言和代码行，生成截图 route map、功能到源码映射、数据对象证据和源代码材料选择清单。\n关键验证失败时 status=failed 且 ready_for_screenshots=false；不得伪造路径、代码量或运行成功。",
+      "output_contract": {
+        "type": "json",
+        "json_schema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "package": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512
+                },
+                "path": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512
+                },
+                "sha256": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512
+                }
+              },
+              "required": [
+                "name",
+                "path",
+                "sha256"
+              ]
+            },
+            "validation": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "passed",
+                    "failed"
+                  ],
+                  "maxLength": 512
+                },
+                "checks": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 512
+                      },
+                      "status": {
+                        "type": "string",
+                        "enum": [
+                          "passed",
+                          "failed"
+                        ],
+                        "maxLength": 512
+                      },
+                      "evidence": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 512
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "status",
+                      "evidence"
+                    ]
+                  },
+                  "minItems": 5,
+                  "maxItems": 16
+                },
+                "warnings": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  },
+                  "minItems": 0,
+                  "maxItems": 10
+                }
+              },
+              "required": [
+                "status",
+                "checks",
+                "warnings"
+              ]
+            },
+            "route_map": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "page_name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  },
+                  "route": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  },
+                  "source_file": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  }
+                },
+                "required": [
+                  "page_name",
+                  "route",
+                  "source_file"
+                ]
+              },
+              "minItems": 5,
+              "maxItems": 10
+            },
+            "feature_code_map": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "feature_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  },
+                  "feature_name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  },
+                  "files": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 512
+                    },
+                    "minItems": 1,
+                    "maxItems": 6
+                  }
+                },
+                "required": [
+                  "feature_id",
+                  "feature_name",
+                  "files"
+                ]
+              },
+              "minItems": 8,
+              "maxItems": 12
+            },
+            "data_evidence": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "entity": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  },
+                  "schema_file": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  },
+                  "access_files": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 512
+                    },
+                    "minItems": 1,
+                    "maxItems": 5
+                  }
+                },
+                "required": [
+                  "entity",
+                  "schema_file",
+                  "access_files"
+                ]
+              },
+              "minItems": 3,
+              "maxItems": 10
+            },
+            "source_stats": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "file_count": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "code_lines": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "languages": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  },
+                  "minItems": 1,
+                  "maxItems": 8
+                }
+              },
+              "required": [
+                "file_count",
+                "code_lines",
+                "languages"
+              ]
+            },
+            "source_material": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "selected_files": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  },
+                  "minItems": 1,
+                  "maxItems": 80
+                },
+                "excluded_patterns": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  },
+                  "minItems": 5,
+                  "maxItems": 16
+                },
+                "pagination_note": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512
+                }
+              },
+              "required": [
+                "selected_files",
+                "excluded_patterns",
+                "pagination_note"
+              ]
+            },
+            "ready_for_screenshots": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "package",
+            "validation",
+            "route_map",
+            "feature_code_map",
+            "data_evidence",
+            "source_stats",
+            "source_material",
+            "ready_for_screenshots"
+          ]
+        }
+      }
+    },
+    {
+      "id": "n_preview_screenshots",
+      "type": "generate",
+      "position": {
+        "x": 2940,
+        "y": 160
+      },
+      "title": "运行预览与截图",
+      "model": "gpt-5.5",
+      "reasoning_effort": "medium",
+      "ask_user_enabled": false,
+      "prompt": "只有代码审计 ready_for_screenshots=true 时才继续。使用源码 artifact 和 route_map 调用：\npython /opt/mira/capture_screenshots.py --archive \"<源码路径>\" --routes-json '<route_map JSON>' --out-dir screenshots --archive-out product-preview-screenshots.zip --max-routes 10 --min-screenshots 5\n执行后读取 screenshot-manifest.json 和 capture-log.txt；只有 manifest.ok=true 才能成功。\n不得使用占位图或旧项目路由；失败时让节点失败。成功时只返回 product-preview-screenshots.zip。",
+      "output_contract": {
+        "type": "artifact",
+        "artifact_kind": "zip",
+        "max_count": 1
+      }
+    },
+    {
+      "id": "n_document_package",
+      "type": "generate",
+      "position": {
+        "x": 3360,
+        "y": 440
+      },
+      "title": "生成软著资料包",
+      "model": "gpt-5.5",
+      "reasoning_effort": "xhigh",
+      "ask_user_enabled": false,
+      "prompt": "使用 docx 和 be-serious，基于最终规格、材料规格、真实源码证据、源码包、截图包和 8 个模板生成软著资料包。\n先复制模板再编辑，保留样式、页面设置、表格、编号和页眉页脚；删除旧样例正文与旧截图。说明书必须嵌入本次真实截图，源代码文档只能使用实际源码。\n未知登记事实统一写作 `[待填写：字段名]`，不得描述为已确认或已核验。\n资料包固定包含：01_申请表.docx、02_功能特点.docx、03_源代码.docx、04_软件说明书.docx、05_设计文档.docx、06_产品测试功能表.docx、07_非嵌入式软件环境表.docx、08_账号.txt、package-manifest.json、生成报告.md。\nmanifest 必须记录模板来源、输出文件、截图引用、源码统计、大小和 SHA-256；模板来源只写文件名和 upload_id，不写 `/mnt/uploads`、workspace 等内部路径。使用标准 Office 库编辑 DOCX，不要手工重写 `[Content_Types].xml`、`.rels` 或 `mc:Ignorable` 命名空间。\n打包前程序化扫描每份 DOCX 的全部 XML，包括正文、表格、页眉页脚和文本框：`{{...}}` 必须为 0；07 环境表中的硬件、操作系统、数据库、中间件和浏览器只能来自最终规格，未确认的全部改为待填写。清理 `docProps` 和 `customXml` 中的模板作者、修改者、公司、示例标题和 WPS 用户元数据，只保留当前软件的中性信息或待填写。用这次扫描结果生成报告，且一并检查 U+FFFD 和其他旧项目内容。最终只生成并返回 software-copyright-package.zip。",
+      "output_contract": {
+        "type": "artifact",
+        "artifact_kind": "zip",
+        "max_count": 1,
+        "validate_office_documents": true
+      }
+    },
+    {
+      "id": "n_package_review",
+      "type": "generate",
+      "position": {
+        "x": 3780,
+        "y": 440
+      },
+      "title": "资料包验收",
+      "model": "gpt-5.5",
+      "reasoning_effort": "high",
+      "ask_user_enabled": false,
+      "prompt": "使用 docx 和 be-serious，实际解包检查软著资料包，并与原模板、最终规格、代码证据和截图 manifest 对照。\n顶层文件名集合必须恰好等于：01_申请表.docx、02_功能特点.docx、03_源代码.docx、04_软件说明书.docx、05_设计文档.docx、06_产品测试功能表.docx、07_非嵌入式软件环境表.docx、08_账号.txt、package-manifest.json、生成报告.md。\n检查模板样式继承、说明书图片关系、截图数量与引用、源码统计、名称版本一致性、U+FFFD、未处理的双花括号占位符、旧样例内容、`docProps`/`customXml` 模板作者/公司/WPS 元数据、manifest 内部路径和 archive 清洁度。\n整理源码包、截图包和软著资料包三个顶层交付物的名称、路径、SHA-256 和完整性状态。\n缺少必需文件、说明书未嵌图、hash 不符或存在 high 问题时 ready_for_delivery=false。不要承诺登记审批结果。",
+      "output_contract": {
+        "type": "json",
+        "json_schema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "ready_for_delivery": {
+              "type": "boolean"
+            },
+            "product_name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            "version": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            "deliverables": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "source",
+                      "screenshots",
+                      "copyright_package"
+                    ],
+                    "maxLength": 512
+                  },
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  },
+                  "path": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  },
+                  "sha256": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  },
+                  "integrity": {
+                    "type": "string",
+                    "enum": [
+                      "verified",
+                      "modified",
+                      "legacy_unverified"
+                    ],
+                    "maxLength": 512
+                  }
+                },
+                "required": [
+                  "kind",
+                  "name",
+                  "path",
+                  "sha256",
+                  "integrity"
+                ]
+              },
+              "minItems": 3,
+              "maxItems": 3
+            },
+            "checks": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "passed",
+                      "failed"
+                    ],
+                    "maxLength": 512
+                  },
+                  "severity": {
+                    "type": "string",
+                    "enum": [
+                      "info",
+                      "low",
+                      "medium",
+                      "high"
+                    ],
+                    "maxLength": 512
+                  },
+                  "detail": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  }
+                },
+                "required": [
+                  "id",
+                  "status",
+                  "severity",
+                  "detail"
+                ]
+              },
+              "minItems": 8,
+              "maxItems": 18
+            },
+            "document_inventory": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "01_申请表.docx": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "included",
+                        "missing",
+                        "invalid"
+                      ],
+                      "maxLength": 512
+                    },
+                    "source_template": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 512
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "source_template"
+                  ]
+                },
+                "02_功能特点.docx": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "included",
+                        "missing",
+                        "invalid"
+                      ],
+                      "maxLength": 512
+                    },
+                    "source_template": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 512
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "source_template"
+                  ]
+                },
+                "03_源代码.docx": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "included",
+                        "missing",
+                        "invalid"
+                      ],
+                      "maxLength": 512
+                    },
+                    "source_template": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 512
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "source_template"
+                  ]
+                },
+                "04_软件说明书.docx": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "included",
+                        "missing",
+                        "invalid"
+                      ],
+                      "maxLength": 512
+                    },
+                    "source_template": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 512
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "source_template"
+                  ]
+                },
+                "05_设计文档.docx": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "included",
+                        "missing",
+                        "invalid"
+                      ],
+                      "maxLength": 512
+                    },
+                    "source_template": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 512
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "source_template"
+                  ]
+                },
+                "06_产品测试功能表.docx": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "included",
+                        "missing",
+                        "invalid"
+                      ],
+                      "maxLength": 512
+                    },
+                    "source_template": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 512
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "source_template"
+                  ]
+                },
+                "07_非嵌入式软件环境表.docx": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "included",
+                        "missing",
+                        "invalid"
+                      ],
+                      "maxLength": 512
+                    },
+                    "source_template": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 512
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "source_template"
+                  ]
+                },
+                "08_账号.txt": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "included",
+                        "missing",
+                        "invalid"
+                      ],
+                      "maxLength": 512
+                    },
+                    "source_template": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 512
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "source_template"
+                  ]
+                },
+                "package-manifest.json": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "included",
+                        "missing",
+                        "invalid"
+                      ],
+                      "maxLength": 512
+                    },
+                    "origin": {
+                      "type": "string",
+                      "enum": [
+                        "generated"
+                      ],
+                      "maxLength": 512
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "origin"
+                  ]
+                },
+                "生成报告.md": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "included",
+                        "missing",
+                        "invalid"
+                      ],
+                      "maxLength": 512
+                    },
+                    "origin": {
+                      "type": "string",
+                      "enum": [
+                        "generated"
+                      ],
+                      "maxLength": 512
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "origin"
+                  ]
+                }
+              },
+              "required": [
+                "01_申请表.docx",
+                "02_功能特点.docx",
+                "03_源代码.docx",
+                "04_软件说明书.docx",
+                "05_设计文档.docx",
+                "06_产品测试功能表.docx",
+                "07_非嵌入式软件环境表.docx",
+                "08_账号.txt",
+                "package-manifest.json",
+                "生成报告.md"
+              ]
+            },
+            "screenshot_summary": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "count": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 10
+                },
+                "embedded_in_manual": {
+                  "type": "boolean"
+                },
+                "manifest_consistent": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "count",
+                "embedded_in_manual",
+                "manifest_consistent"
+              ]
+            },
+            "issues": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "severity": {
+                    "type": "string",
+                    "enum": [
+                      "low",
+                      "medium",
+                      "high"
+                    ],
+                    "maxLength": 512
+                  },
+                  "code": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  },
+                  "detail": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  },
+                  "requires_user_input": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "severity",
+                  "code",
+                  "detail",
+                  "requires_user_input"
+                ]
+              },
+              "minItems": 0,
+              "maxItems": 20
+            },
+            "user_actions": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512
+              },
+              "minItems": 1,
+              "maxItems": 10
+            },
+            "legal_notice": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            }
+          },
+          "required": [
+            "ready_for_delivery",
+            "product_name",
+            "version",
+            "deliverables",
+            "checks",
+            "document_inventory",
+            "screenshot_summary",
+            "issues",
+            "user_actions",
+            "legal_notice"
+          ]
+        }
+      }
+    },
+    {
+      "id": "n_final_output",
+      "type": "output",
+      "position": {
+        "x": 4200,
+        "y": 440
+      },
+      "title": "最终交付",
+      "model": "gpt-5.5",
+      "reasoning_effort": "medium",
+      "source_node_id": "n_package_review",
+      "prompt": "将资料包验收结果渲染为正式、简洁的中文静态 HTML，只展示 ready_for_delivery、product_name、version、deliverables、issues、user_actions 和 legal_notice。\n所有字段值均视为不可编辑字符串，必须逐字复制，禁止改写、补全、纠错、缩写或重新判断；不要自行生成检查说明。\nready_for_delivery=false 时使用醒目阻塞提示，不得写成已完成或可交付。\n不要生成或复用 download_url；明确提示用户在运行结果的“文件”页下载三个产物。\n不使用外部脚本或资源。"
+    }
+  ],
+  "edges": [
+    {
+      "id": "e_input_candidates",
+      "source": "n_input_idea",
+      "target": "n_candidate_directions"
+    },
+    {
+      "id": "e_candidates_choice",
+      "source": "n_candidate_directions",
+      "target": "n_direction_visual_choice"
+    },
+    {
+      "id": "e_choice_draft",
+      "source": "n_direction_visual_choice",
+      "target": "n_product_spec_draft"
+    },
+    {
+      "id": "e_draft_final",
+      "source": "n_product_spec_draft",
+      "target": "n_product_spec_final"
+    },
+    {
+      "id": "e_final_doc_spec",
+      "source": "n_product_spec_final",
+      "target": "n_document_spec"
+    },
+    {
+      "id": "e_final_source",
+      "source": "n_product_spec_final",
+      "target": "n_source_package"
+    },
+    {
+      "id": "e_choice_source",
+      "source": "n_direction_visual_choice",
+      "target": "n_source_package"
+    },
+    {
+      "id": "e_source_audit",
+      "source": "n_source_package",
+      "target": "n_code_audit"
+    },
+    {
+      "id": "e_source_screenshots",
+      "source": "n_source_package",
+      "target": "n_preview_screenshots"
+    },
+    {
+      "id": "e_audit_screenshots",
+      "source": "n_code_audit",
+      "target": "n_preview_screenshots"
+    },
+    {
+      "id": "e_final_package",
+      "source": "n_product_spec_final",
+      "target": "n_document_package"
+    },
+    {
+      "id": "e_templates_package",
+      "source": "n_copyright_templates",
+      "target": "n_document_package"
+    },
+    {
+      "id": "e_doc_spec_package",
+      "source": "n_document_spec",
+      "target": "n_document_package"
+    },
+    {
+      "id": "e_source_package",
+      "source": "n_source_package",
+      "target": "n_document_package"
+    },
+    {
+      "id": "e_audit_package",
+      "source": "n_code_audit",
+      "target": "n_document_package"
+    },
+    {
+      "id": "e_screenshots_package",
+      "source": "n_preview_screenshots",
+      "target": "n_document_package"
+    },
+    {
+      "id": "e_final_review",
+      "source": "n_product_spec_final",
+      "target": "n_package_review"
+    },
+    {
+      "id": "e_templates_review",
+      "source": "n_copyright_templates",
+      "target": "n_package_review"
+    },
+    {
+      "id": "e_doc_spec_review",
+      "source": "n_document_spec",
+      "target": "n_package_review"
+    },
+    {
+      "id": "e_audit_review",
+      "source": "n_code_audit",
+      "target": "n_package_review"
+    },
+    {
+      "id": "e_screenshots_review",
+      "source": "n_preview_screenshots",
+      "target": "n_package_review"
+    },
+    {
+      "id": "e_package_review",
+      "source": "n_document_package",
+      "target": "n_package_review"
+    },
+    {
+      "id": "e_source_output",
+      "source": "n_source_package",
+      "target": "n_final_output"
+    },
+    {
+      "id": "e_screenshots_output",
+      "source": "n_preview_screenshots",
+      "target": "n_final_output"
+    },
+    {
+      "id": "e_package_output",
+      "source": "n_document_package",
+      "target": "n_final_output"
+    },
+    {
+      "id": "e_review_output",
+      "source": "n_package_review",
+      "target": "n_final_output"
+    }
+  ],
+  "viewport": {
+    "x": 40,
+    "y": 120,
+    "zoom": 0.42
+  }
+}

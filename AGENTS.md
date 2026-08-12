@@ -28,7 +28,8 @@ Mira 是一个参考 Google Opal 思路的可视化 AI app 搭建与运行项目
 - `start.sh` 会停止 `8000`、`5173` 端口上的已有监听进程，启动后端和前端，并绑定 `0.0.0.0`。
 - 后端开发服务：`cd backend && uv sync && uv run python scripts/dev.py`。
 - 前端开发服务：`cd web && npm ci && npm run dev -- --host 0.0.0.0`。
-- Claude/Codex CLI 只允许在 `backend/runtime/Dockerfile` 构建的 Docker Linux sandbox 容器内执行；不要恢复宿主机直跑 Agent CLI 的路径。
+- Claude/Codex CLI 只允许在 `backend/runtime/Dockerfile` 构建的 Docker Linux sandbox 容器内执行；不要恢复宿主机直跑 Agent CLI 的路径。启用 artifact 的 `validate_office_documents` 时，由后端宿主机的 LibreOffice 和 `pdfinfo` 做真实打开验证，不把它们打入 Agent runtime。
+- sandbox 内置 `/opt/mira/capture_screenshots.py`；解包后的 Web 项目存在 `package-lock.json` 时使用 `npm ci`，否则使用 `npm install`，并在启动前依次执行项目已声明的 `db:init`、`db:seed` 脚本。每次截图使用可自动清理的临时 Chromium profile。每个 route 在 Chromium 前必须通过最终状态 `<400` 的 HTTP 检查；`--min-screenshots` 默认 1，截图不足、HTTP 错误或其他 capture failure 时 manifest `ok=false` 且 CLI 非零退出。manifest/log 脱敏 runtime 绝对路径但保留 URL；截图 ZIP 解包拒绝 traversal、链接、特殊文件、规范化后重名成员和损坏压缩流，并与 TAR 一样限制 10,000 个成员和 1 GiB 总展开量。
 - `scripts/dev.py` 会初始化 `.env`、检查或构建 runtime 镜像、运行 `scripts/init_admin.py` 并启动 uvicorn。共享或远程部署前必须修改默认 admin 密码。
 
 ## Architecture Rules
@@ -37,8 +38,8 @@ Mira 是一个参考 Google Opal 思路的可视化 AI app 搭建与运行项目
 - Workflow 节点类型包括 `user_input`、`asset`、`generate`、`condition`、`output`。每个 workflow 最多一个 `user_input` 和一个 `output`；`output` 是唯一终点节点，不能出边。
 - 应用默认 Agent 保存在 `graph.agent`；App 级 Tools 排除项保存在 `graph.tools.disabled_tool_ids`；运行创建时写入 `graph._runtime_tools.allowed_tool_ids` 快照。
 - `asset` 节点契约：`text.content`、`url.urls[]`、`file.uploads[]`、`drawing.upload`。文件和画板上传引用跨用户克隆时必须复制到目标用户。
-- `generate.output_contract` 支持 `json`、`html`、`artifact`；自由文本不设置契约。JSON 必须提供 strict object `json_schema`；HTML 只通过 `{"html":"..."}` wrapper 校验并原样保存；artifact 必须提供 `artifact_kind` 且只接受运行工作区内文件 `path`。`output` 节点保持 HTML-only 最终展示节点，并内部使用 HTML wrapper 契约。
-- 运行结果区只有 `输出` 和 `文件` 两类视图；文件产物通过 `GET /api/runs/{run_id}/artifacts` 返回签名下载链接，禁止向前端泄漏 runtime 本地绝对路径。
+- `generate.output_contract` 支持 `json`、`html`、`artifact`；自由文本不设置契约。JSON 必须提供 strict object `json_schema`；HTML 只通过 `{"html":"..."}` wrapper 校验并原样保存；artifact 必须提供 `artifact_kind` 且只接受运行工作区内文件 `path`，其中 `zip` kind 只接受真实有效的 `.zip`。可选 `validate_office_documents=true` 只允许 `docx`、`excel`、`ppt`、`zip`、`file`，要求产物本身或 ZIP 内至少包含一个 Office 文档，且每份都能由宿主机 LibreOffice 转换为至少一页 PDF；校验最多并发 2 个、总时限 120 秒，并通过 system manager transient unit、专用无 Docker 组账号和 root-owned helper 执行。helper、ACL 或宿主机工具缺失时必须 fail-closed，不得退回只有限资源、没有权限隔离的进程。JSON、HTML、自由文本以及 artifact 的 UTF-8 文本/OOXML 成员都拒绝 `U+FFFD`；带 `.zip`、OOXML、`.tar`、`.gz` 或 `.tgz` 扩展名的文件必须是对应有效容器，归档扫描拒绝危险成员，并限制 10,000 个成员、64 MiB 文本/XML、512 MiB 压缩文件和 1 GiB 总展开量。成功的 artifact Step 保存包含相对路径、大小、SHA-256、artifact kind 和版本号的 manifest；Run 标记成功前必须复验新版 manifest，文件缺失、manifest 非法或大小/hash 变化都使 Run 失败。`output` 节点保持 HTML-only 最终展示节点，并内部使用 HTML wrapper 契约。
+- 运行结果区只有 `输出` 和 `文件` 两类视图；`GET /api/runs/{run_id}/artifacts` 和 Step Trace 只从成功 artifact contract Step 的声明产物组装，不扫描 workspace。artifact 响应包含 `sha256` 和 `integrity`（`verified` / `modified` / `legacy_unverified`）及 hash-bound 签名下载链接，禁止向前端泄漏 runtime 本地绝对路径。
 - 每次 run 保存启动时 `graph` 快照。执行、恢复、历史回放、rerun-from 和 run 态前端视图使用 run 快照，不受后续 App graph 编辑影响。
 - Run 执行按依赖驱动；ready 节点可并发执行。线性单下游 LLM 链可复用 Agent session；fan-out、fan-in、并行分支或独立节点使用独立 session。
 - 后端启动会把未完成 run 标记为 `interrupted`；继续运行是节点级恢复，跳过已成功或已跳过节点，不承诺中断节点内部副作用去重。
@@ -51,7 +52,7 @@ Mira 是一个参考 Google Opal 思路的可视化 AI app 搭建与运行项目
 - MCP/Skills 默认只在普通运行中按 App 允许列表注入；只有 `planning_enabled=true` 的 Tool 才能进入 NL compile、Prompt Assistant 和运行期 ask_user preflight 的 planning/read-only 阶段。
 - NL compile 是持久化两阶段流程：`POST /api/nlcompile` 只生成可确认方案，`POST /api/nlcompile/{compile_id}/apply` 才返回 `new_graph`；active/refine/resume/cancel 以 `nlcompile_sessions` 为事实来源。
 - Prompt Assistant 使用统一 `/api/prompt-assistant` 接口和 `prompt_assistant_generations` 持久化等待态；不要新增旧式 `prompt_helper` 命名或 `/api/prompt-helper` 接口。
-- `ask_user` 用于 NL compile 方案阶段、Prompt Assistant 和 app run 中段交互。请求必须包含 `context.title` 和 `context.summary`；模型选项必须是 2-3 个真实选项，包含 `label`、`description`、`recommended`；后端统一追加 `以上都不是`。
+- `ask_user` 用于 NL compile 方案阶段、Prompt Assistant 和 app run 中段交互。请求必须包含 `context.title` 和 `context.summary`；模型选项必须是 2-3 个真实选项，包含 `label`、`description`、`recommended`；后端统一追加 `以上都不是`。只有 `generate` 可设置可选 bool `ask_user_enabled`；设为 `false` 时完全跳过该节点的运行期 ask_user preflight，省略或设为 `true` 时沿用默认判定。
 
 ## Editing Rules
 

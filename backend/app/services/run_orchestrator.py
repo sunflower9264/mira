@@ -20,7 +20,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from app.db import SessionLocal
 from app.models import App, Run, Step, StepLog
@@ -31,6 +31,8 @@ from app.services.node_handlers import (
     build_context,
     run_node,
 )
+from app.services.output_contracts import artifact_output_for_storage
+from app.services.run_artifacts import validate_run_artifact_integrity
 from app.services.run_hub import RunChannel, get_run_hub
 from app.services.run_serializer import step_to_out
 from app.services.runs import touch_run_heartbeat
@@ -262,6 +264,21 @@ async def _orchestrate(run_id: str, channel: RunChannel, *, continuation: bool =
             await db.commit()
             await channel.publish("run.end", {"status": "cancelled"})
             return True
+        if not run_failed:
+            artifact_error = await validate_run_artifact_integrity(db, run)
+            if artifact_error:
+                run_failed = True
+                run_error = f"artifact 完整性校验失败：{artifact_error}"
+        if await _run_was_cancelled(db, run.id, channel):
+            run_cancelled = True
+        if run_cancelled:
+            await _cancel_unfinished_steps(db, channel, states)
+            run.status = "cancelled"
+            run.finished_at = finished_at
+            _clear_recovery(run)
+            await db.commit()
+            await channel.publish("run.end", {"status": "cancelled"})
+            return True
         if run_failed:
             run.status = "failed"
             run.error = run_error or "运行失败"
@@ -270,10 +287,27 @@ async def _orchestrate(run_id: str, channel: RunChannel, *, continuation: bool =
             await db.commit()
             await channel.publish("run.end", {"status": "failed", "error": run.error})
             return True
-        run.status = "success"
-        run.finished_at = finished_at
-        _clear_recovery(run)
+        success_update = await db.execute(
+            update(Run)
+            .where(Run.id == run.id, Run.status == "running")
+            .values(
+                status="success",
+                finished_at=finished_at,
+                resume_from_node_id=None,
+                recovery_reason=None,
+                interrupted_at=None,
+            )
+            .execution_options(synchronize_session=False)
+        )
         await db.commit()
+        if success_update.rowcount != 1:
+            await db.refresh(run)
+            if run.status == "cancelled":
+                await _cancel_unfinished_steps(db, channel, states)
+                await channel.publish("run.end", {"status": "cancelled"})
+                return True
+            raise RuntimeError(f"run 终态写入冲突：{run.status}")
+        await db.refresh(run)
         await channel.publish("run.end", {"status": "success"})
         return True
 
@@ -418,12 +452,36 @@ async def _run_step_task(
                 skipped_nodes=skipped_delta,
             )
         if result.status == "success":
+            try:
+                stored_output = await asyncio.to_thread(
+                    artifact_output_for_storage,
+                    node,
+                    result.output,
+                    workspace=ctx.workspace,
+                )
+            except (OSError, ValueError) as exc:
+                error = f"artifact manifest 生成失败：{exc}"
+                await _finish_step(
+                    db,
+                    channel,
+                    step,
+                    status="failed",
+                    error=error,
+                    agent_session_id=result.agent_session_id,
+                )
+                return StepTaskResult(
+                    node_id=state.node_id,
+                    status="failed",
+                    error=error,
+                    agent_session_id=result.agent_session_id,
+                    skipped_nodes=skipped_delta,
+                )
             await _finish_step(
                 db,
                 channel,
                 step,
                 status="success",
-                output=result.output,
+                output=stored_output,
                 agent_session_id=result.agent_session_id,
             )
             return StepTaskResult(
@@ -434,11 +492,10 @@ async def _run_step_task(
                 skipped_nodes=skipped_delta,
             )
         if result.status == "cancelled":
-            await _finish_step(db, channel, step, status="cancelled", agent_session_id=result.agent_session_id)
+            await _finish_step(db, channel, step, status="cancelled")
             return StepTaskResult(
                 node_id=state.node_id,
                 status="cancelled",
-                agent_session_id=result.agent_session_id,
                 skipped_nodes=skipped_delta,
             )
         if result.status == "skipped":
@@ -492,6 +549,14 @@ async def _cancel_unfinished_steps(db, channel: RunChannel, states: dict[str, St
             await _emit_step_start(db, channel, step)
         await _finish_step(db, channel, step, status="cancelled")
         state.status = "cancelled"
+
+
+async def _run_was_cancelled(db, run_id: str, channel: RunChannel) -> bool:
+    if channel.cancel_event.is_set():
+        return True
+    with db.no_autoflush:
+        status = await db.scalar(select(Run.status).where(Run.id == run_id))
+    return status == "cancelled"
 
 
 def _queued_waiting_step(states: dict[str, StepState]) -> StepState | None:
@@ -631,7 +696,9 @@ async def _finish_step(
         step.output_json = _dumps(output)
     if error is not None:
         step.error = error
-    if agent_session_id is not None:
+    if status == "cancelled":
+        step.agent_session_id = None
+    elif agent_session_id is not None:
         step.agent_session_id = agent_session_id
     await db.commit()
 

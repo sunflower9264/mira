@@ -17,13 +17,13 @@ from app.api.deps import get_current_user, get_current_user_optional
 from app.db import get_db
 from app.models import App, Run, User
 from app.schemas import RunArtifactsOut, RunCreateIn, RunCreatedOut, RunOut, RunPatchIn, RunRerunFromIn, RunResumeIn, RunStepTraceOut, RunSummaryOut
-from app.services.artifacts import resolve_run_artifact, verify_run_artifact_download_token
+from app.services.artifacts import verify_run_artifact_download_token
 from app.services.apps import public_run_graph, should_redact_app_source
 from app.services.graph_validation import sanitize_prompt_template_tokens
 from app.services.run_events import event_to_sse_frame, iter_run_events
 from app.services.run_hub import StoredEvent, get_run_hub
 from app.services.run_serializer import REDACTED_RUN_ERROR
-from app.services.run_artifacts import list_run_artifacts
+from app.services.run_artifacts import find_run_artifact, list_run_artifacts
 from app.services.run_trace import get_run_step_trace
 from app.services.run_orchestrator import (
     cancel_run as cancel_run_signal,
@@ -280,10 +280,20 @@ async def get_run_artifact(
     ).scalar_one_or_none()
     if run is None:
         raise HTTPException(status_code=404, detail="运行记录不存在")
-    path = resolve_run_artifact(run, relative_path)
-    if path is None:
+    artifact = await find_run_artifact(db, run, relative_path)
+    if artifact is None:
         raise HTTPException(status_code=404, detail="文件不存在")
-    return FileResponse(path, filename=path.name)
+    if download_token:
+        verify_run_artifact_download_token(
+            run_id,
+            relative_path,
+            download_token,
+            sha256=artifact.sha256,
+            allow_missing_sha256=artifact.integrity == "legacy_unverified",
+        )
+    if artifact.integrity == "modified":
+        raise HTTPException(status_code=409, detail="文件完整性校验失败")
+    return FileResponse(artifact.file_path, filename=artifact.file_path.name)
 
 
 @router.get("/runs/{run_id}/events")

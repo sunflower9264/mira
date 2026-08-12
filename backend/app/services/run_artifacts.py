@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import mimetypes
+import re
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import HTTPException
 from sqlalchemy import select
@@ -10,12 +13,36 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import App, Run, Step
 from app.schemas import RunArtifactOut, RunArtifactsOut
-from app.services.artifacts import signed_run_artifact_download_url
+from app.services.artifacts import file_sha256, signed_run_artifact_download_url
 from app.services.apps import should_redact_app_source
+from app.services.output_contracts import ARTIFACT_MANIFEST_VERSION, ARTIFACT_RESERVED_TOP_LEVEL_DIRS
 from app.services.runtime_paths import run_workspace
 from app.utils import loads
 
 RUN_ARTIFACT_LIMIT = 200
+ArtifactIntegrity = Literal["verified", "modified", "legacy_unverified"]
+_SHA256_RE = re.compile(r"^[0-9a-fA-F]{64}$")
+
+
+@dataclass(frozen=True)
+class RunArtifactCatalogEntry:
+    file_path: Path
+    relative_path: str
+    name: str
+    size: int
+    sha256: str
+    integrity: ArtifactIntegrity
+    source_node_id: str
+    source_node_title: str
+    mime: str | None
+
+
+@dataclass(frozen=True)
+class _DeclaredArtifactManifest:
+    node_id: str
+    node: dict[str, Any]
+    contract: dict[str, Any]
+    item: dict[str, Any]
 
 
 async def list_run_artifacts(db: AsyncSession, run_id: str, user_id: str) -> RunArtifactsOut:
@@ -26,39 +53,124 @@ async def list_run_artifacts(db: AsyncSession, run_id: str, user_id: str) -> Run
         raise HTTPException(status_code=404, detail="运行记录不存在")
     app = await db.get(App, run.app_id)
     redact_source = should_redact_app_source(app, user_id)
+    catalog, truncated = await catalog_run_artifacts(db, run, limit=RUN_ARTIFACT_LIMIT)
+    return RunArtifactsOut(
+        artifacts=[_artifact_out(run, entry, redact_source=redact_source) for entry in catalog],
+        truncated=truncated,
+    )
 
-    graph = loads(run.graph_json, {"nodes": [], "edges": []}) or {"nodes": [], "edges": []}
-    nodes_by_id = _nodes_by_id(graph)
-    steps = (
-        await db.execute(select(Step).where(Step.run_id == run.id).order_by(Step.ordering.asc(), Step.id.asc()))
-    ).scalars().all()
-    artifacts: dict[str, RunArtifactOut] = {}
+
+async def catalog_run_artifacts(
+    db: AsyncSession,
+    run: Run,
+    *,
+    node_id: str | None = None,
+    limit: int | None = RUN_ARTIFACT_LIMIT,
+) -> tuple[list[RunArtifactCatalogEntry], bool]:
+    catalog: dict[str, RunArtifactCatalogEntry] = {}
+    invalid_versioned_paths: set[str] = set()
     truncated = False
 
-    for step in steps:
-        node = nodes_by_id.get(step.node_id)
+    manifests = await _declared_artifact_manifests(db, run, node_id=node_id)
+    for manifest in manifests:
+        entry = await asyncio.to_thread(
+            _catalog_entry,
+            run,
+            manifest.node_id,
+            manifest.node,
+            manifest.contract,
+            manifest.item,
+        )
+        if entry is None:
+            invalid_path = _versioned_manifest_relative_path(run, manifest.item)
+            if invalid_path is not None:
+                invalid_versioned_paths.add(invalid_path)
+                catalog.pop(invalid_path, None)
+            continue
+        if entry.relative_path in invalid_versioned_paths:
+            continue
+        existing = catalog.get(entry.relative_path)
+        if existing is not None:
+            if existing.integrity == "modified":
+                continue
+            if entry.integrity == "modified" or (
+                existing.integrity == "legacy_unverified" and entry.integrity == "verified"
+            ):
+                catalog[entry.relative_path] = entry
+            continue
+        if limit is not None and len(catalog) >= limit:
+            truncated = True
+            continue
+        catalog[entry.relative_path] = entry
+
+    return list(catalog.values()), truncated
+
+
+async def validate_run_artifact_integrity(db: AsyncSession, run: Run) -> str | None:
+    manifests = await _declared_artifact_manifests(db, run)
+    for manifest in manifests:
+        if manifest.item.get("manifest_version") is None:
+            continue
+        entry = await asyncio.to_thread(
+            _catalog_entry,
+            run,
+            manifest.node_id,
+            manifest.node,
+            manifest.contract,
+            manifest.item,
+        )
+        node_title = str(manifest.node.get("title") or manifest.node_id)
+        if entry is None:
+            path = manifest.item.get("path")
+            label = path.strip() if isinstance(path, str) and path.strip() else "未知路径"
+            return f"节点「{node_title}」声明的 artifact 文件缺失或 manifest 无效：{label}"
+        if entry.integrity == "modified":
+            return f"节点「{node_title}」声明的 artifact 已被修改：{entry.relative_path}"
+    return None
+
+
+async def find_run_artifact(
+    db: AsyncSession,
+    run: Run,
+    relative_path: str,
+) -> RunArtifactCatalogEntry | None:
+    catalog, _truncated = await catalog_run_artifacts(db, run, limit=None)
+    return next((entry for entry in catalog if entry.relative_path == relative_path), None)
+
+
+async def _declared_artifact_manifests(
+    db: AsyncSession,
+    run: Run,
+    *,
+    node_id: str | None = None,
+) -> list[_DeclaredArtifactManifest]:
+    graph = loads(run.graph_json, {"nodes": [], "edges": []}) or {"nodes": [], "edges": []}
+    nodes_by_id = _nodes_by_id(graph)
+    query = (
+        select(Step.node_id, Step.output_json)
+        .where(Step.run_id == run.id, Step.status == "success")
+        .order_by(Step.ordering.asc(), Step.id.asc())
+    )
+    if node_id is not None:
+        query = query.where(Step.node_id == node_id)
+    rows = (await db.execute(query)).all()
+    manifests: list[_DeclaredArtifactManifest] = []
+    for step_node_id, output_json in rows:
+        node = nodes_by_id.get(step_node_id)
         if not _is_artifact_contract_generate(node):
             continue
-        output = loads(step.output_json, None) if step.output_json else None
-        for item in _artifact_items(output):
-            artifact = _artifact_from_contract_item(run, step.node_id, node, item, redact_source=redact_source)
-            if artifact is None:
-                continue
-            if _add_artifact(artifacts, artifact):
-                continue
-            truncated = True
-            break
-        if truncated:
-            break
-
-    if not truncated:
-        for artifact in _workspace_artifacts(run):
-            if _add_artifact(artifacts, artifact):
-                continue
-            truncated = True
-            break
-
-    return RunArtifactsOut(artifacts=list(artifacts.values()), truncated=truncated)
+        contract = node["output_contract"]
+        output = loads(output_json, None) if output_json else None
+        manifests.extend(
+            _DeclaredArtifactManifest(
+                node_id=step_node_id,
+                node=node,
+                contract=contract,
+                item=item,
+            )
+            for item in _artifact_items(output)
+        )
+    return manifests
 
 
 def _nodes_by_id(graph: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -84,111 +196,141 @@ def _artifact_items(value: Any) -> list[dict[str, Any]]:
     return []
 
 
-def _artifact_from_contract_item(
+def _catalog_entry(
     run: Run,
     node_id: str,
     node: dict[str, Any],
+    contract: dict[str, Any],
     item: dict[str, Any],
-    *,
-    redact_source: bool,
-) -> RunArtifactOut | None:
-    name = str(item.get("name") or "").strip()
+) -> RunArtifactCatalogEntry | None:
+    manifest_version = item.get("manifest_version")
+    legacy = manifest_version is None
+    if not legacy and (
+        not isinstance(manifest_version, int)
+        or isinstance(manifest_version, bool)
+        or manifest_version != ARTIFACT_MANIFEST_VERSION
+    ):
+        return None
+
     path_value = item.get("path")
-    path_text = str(path_value).strip() if isinstance(path_value, str) else ""
-
-    resolved = _resolve_workspace_artifact(run, path_text) if path_text else None
-    if resolved is not None:
-        path, relative = resolved
-        url = signed_run_artifact_download_url(run, relative)
-        return _artifact_out(
-            name=name or path.name,
-            path=relative,
-            size=path.stat().st_size,
-            download_url=url,
-            source_node_id=None if redact_source else node_id,
-            source_node_title=None if redact_source else str(node.get("title") or node_id),
-            source_kind="artifact_contract",
-            mime=_guess_mime(path.name),
-        )
-
-    return None
-
-
-def _workspace_artifacts(run: Run) -> list[RunArtifactOut]:
-    workspace = run_workspace(run.owner_id, run.app_id, run.id).resolve()
-    if not workspace.exists():
-        return []
-    artifacts: list[RunArtifactOut] = []
-    for path in sorted((item for item in workspace.rglob("*") if item.is_file()), key=lambda item: item.as_posix()):
-        try:
-            relative = path.resolve().relative_to(workspace).as_posix()
-        except ValueError:
-            continue
-        artifacts.append(
-            _artifact_out(
-                name=path.name,
-                path=relative,
-                size=path.stat().st_size,
-                download_url=signed_run_artifact_download_url(run, relative),
-                source_node_id=None,
-                source_node_title=None,
-                source_kind="workspace_file",
-                mime=_guess_mime(path.name),
-            )
-        )
-    return artifacts
-
-
-def _resolve_workspace_artifact(run: Run, path_text: str) -> tuple[Path, str] | None:
-    if not path_text or "\\" in path_text:
+    path_text = path_value.strip() if isinstance(path_value, str) else ""
+    if not path_text or "\\" in path_text or "\ufffd" in path_text:
         return None
-    workspace = run_workspace(run.owner_id, run.app_id, run.id).resolve()
-    candidate = Path(path_text)
-    path = candidate.resolve() if candidate.is_absolute() else (workspace / path_text).resolve()
+    resolved = _resolve_workspace_artifact(run, path_text, allow_absolute=legacy)
+    if resolved is None:
+        return None
+    path, relative = resolved
+
+    name_value = item.get("name")
+    name = name_value.strip() if isinstance(name_value, str) and name_value.strip() else path.name
+    if "\ufffd" in name:
+        return None
     try:
-        relative = path.relative_to(workspace).as_posix()
-    except ValueError:
+        current_size = path.stat().st_size
+        current_sha256 = file_sha256(path)
+    except OSError:
         return None
+
+    if legacy:
+        size = current_size
+        sha256 = current_sha256
+        integrity: ArtifactIntegrity = "legacy_unverified"
+    else:
+        size_value = item.get("size")
+        sha256_value = item.get("sha256")
+        artifact_kind = item.get("artifact_kind")
+        if (
+            not isinstance(size_value, int)
+            or isinstance(size_value, bool)
+            or size_value < 0
+            or not isinstance(sha256_value, str)
+            or _SHA256_RE.fullmatch(sha256_value) is None
+            or artifact_kind != contract.get("artifact_kind")
+        ):
+            return None
+        size = size_value
+        sha256 = sha256_value.lower()
+        integrity = "verified" if current_size == size and current_sha256 == sha256 else "modified"
+
+    return RunArtifactCatalogEntry(
+        file_path=path,
+        relative_path=relative,
+        name=name,
+        size=size,
+        sha256=sha256,
+        integrity=integrity,
+        source_node_id=node_id,
+        source_node_title=str(node.get("title") or node_id),
+        mime=_guess_mime(path.name),
+    )
+
+
+def _resolve_workspace_artifact(
+    run: Run,
+    path_text: str,
+    *,
+    allow_absolute: bool,
+) -> tuple[Path, str] | None:
+    resolved = _workspace_artifact_location(run, path_text, allow_absolute=allow_absolute)
+    if resolved is None:
+        return None
+    path, relative_path = resolved
     if not path.is_file():
         return None
-    return path, relative
+    return path, relative_path
 
 
-def _add_artifact(artifacts: dict[str, RunArtifactOut], artifact: RunArtifactOut) -> bool:
-    key = artifact.path or artifact.download_url or artifact.id
-    existing = artifacts.get(key)
-    if existing is not None:
-        if existing.source_node_id is None and artifact.source_node_id is not None:
-            artifacts[key] = artifact
-        return True
-    if len(artifacts) >= RUN_ARTIFACT_LIMIT:
-        return False
-    artifacts[key] = artifact
-    return True
+def _workspace_artifact_location(
+    run: Run,
+    path_text: str,
+    *,
+    allow_absolute: bool,
+) -> tuple[Path, str] | None:
+    try:
+        workspace = run_workspace(run.owner_id, run.app_id, run.id).resolve()
+        candidate = Path(path_text)
+        if candidate.is_absolute() and not allow_absolute:
+            return None
+        path = candidate.resolve() if candidate.is_absolute() else (workspace / path_text).resolve()
+        relative_path = path.relative_to(workspace)
+    except (OSError, RuntimeError, ValueError):
+        return None
+    if not relative_path.parts or relative_path.parts[0] in ARTIFACT_RESERVED_TOP_LEVEL_DIRS:
+        return None
+    return path, relative_path.as_posix()
+
+
+def _versioned_manifest_relative_path(run: Run, item: dict[str, Any]) -> str | None:
+    if item.get("manifest_version") is None:
+        return None
+    path_value = item.get("path")
+    path_text = path_value.strip() if isinstance(path_value, str) else ""
+    if not path_text or "\\" in path_text or "\ufffd" in path_text:
+        return None
+    resolved = _workspace_artifact_location(run, path_text, allow_absolute=True)
+    return resolved[1] if resolved is not None else None
 
 
 def _artifact_out(
+    run: Run,
+    entry: RunArtifactCatalogEntry,
     *,
-    name: str,
-    path: str | None,
-    size: int | None,
-    download_url: str,
-    source_node_id: str | None,
-    source_node_title: str | None,
-    source_kind: str,
-    mime: str | None,
+    redact_source: bool,
 ) -> RunArtifactOut:
+    download_url = signed_run_artifact_download_url(run, entry.relative_path, entry.sha256)
     stable = download_url.split("download_token=", 1)[0].rstrip("?&")
     return RunArtifactOut(
-        id=stable or path or name,
-        name=name,
-        path=path,
-        size=size,
+        id=stable or entry.relative_path,
+        name=entry.name,
+        path=entry.relative_path,
+        size=entry.size,
+        sha256=entry.sha256,
+        integrity=entry.integrity,
         download_url=download_url,
-        source_node_id=source_node_id,
-        source_node_title=source_node_title,
-        source_kind=source_kind,  # type: ignore[arg-type]
-        mime=mime,
+        source_node_id=None if redact_source else entry.source_node_id,
+        source_node_title=None if redact_source else entry.source_node_title,
+        source_kind="artifact_contract",
+        mime=entry.mime,
     )
 
 

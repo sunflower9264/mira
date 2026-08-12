@@ -110,6 +110,7 @@ export type ArtifactContractKind =
   | 'ppt'
   | 'pdf'
   | 'archive'
+  | 'zip'
   | 'file';
 
 export interface NodeOutputContract {
@@ -117,6 +118,7 @@ export interface NodeOutputContract {
   json_schema?: Record<string, unknown>;
   artifact_kind?: ArtifactContractKind;
   max_count?: number;
+  validate_office_documents?: boolean;
 }
 
 export interface UserInputNode extends NodeBase {
@@ -134,6 +136,7 @@ export interface GenerateNode extends NodeBase {
   prompt: string;
   model?: string;
   reasoning_effort?: ReasoningEffort;
+  ask_user_enabled?: boolean;
   agent_session_id?: string;
   output_contract?: NodeOutputContract;
 }
@@ -266,6 +269,8 @@ export interface RunTraceArtifact {
   path: string;
   name: string;
   size: number;
+  sha256: string;
+  integrity: 'verified' | 'modified' | 'legacy_unverified';
   download_url: string;
 }
 
@@ -274,6 +279,8 @@ export interface RunArtifact {
   name: string;
   path?: string | null;
   size?: number | null;
+  sha256: string;
+  integrity: 'verified' | 'modified' | 'legacy_unverified';
   download_url: string;
   source_node_id?: string | null;
   source_node_title?: string | null;
