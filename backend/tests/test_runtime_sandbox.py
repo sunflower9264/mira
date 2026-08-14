@@ -10,7 +10,7 @@ from fastapi import HTTPException
 from app.runtime.ask_user_bridge import InternalAskUserBridge, handle_internal_ask_user
 from app.runtime.base import AskUserRequest, AskUserResult
 from app.runtime.call_context import RuntimeCallContext
-from app.runtime.sandbox import DockerSandboxRunner, DockerSandboxSpec, RuntimePathMap
+from app.runtime.sandbox import DockerSandboxRunner, DockerSandboxSpec, RuntimePathMap, iter_utf8_lines
 from app.schemas.decision import DecisionAnswer
 from app.services.runtime_paths import uploads_dir
 from app.services.runtime_uploads import RuntimeUploadRef, runtime_upload_context
@@ -240,3 +240,14 @@ async def test_internal_ask_user_bridge_validates_token_and_forwards_payload():
 
     assert seen[0].groups[0].id == "choice"
     assert result["answers"] == [{"group_id": "choice", "selected": ["A"]}]
+
+
+def test_iter_utf8_lines_keeps_cjk_character_split_across_chunks() -> None:
+    missing = "缺"
+    prefix = '{"html":"封面图，'.encode("utf-8")
+    suffix = '少详情"}\n'.encode("utf-8")
+    encoded = missing.encode("utf-8")
+    assert len(encoded) == 3
+    lines = list(iter_utf8_lines([prefix + encoded[:1], encoded[1:] + suffix]))
+    assert lines == ['{"html":"封面图，缺少详情"}']
+    assert "\ufffd" not in lines[0]

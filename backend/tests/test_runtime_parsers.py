@@ -404,6 +404,78 @@ def test_codex_execute_prefers_latest_structured_output(tmp_path, monkeypatch):
     assert [chunk.type for chunk in chunks] == ["text", "text", "text"]
 
 
+def test_codex_execute_recovers_intact_session_text_when_stdout_has_replacement(tmp_path, monkeypatch):
+    monkeypatch.setenv("RUNTIME_DIR", str(tmp_path / "runtime"))
+    get_settings.cache_clear()
+    session_id = "019fffd1-session-recover"
+    intact = json.dumps({"html": "封面图，缺少详情页完整多图"}, ensure_ascii=False)
+    damaged = intact.replace("缺", "\ufffd\ufffd\ufffd")
+    try:
+        shared = tmp_path / "runtime" / "homes" / "_shared" / "codex_home"
+        shared.mkdir(parents=True, exist_ok=True)
+        (shared / "config.toml").write_text("", encoding="utf-8")
+        (shared / "auth.json").write_text("{}", encoding="utf-8")
+
+        class FakeRunner:
+            async def check_available(self):
+                return DockerSandboxStatus(ok=True)
+
+            async def run(self, spec, *, on_stdout_line, cancel_event):
+                sess_dir = spec.path_map.home_host / "sessions" / "2026" / "08" / "14"
+                sess_dir.mkdir(parents=True, exist_ok=True)
+                (sess_dir / f"rollout-{session_id}.jsonl").write_text(
+                    json.dumps(
+                        {
+                            "type": "event_msg",
+                            "payload": {"type": "agent_message", "message": intact},
+                        },
+                        ensure_ascii=False,
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
+                await on_stdout_line(
+                    json.dumps(
+                        {
+                            "type": "item.completed",
+                            "session_id": session_id,
+                            "item": {"type": "agent_message", "text": damaged},
+                        },
+                        ensure_ascii=False,
+                    )
+                )
+                return DockerSandboxResult(return_code=0)
+
+        monkeypatch.setattr(codex_runtime, "DockerSandboxRunner", lambda: FakeRunner())
+        chunks = []
+        workspace = tmp_path / "workspace"
+
+        async def run():
+            return await CodexCliRuntime("user_admin").execute(
+                prompt="渲染 HTML",
+                session_id=None,
+                allowed_tools=None,
+                model=None,
+                reasoning_effort=None,
+                cwd=workspace,
+                on_chunk=lambda chunk: _append_chunk(chunks, chunk),
+                cancel_event=asyncio.Event(),
+                output_schema={
+                    "type": "object",
+                    "properties": {"html": {"type": "string"}},
+                    "required": ["html"],
+                },
+            )
+
+        result = asyncio.run(run())
+    finally:
+        get_settings.cache_clear()
+
+    assert result.finished_with == "done"
+    assert "\ufffd" not in result.total_text
+    assert "缺少详情页完整多图" in result.total_text
+
+
 def test_runtime_env_uses_fake_home_and_does_not_leak_provider_keys(tmp_path, monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "host-anthropic")
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", "host-claude")

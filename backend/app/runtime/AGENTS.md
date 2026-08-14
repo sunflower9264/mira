@@ -17,6 +17,8 @@
 - 不要把 MCP token/header 放入 CLI argv。
 - Codex exec 跳过 CLI git repo trust 检查，信任边界由 Mira 的隔离 workspace 和 Docker sandbox 提供。
 - Claude `stream-json` 只聚合真实 text delta/final message；不要把 partial snapshot 当正文累加。
+- sandbox stdout 必须增量解码 UTF-8，禁止按 Docker log frame 单独 `errors=ignore`，以免三字节汉字被拆开。
+- Codex `exec --json` stdout 若含 U+FFFD，最终文本以同 session rollout 里未损坏的最后一条 agent_message 为准。
 - ask_user 通过内部 bridge/MCP 调用后端 callback；请求必须带 context/title/summary。修改协议时同步 runtime helper、run resume、SSE、decision schema 和 prompt templates。
 - Adapter 不做 UI 模型兜底；model、reasoning_effort 和 runtime policy 由 service 层准备并传入。
 - LLM session 复用策略由 run orchestrator 决定；adapter 不假设并行分支共享 session。

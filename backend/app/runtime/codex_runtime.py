@@ -208,7 +208,12 @@ class CodexCliRuntime:
                     )
                 return AgentExecutionResult(
                     session_id=new_session,
-                    total_text=structured_outputs[-1] if structured_outputs else "".join(chunks),
+                    total_text=_final_codex_text(
+                        home,
+                        new_session,
+                        structured_outputs[-1] if structured_outputs else "".join(chunks),
+                        path_map,
+                    ),
                     finished_with="done",
                 )
         except Exception as exc:  # noqa: BLE001
@@ -351,6 +356,54 @@ def _toml_key(key: str) -> str:
     if key and all(char.isalnum() or char in {"_", "-"} for char in key):
         return key
     return _toml_inline_value(key)
+
+
+def _final_codex_text(home: Path, session_id: str | None, stdout_text: str, path_map) -> str:
+    if "\ufffd" not in stdout_text:
+        return stdout_text
+    recovered = _read_last_session_agent_message(home, session_id)
+    if not recovered or "\ufffd" in recovered:
+        return stdout_text
+    recovered = path_map.container_to_host_text(recovered)
+    structured = _structured_output_text_from_chunk(AgentChunk(type="text", text=recovered))
+    if structured and "\ufffd" not in structured:
+        return structured
+    return recovered
+
+
+def _read_last_session_agent_message(home: Path, session_id: str | None) -> str | None:
+    if not session_id:
+        return None
+    sessions = home / "sessions"
+    if not sessions.is_dir():
+        return None
+    matches = sorted(sessions.rglob(f"*{session_id}*.jsonl"))
+    if not matches:
+        return None
+    last: str | None = None
+    try:
+        with matches[-1].open(encoding="utf-8") as handle:
+            for line in handle:
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(record, dict):
+                    continue
+                payload = record.get("payload")
+                if not isinstance(payload, dict):
+                    continue
+                if record.get("type") == "event_msg" and payload.get("type") == "agent_message":
+                    message = payload.get("message")
+                    if isinstance(message, str) and message.strip():
+                        last = message
+                elif record.get("type") == "event_msg" and payload.get("type") == "task_complete":
+                    message = payload.get("last_agent_message")
+                    if isinstance(message, str) and message.strip():
+                        last = message
+    except OSError:
+        return last
+    return last
 
 
 def _extract_session_id(data: dict) -> str | None:

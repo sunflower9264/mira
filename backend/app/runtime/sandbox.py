@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import codecs
 import logging
 import os
 import re
 import shlex
 import threading
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Awaitable, Callable
@@ -121,6 +123,29 @@ class DockerSandboxResult:
 StdoutCallback = Callable[[str], Awaitable[None]]
 
 
+def iter_utf8_lines(chunks: Iterable[bytes]) -> Iterator[str]:
+    """Decode stdout incrementally so a CJK character split across Docker log frames stays intact."""
+    decoder = codecs.getincrementaldecoder("utf-8")("replace")
+    buffer = ""
+    for chunk in chunks:
+        if isinstance(chunk, str):
+            chunk = chunk.encode("utf-8")
+        buffer += decoder.decode(chunk)
+        while "\n" in buffer:
+            line, buffer = buffer.split("\n", 1)
+            yield line
+    buffer += decoder.decode(b"", final=True)
+    if buffer:
+        yield buffer
+
+
+def _stdout_chunks(stream, cancel_event: asyncio.Event):  # noqa: ANN001
+    for chunk in stream:
+        if cancel_event.is_set():
+            return
+        yield chunk
+
+
 class DockerSandboxRunner:
     def __init__(self, *, client=None) -> None:  # noqa: ANN001 - docker SDK client type is optional at import time
         self._client = client
@@ -224,20 +249,12 @@ class DockerSandboxRunner:
                 daemon=True,
             )
             watcher.start()
-            buffer = b""
             stream = container.logs(stream=True, stdout=True, stderr=False, follow=True)
-            for chunk in stream:
-                if cancel_event.is_set():
-                    _stop_container(container)
-                    return DockerSandboxResult(return_code=130, stderr="cancelled")
-                buffer += chunk
-                while b"\n" in buffer:
-                    raw_line, buffer = buffer.split(b"\n", 1)
-                    line = raw_line.decode("utf-8", errors="ignore")
-                    on_stdout_line(spec.path_map.container_to_host_text(line))
-            if buffer:
-                line = buffer.decode("utf-8", errors="ignore")
+            for line in iter_utf8_lines(_stdout_chunks(stream, cancel_event)):
                 on_stdout_line(spec.path_map.container_to_host_text(line))
+            if cancel_event.is_set():
+                _stop_container(container)
+                return DockerSandboxResult(return_code=130, stderr="cancelled")
             wait_result = container.wait(timeout=5)
             status_code = int(wait_result.get("StatusCode") or 0)
             stderr = container.logs(stdout=False, stderr=True).decode("utf-8", errors="ignore")
