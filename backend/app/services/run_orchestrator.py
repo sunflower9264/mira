@@ -387,8 +387,12 @@ def _initial_session_id(
     node = nodes_by_id.get(node_id) or {}
     if node.get("type") not in PROMPT_NODE_TYPES:
         return None
+    sources = predecessors.get(node_id, set())
+    # Fan-in and roots start a new session; only a linear single-upstream chain may reuse.
+    if len(sources) != 1:
+        return None
     candidate_sessions: list[str] = []
-    for source_id in predecessors.get(node_id, set()):
+    for source_id in sources:
         source_node = nodes_by_id.get(source_id) or {}
         source_state = states.get(source_id)
         if len(children.get(source_id, set())) > 1:

@@ -1224,6 +1224,36 @@ def test_executor_reuses_session_for_linear_chain_but_not_fanout(auth_client, en
         set_runtime_override(MockRuntime())
 
 
+def test_executor_does_not_reuse_session_on_diamond_fan_in(auth_client, enable_claude_agent):
+    enable_claude_agent()
+    runtime = ParallelProbeRuntime(delay=0.05)
+    set_runtime_override(runtime)
+    graph = {
+        "agent": "claude",
+        "nodes": [
+            _generate_node("n_root", prompt="root [[respond:ROOT]]"),
+            _generate_node("n_child", prompt="child [[respond:CHILD]]"),
+            _output_node("n_out", source="n_root", prompt="out [[respond:<section>OUT</section>]]"),
+        ],
+        "edges": [
+            {"id": "e1", "source": "n_root", "target": "n_child"},
+            {"id": "e2", "source": "n_child", "target": "n_out"},
+            {"id": "e3", "source": "n_root", "target": "n_out"},
+        ],
+    }
+    try:
+        app_id = _build_app(auth_client, graph=graph)
+        run = auth_client.post("/api/runs", json={"app_id": app_id, "inputs": {}}).json()
+        final = _wait_for_terminal(auth_client, run["run_id"])
+        by_id = {step["node_id"]: step for step in final["steps"]}
+        assert final["status"] == "success", final
+        assert by_id["n_child"]["agent_session_id"] != by_id["n_root"]["agent_session_id"]
+        assert by_id["n_out"]["agent_session_id"] != by_id["n_root"]["agent_session_id"]
+        assert by_id["n_out"]["agent_session_id"] != by_id["n_child"]["agent_session_id"]
+    finally:
+        set_runtime_override(MockRuntime())
+
+
 def test_parallel_ask_user_is_visible_before_sibling_finishes(auth_client, enable_claude_agent):
     enable_claude_agent()
     ask = json.dumps(_ask_action("choice", "选择方向？", ["A", "B"])["request"], ensure_ascii=False)
