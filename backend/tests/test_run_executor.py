@@ -18,7 +18,7 @@ from app.services.artifacts import file_sha256
 from app.services import output_contracts
 from app.services.office_documents import OfficeValidationUnavailable
 from app.services.run_orchestrator import start_run
-from app.services.runtime_paths import run_workspace, uploads_dir
+from app.services.runtime_paths import run_workspace, scoped_runtime_home, uploads_dir
 from app.runtime.base import AgentChunk, AgentExecutionResult, AgentProviderStatus, AskUserRequest
 from app.runtime.factory import set_runtime_override
 from app.schemas.decision import DecisionGroup
@@ -174,6 +174,69 @@ class WorkspacePathRuntime:
         await on_chunk(AgentChunk(type="text", text=text))
         return AgentExecutionResult(
             session_id=session_id or "workspace_path_session",
+            total_text=text,
+            finished_with="done",
+        )
+
+
+class GeneratedImageRuntime:
+    async def detect_status(self) -> AgentProviderStatus:
+        return AgentProviderStatus(
+            installed=True,
+            runnable=True,
+            identity="generated-image",
+            method="test",
+            checked_at=now_utc(),
+        )
+
+    async def execute(
+        self,
+        *,
+        prompt: str,
+        session_id: str | None,
+        allowed_tools: list[str] | None,
+        model: str | None,
+        reasoning_effort: str | None,
+        cwd: Path,
+        on_chunk,
+        cancel_event: asyncio.Event,
+        on_ask_user=None,
+        runtime_tools=None,
+        runtime_policy="execute",
+        output_schema=None,
+    ) -> AgentExecutionResult:
+        if runtime_policy == "ask_user_plan":
+            text = '{"action":"complete","decision_summary":"无需额外提问。","reason":"测试场景不需要补充用户决策。"}'
+            await on_chunk(AgentChunk(type="text", text=text))
+            return AgentExecutionResult(session_id=session_id, total_text=text, finished_with="done")
+        if "你正在生成 Mira output 节点" in prompt:
+            assert "/api/runs/" in prompt
+            assert "download_token=" in prompt
+            text = _structured_text("<section>GPT 图片暂不可渲染</section>", output_schema)
+            await on_chunk(AgentChunk(type="text", text=text))
+            return AgentExecutionResult(
+                session_id=session_id or "generated_image_session",
+                total_text=text,
+                finished_with="done",
+            )
+        image = scoped_runtime_home("codex_home", cwd) / "generated_images" / "sess" / "cover.png"
+        image.parent.mkdir(parents=True, exist_ok=True)
+        image.write_bytes(b"png-bytes")
+        text = json.dumps(
+            {
+                "gpt_generated_images": [
+                    {
+                        "image_id": "gpt_image_1",
+                        "image_url": "",
+                        "artifact_id": str(image),
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        )
+        await on_chunk(AgentChunk(type="text", text=text))
+        return AgentExecutionResult(
+            session_id=session_id or "generated_image_session",
             total_text=text,
             finished_with="done",
         )
@@ -3416,6 +3479,55 @@ def test_executor_replaces_workspace_paths_with_signed_download_urls(auth_client
     finally:
         auth_client.headers.update(headers)
     assert downloaded.status_code == 404
+
+
+def test_executor_imports_generated_images_and_renders_img_src(auth_client, enable_claude_agent):
+    enable_claude_agent()
+    graph = {
+        "agent": "claude",
+        "nodes": [
+            _generate_node("n_gen", prompt="生成配图 [[respond:PLACEHOLDER]]"),
+            _output_node("n_out", source="n_gen", prompt="展示 [[respond:<section>FINAL</section>]]"),
+        ],
+        "edges": [{"id": "e1", "source": "n_gen", "target": "n_out"}],
+    }
+    app_id = _build_app(auth_client, graph=graph)
+    runtime = GeneratedImageRuntime()
+    set_runtime_override(runtime)
+    try:
+        run = auth_client.post("/api/runs", json={"app_id": app_id, "inputs": {}}).json()
+        run_id = run["run_id"]
+        final = _wait_for_terminal(auth_client, run_id)
+    finally:
+        set_runtime_override(MockRuntime())
+
+    assert final["status"] == "success", final
+    by_id = {step["node_id"]: step for step in final["steps"]}
+    gen_output = by_id["n_gen"]["output"]
+    workspace_image = run_workspace("user_admin", app_id, run_id) / "generated_images" / "cover.png"
+    assert workspace_image.is_file()
+    assert workspace_image.read_bytes() == b"png-bytes"
+    assert "cover.png (download_url: /api/runs/" in json.dumps(gen_output, ensure_ascii=False)
+    assert "codex_home" not in str(gen_output)
+
+    output_html = by_id["n_out"]["output"]
+    assert '<img src="/api/runs/' in output_html
+    assert "download_token=" in output_html
+    assert "GPT 图片暂不可渲染" not in output_html
+
+    artifacts_response = auth_client.get(f"/api/runs/{run_id}/artifacts")
+    assert artifacts_response.status_code == 200, artifacts_response.text
+    assert artifacts_response.json()["artifacts"] == []
+
+    src = output_html.split('src="', 1)[1].split('"', 1)[0].replace("&amp;", "&")
+    headers = dict(auth_client.headers)
+    auth_client.headers.pop("Authorization", None)
+    try:
+        downloaded = auth_client.get(src)
+    finally:
+        auth_client.headers.update(headers)
+    assert downloaded.status_code == 200, downloaded.text
+    assert downloaded.content == b"png-bytes"
 
 
 def test_run_artifacts_list_uses_artifact_contract_metadata(auth_client, enable_claude_agent):

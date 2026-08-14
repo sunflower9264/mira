@@ -18,7 +18,7 @@
 - Run 事件持久化用于刷新、SSE replay 和历史；`RunHub` 只处理当前进程广播、取消和等待信号。
 - Rerun-from 创建新 run，读取当前 App graph，只复制起点前可复用成功/跳过祖先 step；用户覆盖上游 input 时从最早变更 input 祖先重放。
 - condition 分支测试通过新 run snapshot 的 override 强制分支，不修改 App graph。
-- `node_handlers.py` 集中执行节点；asset 节点按 `content` / `urls` / `uploads` / `upload` 读取；output 节点保持 HTML-only。
+- `node_handlers.py` 集中执行节点；asset 节点按 `content` / `urls` / `uploads` / `upload` 读取；output 节点保持 HTML-only。Codex `generated_images` 等运行时图片会在 generate 成功后复制进当前 run workspace；output 渲染时把签名 `download_url` 填进 `image_url`，并保证 HTML 用 `<img src>` 展示。
 - `output_contracts.py` 负责 generate/output 输出契约 schema 生成、校验和一次修正；JSON 必须按 strict object schema 校验，HTML 只通过 wrapper 解析并原样保存，artifact 统一按工作区文件 path 处理。
 - Run artifacts 和 Trace 按需组装，必须使用 run owner 权限和 `runtime_paths.py` 计算路径，只返回相对路径或签名链接，不新增 artifact 表。
 - `tools.py` 管理 MCP/Skills 库存、App disabled tools、run snapshot allowed tools 和 planning-only `planning_enabled` 过滤。

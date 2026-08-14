@@ -26,7 +26,14 @@ from app.runtime.base import AgentChunk, AskUserRequest
 from app.runtime.factory import get_runtime
 from app.schemas import RunInputValue
 from app.services.decision_prompts import append_ask_user_none_option, validate_ask_request_groups
-from app.services.artifacts import replace_workspace_paths_for_prompt, replace_workspace_paths_in_html
+from app.services.artifacts import (
+    collect_workspace_image_refs,
+    ensure_html_images,
+    fill_image_download_urls,
+    import_runtime_images,
+    replace_workspace_paths_for_prompt,
+    replace_workspace_paths_in_html,
+)
 from app.services.output_contracts import (
     ContractValidationResult,
     contract_prompt_suffix,
@@ -274,11 +281,7 @@ async def _handle_generate(ctx: ExecutionContext, node: dict[str, Any], step: St
 async def _handle_output(ctx: ExecutionContext, node: dict[str, Any], step: Step) -> NodeResult:
     result = await _run_llm(ctx, node, step, expects_text=True)
     if result.status == "success" and isinstance(result.output, str):
-        result.output = await asyncio.to_thread(
-            replace_workspace_paths_in_html,
-            result.output,
-            _run_from_context(ctx),
-        )
+        result.output = await asyncio.to_thread(_finalize_output_html, ctx, result.output)
     return result
 
 
@@ -521,10 +524,18 @@ async def _run_llm_with_upload_context(
             )
             if repair_result.status != "success":
                 return repair_result
+            if repair_result.output is not None:
+                repair_result.output = await asyncio.to_thread(
+                    import_runtime_images,
+                    repair_result.output,
+                    workspace=ctx.workspace,
+                )
             return repair_result
         output = validated.output
     else:
         output = text if expects_text else text
+    if expects_text and node.get("type") == "generate":
+        output = await asyncio.to_thread(import_runtime_images, output, workspace=ctx.workspace)
     await _append_log(ctx, step, "info", "节点执行完成")
     return NodeResult(status="success", output=output, agent_session_id=next_session_id)
 
@@ -1116,6 +1127,7 @@ def _extract_session_id(data: dict | None) -> str | None:
 
 
 def _compose_node_prompt(ctx: ExecutionContext, node: dict[str, Any]) -> str:
+    _materialize_context_images(ctx)
     base = str(node.get("prompt") or "").strip()
     if node.get("type") == "output":
         source_id = node.get("source_node_id")
@@ -1228,12 +1240,34 @@ def _collect_upload_refs_from_value(owner_id: str, value: Any, refs: dict[str, R
 
 
 def _format_value(ctx: ExecutionContext, value: Any) -> str:
-    if isinstance(value, str):
-        return rewrite_runtime_upload_paths(replace_workspace_paths_for_prompt(value, _run_from_context(ctx)))
+    prepared = _materialize_runtime_images(ctx, value)
+    if isinstance(prepared, str):
+        return rewrite_runtime_upload_paths(replace_workspace_paths_for_prompt(prepared, _run_from_context(ctx)))
     try:
-        return rewrite_runtime_upload_paths(replace_workspace_paths_for_prompt(dumps(value), _run_from_context(ctx)))
+        return rewrite_runtime_upload_paths(replace_workspace_paths_for_prompt(dumps(prepared), _run_from_context(ctx)))
     except Exception:  # noqa: BLE001
-        return rewrite_runtime_upload_paths(replace_workspace_paths_for_prompt(str(value), _run_from_context(ctx)))
+        return rewrite_runtime_upload_paths(replace_workspace_paths_for_prompt(str(prepared), _run_from_context(ctx)))
+
+
+def _materialize_context_images(ctx: ExecutionContext) -> None:
+    for source_id, value in list(ctx.outputs.items()):
+        ctx.outputs[source_id] = _materialize_runtime_images(ctx, value)
+
+
+def _materialize_runtime_images(ctx: ExecutionContext, value: Any) -> Any:
+    workspace = ctx.workspace
+    imported = import_runtime_images(value, workspace=workspace)
+    return fill_image_download_urls(imported, _run_from_context(ctx), workspace)
+
+
+def _finalize_output_html(ctx: ExecutionContext, html_text: str) -> str:
+    run = _run_from_context(ctx)
+    _materialize_context_images(ctx)
+    html_text = replace_workspace_paths_in_html(html_text, run)
+    refs: list[tuple[str, str]] = []
+    for value in ctx.outputs.values():
+        refs.extend(collect_workspace_image_refs(value, run, ctx.workspace))
+    return ensure_html_images(html_text, refs)
 
 
 def _run_from_context(ctx: ExecutionContext) -> Run:

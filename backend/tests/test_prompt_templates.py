@@ -121,6 +121,7 @@ def test_prompt_templates_are_seeded_and_saved_to_seed(auth_client):
     assert "表格和代码在窄屏不得撑破页面" in items["output_html_rendering"]["content"]
     assert "download_url" in items["output_html_rendering"]["content"]
     assert "绝对不要展示或链接 `path`" in items["output_html_rendering"]["content"]
+    assert '<img src="该地址" alt="图片说明">' in items["output_html_rendering"]["content"]
     assert "工具输出不是最终结果" in items["output_html_rendering"]["content"]
     assert "完整 HTML 放入 `html` 字段" in items["output_html_rendering"]["content"]
     assert len(items["nlcompile_graph_patch"]["content"]) < 2600

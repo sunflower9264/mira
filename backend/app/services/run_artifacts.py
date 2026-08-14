@@ -13,7 +13,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import App, Run, Step
 from app.schemas import RunArtifactOut, RunArtifactsOut
-from app.services.artifacts import file_sha256, signed_run_artifact_download_url
+from app.services.artifacts import (
+    file_sha256,
+    is_workspace_image_file,
+    resolve_run_artifact,
+    signed_run_artifact_download_url,
+)
 from app.services.apps import should_redact_app_source
 from app.services.output_contracts import ARTIFACT_MANIFEST_VERSION, ARTIFACT_RESERVED_TOP_LEVEL_DIRS
 from app.services.runtime_paths import run_workspace
@@ -136,6 +141,28 @@ async def find_run_artifact(
 ) -> RunArtifactCatalogEntry | None:
     catalog, _truncated = await catalog_run_artifacts(db, run, limit=None)
     return next((entry for entry in catalog if entry.relative_path == relative_path), None)
+
+
+def find_workspace_image_artifact(run: Run, relative_path: str) -> RunArtifactCatalogEntry | None:
+    path = resolve_run_artifact(run, relative_path)
+    if path is None or not is_workspace_image_file(path):
+        return None
+    try:
+        size = path.stat().st_size
+        sha256 = file_sha256(path)
+    except OSError:
+        return None
+    return RunArtifactCatalogEntry(
+        file_path=path,
+        relative_path=relative_path,
+        name=path.name,
+        size=size,
+        sha256=sha256,
+        integrity="verified",
+        source_node_id="",
+        source_node_title="",
+        mime=_guess_mime(path.name),
+    )
 
 
 async def _declared_artifact_manifests(
