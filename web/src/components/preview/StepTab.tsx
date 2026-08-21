@@ -644,9 +644,6 @@ function OutputContractEditor({
           onChange={setOption}
         />
       </Field>
-      <div className="text-[11px] leading-relaxed text-black/40">
-        普通文本适合大多数生成节点；仅当下游需要稳定读取字段、当前节点要直接产出 HTML，或需要生成可下载文件时使用契约。
-      </div>
       {contract?.type === 'json' && (
         <div className="grid gap-1.5">
           <div className="text-[11px] leading-relaxed text-black/40">
