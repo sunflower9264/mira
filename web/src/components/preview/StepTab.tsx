@@ -13,6 +13,7 @@ import type {
   NodeOutputContract,
   OutputNode,
   ReasoningEffort,
+  ToolConfig,
   UploadRef,
   WorkflowEdge,
   UserInputNode,
@@ -40,6 +41,8 @@ import {
   type DecisionSupplementDrafts,
 } from '../common/decisionInput';
 import { PillInputBar, type PillAttachment } from '../common/PillInputBar';
+import { PromptTokenEditor } from '../common/PromptTokenEditor';
+import { buildPromptTokens } from '../common/promptTokens';
 import { EditIcon, PlusIcon, SendIcon, SparkleIcon, StopIcon, TrashIcon } from '../common/Icons';
 
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
@@ -47,6 +50,7 @@ const PROMPT_PLACEHOLDER = '在这里输入内容。';
 const DRAWING_SWATCHES = ['#111111', '#ef4444', '#f59e0b', '#10b981', '#2563eb', '#7c3aed'];
 const EMPTY_NODES: WorkflowNode[] = [];
 const EMPTY_EDGES: WorkflowEdge[] = [];
+const EMPTY_TOOLS: ToolConfig[] = [];
 const NODE_TYPE_LABEL: Record<WorkflowNode['type'], string> = {
   user_input: '用户输入',
   generate: '生成',
@@ -682,6 +686,7 @@ function PromptField({
   nodeLabel: string;
 }) {
   const app = useEditorStore((s) => s.app);
+  const tools = useSettingsStore((s) => s.settings?.tools ?? EMPTY_TOOLS);
   const flushSave = useEditorStore((s) => s.flushSave);
   const promptGeneration = useEditorStore((s) => s.promptAssistantGenerations[node.id] ?? null);
   const startPromptAssistantGeneration = useEditorStore((s) => s.startPromptAssistantGeneration);
@@ -715,6 +720,10 @@ function PromptField({
   const canSubmitPromptDecision = !!completedPromptDecisionAnswers && activePromptDecisionIsLast && !submittingDecision;
   const showDecisionForm = !!waitingRequest && !submittedDecisionSummary && !submittingDecision;
   const showPromptTextarea = !showDecisionForm;
+  const promptTokens = useMemo(
+    () => buildPromptTokens(app?.graph, tools, value),
+    [app?.graph, tools, value],
+  );
 
   useEffect(() => {
     mountedRef.current = true;
@@ -1014,12 +1023,14 @@ function PromptField({
       {error && <div className="text-xs text-red-600">{error}</div>}
       {showPromptTextarea ? (
         <div className="relative flex min-h-0 flex-1">
-          <textarea
+          <PromptTokenEditor
             className={mainTextareaCls}
             value={value}
+            tokens={promptTokens}
             placeholder={promptPlaceholderForNode(node)}
-            onChange={(e) => {
-              if (!generating) onChange(e.target.value, { skipSave: true });
+            ariaLabel={`${nodeLabel}提示词`}
+            onChange={(next) => {
+              if (!generating) onChange(next, { skipSave: true });
             }}
             onBlur={flushPromptSave}
             readOnly={generating}
