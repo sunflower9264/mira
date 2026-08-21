@@ -177,13 +177,17 @@ function GenerateEditor({
             emptyLabel="没有可用推理等级。"
           />
         </Field>
-        <OutputContractEditor
+        <OutputContractField
           contract={node.output_contract}
           onChange={(output_contract) => patchNode(node.id, { output_contract } as Partial<WorkflowNode>)}
         />
         <PromptToolInsertField node={node} editorRef={promptEditorRef} />
         <PromptStructuredFieldInsert node={node} editorRef={promptEditorRef} />
       </div>
+      <JsonContractSchemaEditor
+        contract={node.output_contract}
+        onChange={(output_contract) => patchNode(node.id, { output_contract } as Partial<WorkflowNode>)}
+      />
       <label className="inline-flex w-fit items-center gap-2 rounded-full bg-[#F9F9F9] px-3 py-2 text-xs font-medium text-black/65">
         <input
           type="checkbox"
@@ -589,7 +593,7 @@ const OUTPUT_CONTRACT_OPTIONS: { label: string; value: OutputContractOptionValue
   { label: '其他文件', value: 'artifact:file' },
 ];
 
-function OutputContractEditor({
+function OutputContractField({
   contract,
   onChange,
 }: {
@@ -597,12 +601,6 @@ function OutputContractEditor({
   onChange: (next: NodeOutputContract | undefined) => void;
 }) {
   const selectedValue = contractOptionValue(contract);
-  const schemaText = JSON.stringify(contract?.type === 'json' ? contract.json_schema : defaultJsonContractSchema(), null, 2);
-  const [schemaDraft, setSchemaDraft] = useState(schemaText);
-
-  useEffect(() => {
-    setSchemaDraft(schemaText);
-  }, [schemaText]);
 
   const setOption = (value: string) => {
     if (value === selectedValue) return;
@@ -622,6 +620,32 @@ function OutputContractEditor({
     onChange(undefined);
   };
 
+  return (
+    <Field label="输出契约">
+      <SelectDropdown
+        value={selectedValue}
+        options={OUTPUT_CONTRACT_OPTIONS}
+        onChange={setOption}
+        buttonClassName={boundedSelectButtonCls}
+      />
+    </Field>
+  );
+}
+
+function JsonContractSchemaEditor({
+  contract,
+  onChange,
+}: {
+  contract: NodeOutputContract | undefined;
+  onChange: (next: NodeOutputContract | undefined) => void;
+}) {
+  const schemaText = JSON.stringify(contract?.type === 'json' ? contract.json_schema : defaultJsonContractSchema(), null, 2);
+  const [schemaDraft, setSchemaDraft] = useState(schemaText);
+
+  useEffect(() => {
+    setSchemaDraft(schemaText);
+  }, [schemaText]);
+
   const updateSchema = (value: string) => {
     setSchemaDraft(value);
     if (!contract || contract.type !== 'json') return;
@@ -635,30 +659,20 @@ function OutputContractEditor({
     }
   };
 
+  if (contract?.type !== 'json') return null;
+
   return (
-    <>
-      <Field label="输出契约">
-        <SelectDropdown
-          value={selectedValue}
-          options={OUTPUT_CONTRACT_OPTIONS}
-          onChange={setOption}
-          className="w-full min-w-32 max-w-44"
-        />
-      </Field>
-      {contract?.type === 'json' && (
-        <div className="order-last col-span-2 grid gap-1.5">
-          <div className="text-[11px] leading-relaxed text-black/40">
-            高级配置：JSON Schema 会严格校验字段；请为根对象和每个业务字段填写简短准确的中文 title 与 description。
-          </div>
-          <textarea
-            className="min-h-32 w-full resize-y rounded border border-black/10 bg-white px-3 py-2 font-mono text-xs leading-relaxed outline-none focus:border-black/30"
-            value={schemaDraft}
-            onChange={(event) => updateSchema(event.target.value)}
-            spellCheck={false}
-          />
-        </div>
-      )}
-    </>
+    <div className="grid w-full min-w-0 gap-1.5">
+      <div className="text-[11px] leading-relaxed text-black/40">
+        高级配置：JSON Schema 会严格校验字段；请为根对象和每个业务字段填写简短准确的中文 title 与 description。
+      </div>
+      <textarea
+        className="min-h-32 w-full min-w-0 resize-y rounded border border-black/10 bg-white px-3 py-2 font-mono text-xs leading-relaxed outline-none focus:border-black/30"
+        value={schemaDraft}
+        onChange={(event) => updateSchema(event.target.value)}
+        spellCheck={false}
+      />
+    </div>
   );
 }
 
@@ -716,7 +730,7 @@ function PromptToolInsertField({
         placeholder="选择系统工具、Skill 或 MCP"
         emptyLabel="当前应用没有可用工具。"
         disabled={generating}
-        className="w-full min-w-32 max-w-44"
+        buttonClassName={boundedSelectButtonCls}
         menuClassName="absolute left-0 top-full z-30 mt-1 max-h-64 w-72 overflow-y-auto rounded-xl border border-black/10 bg-white p-1 shadow-lg"
       />
     </Field>
@@ -755,7 +769,7 @@ function PromptStructuredFieldInsert({
         placeholder="选择结构化字段或状态值"
         emptyLabel="当前节点及直接上游没有 JSON 字段。"
         disabled={generating}
-        className="w-full min-w-32 max-w-44"
+        buttonClassName={boundedSelectButtonCls}
         menuClassName="absolute left-0 top-full z-30 mt-1 max-h-64 w-96 overflow-y-auto rounded-xl border border-black/10 bg-white p-1 shadow-lg"
       />
     </Field>
@@ -1034,7 +1048,7 @@ function PromptField({
   };
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col space-y-2">
+    <div className="flex w-full min-w-0 min-h-0 flex-1 flex-col space-y-2">
       <div className="flex items-center justify-end">
         <button
           type="button"
@@ -1120,7 +1134,7 @@ function PromptField({
       )}
       {error && <div className="text-xs text-red-600">{error}</div>}
       {showPromptTextarea ? (
-        <div className="relative flex min-h-0 flex-1">
+        <div className="relative flex w-full min-w-0 min-h-0 flex-1">
           <PromptTokenEditor
             ref={editorRef}
             className={mainTextareaCls}
@@ -1727,4 +1741,5 @@ function Field({ label, children, className = '' }: { label: string; children: R
 }
 
 const selectButtonCls = 'flex h-9 w-44 max-w-full items-center rounded-full bg-[#F9F9F9] px-3 text-sm outline-none hover:bg-black/[0.04]';
+const boundedSelectButtonCls = `${selectButtonCls} min-w-32`;
 const mainTextareaCls = 'min-h-0 flex-1 resize-none overflow-y-auto border-0 bg-transparent p-0 text-sm leading-relaxed outline-none placeholder:text-black/35';
