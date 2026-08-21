@@ -636,18 +636,17 @@ function OutputContractEditor({
   };
 
   return (
-    <div className="col-span-2 grid w-full gap-2">
-      <Field label="输出契约" inline>
+    <>
+      <Field label="输出契约">
         <SelectDropdown
           value={selectedValue}
           options={OUTPUT_CONTRACT_OPTIONS}
           onChange={setOption}
-          className="min-w-0 flex-1"
-          buttonClassName={`${selectButtonCls} w-full`}
+          className="w-full min-w-32 max-w-44"
         />
       </Field>
       {contract?.type === 'json' && (
-        <div className="grid gap-1.5">
+        <div className="order-last col-span-2 grid gap-1.5">
           <div className="text-[11px] leading-relaxed text-black/40">
             高级配置：JSON Schema 会严格校验字段；请为根对象和每个业务字段填写简短准确的中文 title 与 description。
           </div>
@@ -659,7 +658,7 @@ function OutputContractEditor({
           />
         </div>
       )}
-    </div>
+    </>
   );
 }
 
@@ -709,7 +708,7 @@ function PromptToolInsertField({
   }, [disabledToolIds, node, tools]);
 
   return (
-    <Field label="插入工具" className="col-span-2" inline>
+    <Field label="插入工具">
       <SelectDropdown
         value=""
         options={insertableTokens.map((token) => ({ label: promptTokenOptionLabel(token), value: token.value }))}
@@ -717,8 +716,7 @@ function PromptToolInsertField({
         placeholder="选择系统工具、Skill 或 MCP"
         emptyLabel="当前应用没有可用工具。"
         disabled={generating}
-        className="min-w-0 flex-1"
-        buttonClassName={`${selectButtonCls} w-full`}
+        className="w-full min-w-32 max-w-44"
         menuClassName="absolute left-0 top-full z-30 mt-1 max-h-64 w-72 overflow-y-auto rounded-xl border border-black/10 bg-white p-1 shadow-lg"
       />
     </Field>
@@ -746,7 +744,7 @@ function PromptStructuredFieldInsert({
   );
 
   return (
-    <Field label="插入字段" className="col-span-2" inline>
+    <Field label="插入字段">
       <SelectDropdown
         value=""
         options={choices.map((choice) => choice.option)}
@@ -757,8 +755,7 @@ function PromptStructuredFieldInsert({
         placeholder="选择结构化字段或状态值"
         emptyLabel="当前节点及直接上游没有 JSON 字段。"
         disabled={generating}
-        className="min-w-0 flex-1"
-        buttonClassName={`${selectButtonCls} w-full`}
+        className="w-full min-w-32 max-w-44"
         menuClassName="absolute left-0 top-full z-30 mt-1 max-h-64 w-96 overflow-y-auto rounded-xl border border-black/10 bg-white p-1 shadow-lg"
       />
     </Field>
@@ -1720,20 +1717,10 @@ function EditorShell({
   );
 }
 
-function Field({
-  label,
-  children,
-  className = '',
-  inline = false,
-}: {
-  label: string;
-  children: ReactNode;
-  className?: string;
-  inline?: boolean;
-}) {
+function Field({ label, children, className = '' }: { label: string; children: ReactNode; className?: string }) {
   return (
-    <label className={`${inline ? 'flex items-center gap-3' : 'block'} min-w-0 ${className}`} aria-label={label}>
-      <div className={`${inline ? 'w-14 shrink-0' : 'mb-1.5'} text-[11px] uppercase tracking-wider text-black/45`}>{label}</div>
+    <label className={`block min-w-0 ${className}`} aria-label={label}>
+      <div className="mb-1.5 text-[11px] uppercase tracking-wider text-black/45">{label}</div>
       {children}
     </label>
   );
