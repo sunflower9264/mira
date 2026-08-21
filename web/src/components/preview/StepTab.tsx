@@ -727,7 +727,7 @@ function PromptToolInsertField({
         value=""
         options={insertableTokens.map((token) => ({ label: promptTokenOptionLabel(token), value: token.value }))}
         onChange={(tokenValue) => editorRef.current?.insertToken(tokenValue)}
-        placeholder="选择系统工具、Skill 或 MCP"
+        placeholder="请选择工具"
         emptyLabel="当前应用没有可用工具。"
         disabled={generating}
         buttonClassName={boundedSelectButtonCls}
@@ -766,7 +766,7 @@ function PromptStructuredFieldInsert({
           const choice = choices.find((item) => item.option.value === optionValue);
           if (choice) editorRef.current?.insertToken(choice.field.value);
         }}
-        placeholder="选择结构化字段或状态值"
+        placeholder="请选择字段"
         emptyLabel="当前节点及直接上游没有 JSON 字段。"
         disabled={generating}
         buttonClassName={boundedSelectButtonCls}
