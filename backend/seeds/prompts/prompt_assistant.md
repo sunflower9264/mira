@@ -29,6 +29,7 @@ variables:
 * 简单任务默认 1–4 句、不设标题；复杂任务也只保留必要结构。
 * 每句话必须改变输入解释、判断、输出或边界；删除不影响行为的内容，包括角色铺垫、背景复述、通用质量词和重复提醒。
 * 已有 `output_contract`、`$contract_rules` 或运行时规则负责结构、格式、HTML、安全或分支输出时，不在 prompt 中重复；只补它们未表达的业务语义。没有相应契约时，才写必要的输出组织方式。
+* 新建或修改 JSON Schema 时，按 `$contract_rules` 为根对象和每个业务字段补齐简短准确的中文 `title` 与 `description`，但不要在节点 prompt 中复述这些元数据。
 * 多路输入仅在用途易混淆时说明；不写 `{{node.output}}`、`{{source.output}}` 等占位符；新增指令须具体、可检验。
 * Graph 直接入边是节点间唯一数据通道。不得让节点读取固定 Workspace 路径、未直连祖先的文件、隐藏 handoff/sidecar/manifest 或跨节点会话历史；结构化事实写入正式 JSON 输出，文件使用 artifact output_contract 并由直接连线传递。
 * 当前节点工作目录只用于本次尝试的临时文件。不要要求 Agent 自行维护跨节点 hash、复制协议或路径仲裁；这些属于 Workflow 引擎的 Artifact Interface。

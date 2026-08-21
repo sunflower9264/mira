@@ -59,7 +59,7 @@ node_json 和 patch_json 必须是合法 JSON 对象字符串，不要用 markdo
 所有新节点都必须包含 id、type、title；不要包含 position、agent 或 agent_session_id。
 
 - user_input：{"id":"input_1","type":"user_input","title":"用户输入","input_schema":{"label":"请输入主题","kind":"text","required":true}}。kind 只能是 text 或 file；placeholder 可选。
-- generate：{"id":"generate_1","type":"generate","title":"生成摘要","prompt":"说明任务、输入利用方式和输出要求"}。仅当确认方案需要时增加 model、reasoning_effort 或 output_contract；自由文本不要设置 output_contract。
+- generate：{"id":"generate_1","type":"generate","title":"生成摘要","prompt":"说明任务、输入利用方式和输出要求"}。仅当确认方案需要时增加 model、reasoning_effort 或 output_contract；自由文本不要设置 output_contract。JSON Schema 的根对象及每个 properties 业务字段（含嵌套字段）都必须有简短准确的中文 title 和 description。
 - output：{"id":"output_1","type":"output","title":"输出","prompt":"将上游结果完整渲染为 HTML","source_node_id":"generate_1"}。必须另有一条 edge_source 为 source_node_id、edge_target 为该 output 的入边；不能包含 output_contract，也不能有出边。
 - condition binary：{"id":"condition_1","type":"condition","title":"是否通过","mode":"binary","prompt":"根据上游内容判断是否通过","branches":[{"key":"true","label":"通过"},{"key":"false","label":"不通过"}]}。binary 的 key 固定且仅为 true、false。
 - condition cases：{"id":"condition_1","type":"condition","title":"分类","mode":"cases","prompt":"根据上游内容选择分类","branches":[{"key":"approved","label":"通过"},{"key":"review","label":"复核"}]}。key 只能含字母、数字、下划线且不重复；保留 key __default__ 不能写入 branches。

@@ -648,7 +648,7 @@ def build_prompt_assistant_prompt(
 	  - {"type":"html"}
 	  - {"type":"artifact","artifact_kind":"image|code|html|markdown|csv|excel|docx|ppt|pdf|archive|zip|file","validate_office_documents":true|false（可选）}
 	- 自由文本是默认选择；普通写作、总结、分析、推荐、草稿和说明类节点不需要 output_contract，返回 null。
-	- 只有用户明确要求 JSON、结构化字段、固定字段，或下游明显需要机器读取字段时，才建议 json，并给出 strict object JSON Schema：根 type 必须是 object，additionalProperties 必须是 false，required 必须包含所有 properties 字段。
+	- 只有用户明确要求 JSON、结构化字段、固定字段，或下游明显需要机器读取字段时，才建议 json，并给出 strict object JSON Schema：根 type 必须是 object，additionalProperties 必须是 false，required 必须包含所有 properties 字段；根对象及每个 properties 业务字段（含嵌套字段）都必须有简短准确的中文 title 和 description。
 	- 只有用户明确要求当前 generate 节点直接产出可嵌入预览的 HTML 片段时，才建议 html；最终展示通常由 output 节点负责，不要为了“好看”给中间 generate 节点套 html。
 	- 当用户明确要求图片、代码包、HTML 文件、Markdown 文件、CSV、Excel、DOCX、PPT、PDF、压缩包或其他可下载文件时，建议 artifact 并选择最贴近的 artifact_kind。"""
         if supports_contract

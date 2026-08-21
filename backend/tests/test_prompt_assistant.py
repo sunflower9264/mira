@@ -292,6 +292,8 @@ def test_prompt_assistant_uses_ai_with_graph_context_and_user_request(auth_clien
     assert "output_contract" in runtime.last_prompt
     assert "自由文本是默认选择" in runtime.last_prompt
     assert "只有用户明确要求 JSON、结构化字段、固定字段" in runtime.last_prompt
+    assert "每个 properties 业务字段（含嵌套字段）" in runtime.last_prompt
+    assert "中文 title 和 description" in runtime.last_prompt
 
 
 def test_prompt_assistant_keeps_full_target_prompt_and_related_prompt_tail(auth_client, enable_claude_agent):

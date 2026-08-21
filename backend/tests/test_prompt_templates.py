@@ -86,6 +86,7 @@ def test_prompt_templates_are_seeded_and_saved_to_seed(auth_client):
     assert "禁止冗余传递连线" in items["nlcompile_graph_patch"]["content"]
     assert "a 已经通过 b 影响 c" in items["nlcompile_graph_patch"]["content"]
     assert "不判断画布视觉交叉、节点坐标或连线路径" in items["nlcompile_graph_patch"]["content"]
+    assert "中文 title 和 description" in items["nlcompile_graph_patch"]["content"]
     assert "禁止制造交叉连接" not in items["nlcompile_graph_patch"]["content"]
     assert "回答采纳规则" in items["ask_user_protocol"]["content"]
     assert "必须参考用户的 `answers`、`text` 和 `attachments`" in items["ask_user_protocol"]["content"]
@@ -110,6 +111,7 @@ def test_prompt_templates_are_seeded_and_saved_to_seed(auth_client):
     assert "所有影响行为的目标、变量、字段、示例、边界、输出要求和验收标准必须保留" in items["prompt_assistant"]["content"]
     assert "不写修改说明" in items["prompt_assistant"]["content"]
     assert "最短充分 prompt" in items["prompt_assistant"]["content"]
+    assert "中文 `title` 与 `description`" in items["prompt_assistant"]["content"]
     assert "否则采用保守默认直接生成" in items["prompt_assistant"]["content"]
     assert items["graph_layout_beautify"]["name"] == "美化样式节点布局"
     assert "$graph_json" in items["graph_layout_beautify"]["content"]

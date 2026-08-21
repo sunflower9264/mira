@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent, type ReactNode, type RefObject } from 'react';
 import { ReactSketchCanvas, type CanvasPath, type ReactSketchCanvasRef } from 'react-sketch-canvas';
 import { useEditorStore } from '../../stores/useEditorStore';
 import { useSettingsStore } from '../../stores/useSettingsStore';
@@ -41,8 +41,9 @@ import {
   type DecisionSupplementDrafts,
 } from '../common/decisionInput';
 import { PillInputBar, type PillAttachment } from '../common/PillInputBar';
-import { PromptTokenEditor } from '../common/PromptTokenEditor';
-import { buildPromptTokens } from '../common/promptTokens';
+import { buildPromptFieldTokens, mergePromptFieldTokens, promptFieldOptionLabel } from '../common/promptFields';
+import { PromptTokenEditor, type PromptTokenEditorHandle } from '../common/PromptTokenEditor';
+import { buildPromptTokens, promptTokenOptionLabel, type PromptTokenDefinition } from '../common/promptTokens';
 import { EditIcon, PlusIcon, SendIcon, SparkleIcon, StopIcon, TrashIcon } from '../common/Icons';
 
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
@@ -51,6 +52,7 @@ const DRAWING_SWATCHES = ['#111111', '#ef4444', '#f59e0b', '#10b981', '#2563eb',
 const EMPTY_NODES: WorkflowNode[] = [];
 const EMPTY_EDGES: WorkflowEdge[] = [];
 const EMPTY_TOOLS: ToolConfig[] = [];
+const EMPTY_TOOL_IDS: string[] = [];
 const NODE_TYPE_LABEL: Record<WorkflowNode['type'], string> = {
   user_input: '用户输入',
   generate: '生成',
@@ -139,6 +141,7 @@ function GenerateEditor({
 }) {
   const settings = useSettingsStore((s) => s.settings);
   const loadSettings = useSettingsStore((s) => s.load);
+  const promptEditorRef = useRef<PromptTokenEditorHandle>(null);
   const updatePrompt = (prompt: string, opts?: PromptChangeOptions) =>
     patchNode(node.id, { prompt } as Partial<WorkflowNode>, { ...TEXT_EDIT_HISTORY_OPTS, ...opts });
   const modelOptions = useMemo(() => supportedModelsForAgent(settings, appAgent), [settings, appAgent]);
@@ -178,6 +181,8 @@ function GenerateEditor({
           contract={node.output_contract}
           onChange={(output_contract) => patchNode(node.id, { output_contract } as Partial<WorkflowNode>)}
         />
+        <PromptToolInsertField node={node} editorRef={promptEditorRef} />
+        <PromptStructuredFieldInsert node={node} editorRef={promptEditorRef} />
       </div>
       <label className="inline-flex w-fit items-center gap-2 rounded-full bg-[#F9F9F9] px-3 py-2 text-xs font-medium text-black/65">
         <input
@@ -194,7 +199,7 @@ function GenerateEditor({
         运行前允许追问
       </label>
       {settings && !hasSelectedAgent && <div className="text-xs text-red-600">请先在应用页选择已启用 Agent。</div>}
-      <PromptField node={node} value={node.prompt ?? ''} onChange={updatePrompt} nodeLabel={node.title || '生成'} />
+      <PromptField editorRef={promptEditorRef} node={node} value={node.prompt ?? ''} onChange={updatePrompt} nodeLabel={node.title || '生成'} />
     </EditorShell>
   );
 }
@@ -210,6 +215,7 @@ function OutputEditor({
 }) {
   const settings = useSettingsStore((s) => s.settings);
   const loadSettings = useSettingsStore((s) => s.load);
+  const promptEditorRef = useRef<PromptTokenEditorHandle>(null);
   const graphNodes = useEditorStore((s) => s.app?.graph.nodes ?? EMPTY_NODES);
   const graphEdges = useEditorStore((s) => s.app?.graph.edges ?? EMPTY_EDGES);
   const updatePrompt = (prompt: string, opts?: PromptChangeOptions) =>
@@ -273,9 +279,11 @@ function OutputEditor({
             disabled={sourceOptions.length === 0}
           />
         </Field>
+        <PromptToolInsertField node={node} editorRef={promptEditorRef} />
+        <PromptStructuredFieldInsert node={node} editorRef={promptEditorRef} />
       </div>
       {settings && !hasSelectedAgent && <div className="text-xs text-red-600">请先在应用页选择已启用 Agent。</div>}
-      <PromptField node={node} value={node.prompt ?? ''} onChange={updatePrompt} nodeLabel={node.title || '输出'} />
+      <PromptField editorRef={promptEditorRef} node={node} value={node.prompt ?? ''} onChange={updatePrompt} nodeLabel={node.title || '输出'} />
     </EditorShell>
   );
 }
@@ -365,6 +373,7 @@ function ConditionEditor({
 }) {
   const settings = useSettingsStore((s) => s.settings);
   const loadSettings = useSettingsStore((s) => s.load);
+  const promptEditorRef = useRef<PromptTokenEditorHandle>(null);
   const modelOptions = useMemo(() => supportedModelsForAgent(settings, appAgent), [settings, appAgent]);
   const reasoningEffortOptions = useMemo(() => reasoningEffortOptionsForAgent(appAgent), [appAgent]);
   const hasSelectedAgent = useMemo(() => isAgentEnabled(settings, appAgent), [settings, appAgent]);
@@ -432,6 +441,8 @@ function ConditionEditor({
           emptyLabel="没有可用推理等级。"
         />
       </Field>
+      <PromptToolInsertField node={node} editorRef={promptEditorRef} />
+      <PromptStructuredFieldInsert node={node} editorRef={promptEditorRef} />
     </div>
   );
 
@@ -452,7 +463,7 @@ function ConditionEditor({
           <span className="font-mono text-black/60">false</span> 两个分支；模型输出无法识别时归 false。
         </div>
       )}
-      <PromptField node={node} value={node.prompt ?? ''} onChange={updatePrompt} nodeLabel={node.title || '判断'} />
+      <PromptField editorRef={promptEditorRef} node={node} value={node.prompt ?? ''} onChange={updatePrompt} nodeLabel={node.title || '判断'} />
     </EditorShell>
   );
 }
@@ -639,7 +650,7 @@ function OutputContractEditor({
       {contract?.type === 'json' && (
         <div className="grid gap-1.5">
           <div className="text-[11px] leading-relaxed text-black/40">
-            高级配置：JSON Schema 会严格校验字段，字段不匹配会导致节点失败或自动修正。
+            高级配置：JSON Schema 会严格校验字段；请为根对象和每个业务字段填写简短准确的中文 title 与 description。
           </div>
           <textarea
             className="min-h-32 w-full resize-y rounded border border-black/10 bg-white px-3 py-2 font-mono text-xs leading-relaxed outline-none focus:border-black/30"
@@ -663,10 +674,14 @@ function contractOptionValue(contract: NodeOutputContract | undefined): OutputCo
 
 function defaultJsonContractSchema(): Record<string, unknown> {
   return {
+    title: '结构化结果',
+    description: '当前节点的结构化输出。',
     type: 'object',
     additionalProperties: false,
     properties: {
       result: {
+        title: '结果',
+        description: '当前节点生成的主要结果。',
         type: 'string',
       },
     },
@@ -674,16 +689,93 @@ function defaultJsonContractSchema(): Record<string, unknown> {
   };
 }
 
+function PromptToolInsertField({
+  node,
+  editorRef,
+}: {
+  node: GenerateNode | OutputNode | ConditionNode;
+  editorRef: RefObject<PromptTokenEditorHandle>;
+}) {
+  const tools = useSettingsStore((s) => s.settings?.tools ?? EMPTY_TOOLS);
+  const disabledToolIds = useEditorStore((s) => s.app?.graph.tools?.disabled_tool_ids ?? EMPTY_TOOL_IDS);
+  const generating = useEditorStore((s) => s.promptAssistantGenerations[node.id] != null);
+  const insertableTokens = useMemo(() => {
+    const disabled = new Set(disabledToolIds);
+    const availableTools = tools.filter((tool) => tool.enabled && !disabled.has(tool.id));
+    const includeSystem = node.type === 'condition' || (node.type === 'generate' && node.ask_user_enabled !== false);
+    const kindOrder = { system: 0, skill: 1, mcp: 2 } as const;
+    return buildPromptTokens(availableTools, includeSystem).sort(
+      (a, b) => kindOrder[a.kind] - kindOrder[b.kind] || a.label.localeCompare(b.label),
+    );
+  }, [disabledToolIds, node, tools]);
+
+  return (
+    <Field label="插入工具" className="col-span-2">
+      <SelectDropdown
+        value=""
+        options={insertableTokens.map((token) => ({ label: promptTokenOptionLabel(token), value: token.value }))}
+        onChange={(tokenValue) => editorRef.current?.insertToken(tokenValue)}
+        placeholder="选择系统工具、Skill 或 MCP"
+        emptyLabel="当前应用没有可用工具。"
+        disabled={generating}
+        buttonClassName={`${selectButtonCls} w-64`}
+        menuClassName="absolute left-0 top-full z-30 mt-1 max-h-64 w-72 overflow-y-auto rounded-xl border border-black/10 bg-white p-1 shadow-lg"
+      />
+    </Field>
+  );
+}
+
+function PromptStructuredFieldInsert({
+  node,
+  editorRef,
+}: {
+  node: GenerateNode | OutputNode | ConditionNode;
+  editorRef: RefObject<PromptTokenEditorHandle>;
+}) {
+  const graph = useEditorStore((s) => s.app?.graph);
+  const generating = useEditorStore((s) => s.promptAssistantGenerations[node.id] != null);
+  const choices = useMemo(
+    () => buildPromptFieldTokens(graph, node.id).map((field, index) => ({
+      field,
+      option: {
+        label: promptFieldOptionLabel(field),
+        value: `field:${index}:${field.sourceNodeId}:${field.value}`,
+      },
+    })),
+    [graph, node.id],
+  );
+
+  return (
+    <Field label="插入字段" className="col-span-2">
+      <SelectDropdown
+        value=""
+        options={choices.map((choice) => choice.option)}
+        onChange={(optionValue) => {
+          const choice = choices.find((item) => item.option.value === optionValue);
+          if (choice) editorRef.current?.insertToken(choice.field.value);
+        }}
+        placeholder="选择结构化字段或状态值"
+        emptyLabel="当前节点及直接上游没有 JSON 字段。"
+        disabled={generating}
+        buttonClassName={`${selectButtonCls} w-64`}
+        menuClassName="absolute left-0 top-full z-30 mt-1 max-h-64 w-96 overflow-y-auto rounded-xl border border-black/10 bg-white p-1 shadow-lg"
+      />
+    </Field>
+  );
+}
+
 function PromptField({
   value,
   onChange,
   node,
   nodeLabel,
+  editorRef,
 }: {
   value: string;
   onChange: (next: string, opts?: PromptChangeOptions) => void;
   node: GenerateNode | OutputNode | ConditionNode;
   nodeLabel: string;
+  editorRef: RefObject<PromptTokenEditorHandle>;
 }) {
   const app = useEditorStore((s) => s.app);
   const tools = useSettingsStore((s) => s.settings?.tools ?? EMPTY_TOOLS);
@@ -720,10 +812,18 @@ function PromptField({
   const canSubmitPromptDecision = !!completedPromptDecisionAnswers && activePromptDecisionIsLast && !submittingDecision;
   const showDecisionForm = !!waitingRequest && !submittedDecisionSummary && !submittingDecision;
   const showPromptTextarea = !showDecisionForm;
-  const promptTokens = useMemo(
-    () => buildPromptTokens(app?.graph, tools, value),
-    [app?.graph, tools, value],
-  );
+  const promptTokens = useMemo(() => {
+    const disabledToolIds = new Set(app?.graph.tools?.disabled_tool_ids ?? []);
+    const availableTools = tools.filter((tool) => tool.enabled && !disabledToolIds.has(tool.id));
+    const includeSystem = node.type === 'condition' || (node.type === 'generate' && node.ask_user_enabled !== false);
+    const tokens = new Map<string, PromptTokenDefinition>(
+      buildPromptTokens(availableTools, includeSystem).map((token) => [token.value, token]),
+    );
+    for (const field of mergePromptFieldTokens(buildPromptFieldTokens(app?.graph, node.id))) {
+      if (!tokens.has(field.value)) tokens.set(field.value, field);
+    }
+    return [...tokens.values()].sort((a, b) => b.value.length - a.value.length || a.value.localeCompare(b.value));
+  }, [app?.graph, node, tools]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -1024,6 +1124,7 @@ function PromptField({
       {showPromptTextarea ? (
         <div className="relative flex min-h-0 flex-1">
           <PromptTokenEditor
+            ref={editorRef}
             className={mainTextareaCls}
             value={value}
             tokens={promptTokens}

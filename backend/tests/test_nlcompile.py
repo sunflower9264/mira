@@ -1007,6 +1007,8 @@ def test_nlcompile_applies_valid_patches_and_renders_plan(auth_client, enable_cl
     assert "graph patch 阶段禁止调用 ask_user" in patch_prompt
     assert "禁止冗余传递连线" in patch_prompt
     assert "只处理业务数据流，不判断画布视觉交叉" in patch_prompt
+    assert "每个 properties 业务字段（含嵌套字段）" in patch_prompt
+    assert "中文 title 和 description" in patch_prompt
     assert "普通边" in patch_prompt
     assert "condition 分支边" in patch_prompt
     assert "asset drawing" in patch_prompt

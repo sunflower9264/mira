@@ -1,4 +1,6 @@
 import {
+  forwardRef,
+  useImperativeHandle,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -20,9 +22,13 @@ interface PromptTokenEditorProps {
   ariaLabel?: string;
 }
 
+export interface PromptTokenEditorHandle {
+  insertToken(value: string): void;
+}
+
 const TOKEN_ATTRIBUTE = 'data-prompt-token';
 
-export function PromptTokenEditor({
+export const PromptTokenEditor = forwardRef<PromptTokenEditorHandle, PromptTokenEditorProps>(function PromptTokenEditor({
   value,
   tokens,
   onChange,
@@ -31,13 +37,14 @@ export function PromptTokenEditor({
   readOnly = false,
   className = '',
   ariaLabel = '提示词',
-}: PromptTokenEditorProps) {
+}, ref) {
   const editorRef = useRef<HTMLDivElement | null>(null);
   const composingRef = useRef(false);
+  const caretOffsetRef = useRef(value.length);
   const valueRef = useRef(value);
   valueRef.current = value;
   const tokenSignature = useMemo(
-    () => tokens.map((token) => `${token.kind}:${token.value}:${token.label}`).join('\u0000'),
+    () => tokens.map((token) => `${token.kind}:${token.value}:${token.label}:${token.description ?? ''}`).join('\u0000'),
     [tokens],
   );
 
@@ -49,7 +56,11 @@ export function PromptTokenEditor({
     const selectionOffset = document.activeElement === editor ? getCaretOffset(editor) : null;
     renderPromptValue(editor, value, tokens);
     editor.dataset.tokenSignature = tokenSignature;
-    if (selectionOffset !== null) setCaretOffset(editor, Math.min(selectionOffset, value.length));
+    if (selectionOffset !== null) {
+      const nextOffset = Math.min(selectionOffset, value.length);
+      caretOffsetRef.current = nextOffset;
+      setCaretOffset(editor, nextOffset);
+    }
   }, [tokenSignature, tokens, value]);
 
   const syncValue = (restoreCaret: boolean) => {
@@ -57,6 +68,7 @@ export function PromptTokenEditor({
     if (!editor) return;
     const next = readPromptValue(editor);
     const caretOffset = restoreCaret ? getCaretOffset(editor) : null;
+    if (caretOffset !== null) caretOffsetRef.current = caretOffset;
     if (next !== valueRef.current) {
       valueRef.current = next;
       onChange(next);
@@ -69,6 +81,36 @@ export function PromptTokenEditor({
       if (caretOffset !== null) setCaretOffset(editor, caretOffset);
     }
   };
+
+  const rememberCaret = () => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    const caretOffset = getCaretOffset(editor);
+    if (caretOffset !== null) caretOffsetRef.current = caretOffset;
+  };
+
+  useImperativeHandle(ref, () => ({
+    insertToken(tokenValue: string) {
+      const editor = editorRef.current;
+      if (!editor || readOnly) return;
+      const current = valueRef.current;
+      const offset = Math.min(caretOffsetRef.current, current.length);
+      const before = current.slice(0, offset);
+      const after = current.slice(offset);
+      const prefix = needsTokenSpacing(before[before.length - 1] ?? '') ? ' ' : '';
+      const suffix = needsTokenSpacing(after[0] ?? '') ? ' ' : '';
+      const inserted = `${prefix}${tokenValue}${suffix}`;
+      const next = `${before}${inserted}${after}`;
+      const nextOffset = offset + inserted.length;
+      valueRef.current = next;
+      caretOffsetRef.current = nextOffset;
+      onChange(next);
+      renderPromptValue(editor, next, tokens);
+      editor.dataset.tokenSignature = tokenSignature;
+      editor.focus();
+      setCaretOffset(editor, nextOffset);
+    },
+  }), [onChange, readOnly, tokenSignature, tokens]);
 
   const handleInput = (_event: FormEvent<HTMLDivElement>) => {
     if (!composingRef.current) syncValue(true);
@@ -98,7 +140,9 @@ export function PromptTokenEditor({
     const tokenValue = token.getAttribute(TOKEN_ATTRIBUTE) ?? '';
     token.remove();
     syncValue(false);
-    setCaretOffset(editor, event.key === 'Backspace' ? Math.max(0, caretOffset - tokenValue.length) : caretOffset);
+    const nextOffset = event.key === 'Backspace' ? Math.max(0, caretOffset - tokenValue.length) : caretOffset;
+    caretOffsetRef.current = nextOffset;
+    setCaretOffset(editor, nextOffset);
   };
 
   const handlePaste = (event: ClipboardEvent<HTMLDivElement>) => {
@@ -146,13 +190,18 @@ export function PromptTokenEditor({
       }}
       onCompositionEnd={handleCompositionEnd}
       onKeyDown={handleKeyDown}
+      onKeyUp={rememberCaret}
+      onMouseUp={rememberCaret}
       onPaste={handlePaste}
       onCopy={handleCopy}
       onCut={handleCut}
-      onBlur={onBlur}
+      onBlur={() => {
+        rememberCaret();
+        onBlur?.();
+      }}
     />
   );
-}
+});
 
 function renderPromptValue(editor: HTMLElement, value: string, tokens: PromptTokenDefinition[]): void {
   const fragment = document.createDocumentFragment();
@@ -164,14 +213,28 @@ function renderPromptValue(editor: HTMLElement, value: string, tokens: PromptTok
     const tag = document.createElement('span');
     tag.setAttribute(TOKEN_ATTRIBUTE, part.value);
     tag.setAttribute('contenteditable', 'false');
-    tag.className = part.kind === 'tool'
-      ? 'mx-0.5 inline-flex select-all items-center rounded-md border border-blue-200 bg-blue-50 px-1.5 py-0.5 text-xs font-medium leading-none text-blue-700'
-      : 'mx-0.5 inline-flex select-all items-center rounded-md border border-black/10 bg-black/[0.045] px-1.5 py-0.5 text-xs font-medium leading-none text-black/65';
+    tag.className = promptTokenClassName(part.kind);
     tag.textContent = part.label;
-    tag.title = `${part.kind === 'tool' ? '内部工具' : '系统字段'}：${part.value}`;
+    const kindLabel = promptTokenKindLabel(part.kind);
+    tag.title = `${kindLabel}：${part.value}${part.description ? `\n${part.description}` : ''}`;
     fragment.append(tag);
   }
   editor.replaceChildren(fragment);
+}
+
+function promptTokenClassName(kind: PromptTokenDefinition['kind']): string {
+  if (kind === 'field' || kind === 'enum') {
+    return 'mx-0.5 inline-flex select-all items-center rounded border border-black/10 bg-black/[0.035] px-1.5 py-0.5 font-mono text-xs leading-none text-black/60';
+  }
+  return 'mx-0.5 inline-flex select-all items-center rounded-md border border-blue-200 bg-blue-50 px-1.5 py-0.5 text-xs font-medium leading-none text-blue-700';
+}
+
+function promptTokenKindLabel(kind: PromptTokenDefinition['kind']): string {
+  if (kind === 'system') return '系统工具';
+  if (kind === 'skill') return 'Skill';
+  if (kind === 'mcp') return 'MCP';
+  if (kind === 'enum') return '状态值';
+  return '结构化字段';
 }
 
 function splitPrompt(value: string, tokens: PromptTokenDefinition[]): Array<string | PromptTokenDefinition> {
@@ -203,7 +266,11 @@ function tokenMatchesAt(text: string, index: number, token: string): boolean {
 }
 
 function isIdentifierCharacter(value: string): boolean {
-  return /[A-Za-z0-9_-]/.test(value);
+  return /[\p{L}\p{N}_-]/u.test(value);
+}
+
+function needsTokenSpacing(value: string): boolean {
+  return /[\p{L}\p{N}_-]/u.test(value);
 }
 
 function isPathSeparator(value: string): boolean {

@@ -19,7 +19,7 @@ variables:
 - 节点类型只有 user_input、generate、output、asset、condition。
 - 一个 workflow 最多一个 user_input 和一个 output；已有时必须 update，不得 add_node 创建第二个。
 - output 是最终 HTML 展示节点，不能作为 source，且不能包含 output_contract；source_node_id 必须与某条入边 source 对齐。
-- 只有 generate 可以包含 output_contract；JSON 契约必须是 strict object json_schema，文件产物使用 artifact_kind。
+- 只有 generate 可以包含 output_contract；JSON 契约必须是 strict object json_schema，根对象及每个 properties 业务字段（含嵌套字段）都要有简短准确的中文 title 和 description；文件产物使用 artifact_kind。
 - edge 是节点间唯一数据通道。不得在 prompt 中创建或读取固定 Workspace 路径、隐藏 handoff/sidecar/manifest 或未通过直接入边声明的祖先文件；结构化结果和 artifact 文件都必须由生产节点正式输出后通过 edge 传递。
 - 业务验收不通过仍应由 JSON 契约返回合法 `failed`/`blocked` 结果，再由 condition 选择正常 fail 分支；不要用无效 JSON、缺文件或命令失败模拟业务 fail。
 - user_input 和 asset 不能作为 target；condition 出边必须使用 branch key 作为 source_handle。
