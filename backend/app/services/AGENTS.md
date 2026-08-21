@@ -14,13 +14,13 @@
 - `system_gallery` 源应用永远只读；模板通过 gallery 列表返回，不混入普通 market 列表。
 - Workflow lint 是运行/发布前可读预检层；error 阻断，warning/info 只提示，不替代 hard graph validation。
 - Run 编排必须使用 `Run.graph_json` 快照；创建后 App graph 编辑不影响该 run。
-- Run 执行按依赖驱动，ready 节点可并发；LLM session 只在线性单下游链路复用，fan-out/fan-in/并行分支使用独立 session。
+- Run 执行按依赖驱动，ready 节点可并发；所有 LLM 节点使用独立 session，节点上下文只包含 Graph 直接前驱的正式输出。
 - Run 事件持久化用于刷新、SSE replay 和历史；`RunHub` 只处理当前进程广播、取消和等待信号。
-- Rerun-from 创建新 run，读取当前 App graph，只复制起点前可复用成功/跳过祖先 step；用户覆盖上游 input 时从最早变更 input 祖先重放。
+- Rerun-from 创建新 run，读取当前 App graph，只复制起点前可复用成功/跳过祖先 step；用户覆盖上游 input 时从最早变更 input 祖先重放，复用 condition 的 branch key 必须按当前 Graph 重算冻结分支。
 - condition 分支测试通过新 run snapshot 的 override 强制分支，不修改 App graph。
-- `node_handlers.py` 集中执行节点；asset 节点按 `content` / `urls` / `uploads` / `upload` 读取；output 节点保持 HTML-only。Codex `generated_images` 等运行时图片会在 generate 成功后复制进当前 run workspace；output 渲染时把签名 `download_url` 填进 `image_url`，并保证 HTML 用 `<img src>` 展示。
+- `node_handlers.py` 集中执行节点；asset 节点按 `content` / `urls` / `uploads` / `upload` 读取；output 节点保持 HTML-only。文件（包括生成图片）必须由 artifact contract 声明，经统一 Envelope 和 Graph 入边传递；不得扫描 workspace 或为未声明文件生成下载旁路。
 - `output_contracts.py` 负责 generate/output 输出契约 schema 生成、校验和一次修正；JSON 必须按 strict object schema 校验，HTML 只通过 wrapper 解析并原样保存，artifact 统一按工作区文件 path 处理。
-- Run artifacts 和 Trace 按需组装，必须使用 run owner 权限和 `runtime_paths.py` 计算路径，只返回相对路径或签名链接，不新增 artifact 表。
+- Run artifacts 和 Trace 按需组装，必须使用 run owner 权限和 `runtime_paths.py` 计算路径，只读取统一 Envelope 中带 `holder` / `origin` / 可选 `reused_from` / hash 的声明，对外只返回签名下载链接而不返回内部路径，不新增 artifact 表。
 - `tools.py` 管理 MCP/Skills 库存、App disabled tools、run snapshot allowed tools 和 planning-only `planning_enabled` 过滤。
 - NL compile 使用 `nlcompile_sessions` 持久化 plan/wait/apply/refine/cancel；plan 阶段可 ask_user，apply 阶段禁止继续交互。
 - NL compile apply 将 patches 作为整批在临时 graph 上模拟和校验，失败可让 Agent 重新生成；不得返回半应用 graph。

@@ -25,20 +25,28 @@ def _user_input_graph() -> dict:
     }
 
 
-def _output_only_graph() -> dict:
+def _no_user_input_graph() -> dict:
     return {
         "agent": "claude",
         "nodes": [
             {
+                "id": "n_asset",
+                "type": "asset",
+                "position": {"x": 0, "y": 0},
+                "title": "Input",
+                "asset_kind": "text",
+                "content": "input",
+            },
+            {
                 "id": "n_out",
                 "type": "output",
-                "position": {"x": 0, "y": 0},
+                "position": {"x": 200, "y": 0},
                 "title": "Output",
                 "prompt": "render [[respond:<section>ok</section>]]",
-                "source_node_id": "",
+                "source_node_id": "n_asset",
             }
         ],
-        "edges": [],
+        "edges": [{"id": "e_out", "source": "n_asset", "target": "n_out"}],
     }
 
 
@@ -62,7 +70,7 @@ def test_run_name_falls_back_to_app_name_and_can_be_renamed(auth_client, enable_
     enable_claude_agent()
     monkeypatch.setattr("app.services.runs.display_now", lambda: datetime.fromisoformat("2026-07-04T09:30:00+08:00"))
     app = auth_client.post("/api/apps", json={"name": "No Input App"}).json()
-    patched = auth_client.patch(f"/api/apps/{app['id']}", json={"graph": _output_only_graph()})
+    patched = auth_client.patch(f"/api/apps/{app['id']}", json={"graph": _no_user_input_graph()})
     assert patched.status_code == 200, patched.text
 
     created = auth_client.post("/api/runs", json={"app_id": app["id"], "inputs": {}})
@@ -83,7 +91,7 @@ def test_run_name_falls_back_to_app_name_and_can_be_renamed(auth_client, enable_
 def test_run_rename_rejects_empty_name(auth_client, enable_claude_agent):
     enable_claude_agent()
     app = auth_client.post("/api/apps", json={"name": "Reject Empty"}).json()
-    patched = auth_client.patch(f"/api/apps/{app['id']}", json={"graph": _output_only_graph()})
+    patched = auth_client.patch(f"/api/apps/{app['id']}", json={"graph": _no_user_input_graph()})
     assert patched.status_code == 200, patched.text
     created = auth_client.post("/api/runs", json={"app_id": app["id"], "inputs": {}})
     assert created.status_code == 200, created.text

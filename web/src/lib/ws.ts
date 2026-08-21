@@ -8,7 +8,7 @@
 //   服务端返回 410 时停止重连（buffer 不可重放），由调用方走 GET /api/runs/{id} 兜底。
 // - 收到 run.end 后主动 close 流；外部调用 close() 也会标记 closed 并取消 fetch。
 
-import type { App, DecisionOption, RunEvent } from '../types';
+import type { App, DecisionOption, FailureKind, RunEvent } from '../types';
 import { getToken } from './auth';
 
 export type RunStreamHandler = (evt: RunEvent) => void;
@@ -280,10 +280,15 @@ function toRunEvent(frame: ParsedFrame): RunEvent | null {
         event: 'run.end',
         status: (payload.status as 'success' | 'failed' | 'cancelled') ?? 'failed',
         error: typeof payload.error === 'string' ? payload.error : undefined,
+        failure_kind: isFailureKind(payload.failure_kind) ? payload.failure_kind : undefined,
       };
     default:
       return null;
   }
+}
+
+function isFailureKind(value: unknown): value is FailureKind {
+  return value === 'runtime' || value === 'contract' || value === 'routing' || value === 'integrity' || value === 'internal';
 }
 
 function normalizeDecisionOptions(rawOptions: unknown[]): DecisionOption[] {

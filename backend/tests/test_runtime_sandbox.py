@@ -78,7 +78,7 @@ def test_runtime_path_map_rewrites_workspace_home_and_uploads(tmp_path):
 
     assert "/workspace/a.txt" in container_text
     assert "/home/mira/.mira/prompt.txt" in container_text
-    assert "/mnt/uploads/upl_1/blob" in container_text
+    assert "/mnt/inputs/upl_1/blob" in container_text
     assert str(path_map.workspace_host / "a.txt") in path_map.container_to_host_text(container_text)
 
 
@@ -95,7 +95,7 @@ def test_runtime_path_map_for_call_does_not_use_user_uploads_root(tmp_path):
     assert path_map.uploads_host is None
     rewritten = path_map.host_to_container_text(str(user_uploads / "upl_secret" / "blob"))
     assert rewritten == str(user_uploads / "upl_secret" / "blob")
-    assert "/mnt/uploads" not in rewritten
+    assert "/mnt/inputs" not in rewritten
 
 
 def test_runtime_path_map_for_call_uses_staged_uploads_only(tmp_path):
@@ -114,7 +114,7 @@ def test_runtime_path_map_for_call_uses_staged_uploads_only(tmp_path):
 
     assert path_map.uploads_host is not None
     assert path_map.uploads_host != source.parent.parent
-    assert "/mnt/uploads/upl_allowed/blob" in container_text
+    assert "/mnt/inputs/upl_allowed/blob" in container_text
     assert str(source) not in container_text
 
 
@@ -186,6 +186,7 @@ async def test_docker_sandbox_runner_mounts_paths_and_rewrites_output(tmp_path):
     kwargs = client.containers.kwargs
     assert kwargs["working_dir"] == "/workspace"
     assert kwargs["user"] == _expected_container_user()
+    assert kwargs["init"] is True
     assert kwargs["command"][:2] == ["/bin/sh", "-c"]
     assert kwargs["extra_hosts"] == {"host.docker.internal": "host-gateway"}
     assert kwargs["volumes"][str(workspace)]["bind"] == "/workspace"

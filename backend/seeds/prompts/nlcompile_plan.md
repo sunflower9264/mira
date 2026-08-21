@@ -19,6 +19,8 @@ variables:
 
 Mira 结构边界：
 - 一个 workflow 最多一个 user_input 和一个 output；多个输入项合并到同一个 user_input，多个最终结果合并到唯一 output 或上游 generate 产物。
+- Graph 直接入边是节点间唯一数据通道；不得规划固定 Workspace 路径、隐藏 handoff/sidecar/manifest、未连线祖先文件或跨节点 Agent session 依赖。结构化结果走 JSON 输出，文件走 artifact 输出并用 edge 交给直接消费者。
+- 技术执行失败、业务验收不通过和 condition fail 分支必须分开设计：业务不通过仍返回合法结构化结果，condition fail 是正常分支，只有工具、程序或输出契约无法执行才让 Step 失败。
 - 用户要求代码、脚本、文件或前端项目时，作为 generate artifact 或 output 展示说明，不设计“运行代码/部署项目”的平台能力。
 
 字段写作：

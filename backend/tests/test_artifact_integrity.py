@@ -21,10 +21,9 @@ from app.services.artifacts import (
     verify_run_artifact_download_token,
 )
 from app.services.output_contracts import validate_contract_output
-from app.services.run_artifacts import validate_run_artifact_integrity
 from app.services.run_hub import get_run_hub
 from app.services.runtime_paths import run_workspace
-from app.utils import dumps, now_utc
+from app.utils import now_utc
 from tests.runtime_mock import MockRuntime
 
 
@@ -86,7 +85,8 @@ class FinalizeMutatingArtifactRuntime(ArtifactCatalogRuntime):
         prompt = kwargs["prompt"]
         cwd = kwargs["cwd"]
         if "你正在生成 Mira output 节点" in prompt:
-            declared = cwd / "declared.txt"
+            declared = next((cwd.parents[3] / "artifacts" / "n_gen").glob("*/declared.txt"))
+            declared.chmod(0o644)
             if self.mutation == "delete":
                 declared.unlink()
             elif self.mutation == "modify":
@@ -159,19 +159,29 @@ def _run_artifact_app(
 
 
 def test_artifact_step_persists_versioned_relative_manifest(auth_client, enable_claude_agent):
-    _app_id, _run_id, final = _run_artifact_app(auth_client, enable_claude_agent)
+    _app_id, run_id, final = _run_artifact_app(auth_client, enable_claude_agent)
 
     output = next(step["output"] for step in final["steps"] if step["node_id"] == "n_gen")
-    assert output == [
-        {
-            "path": "declared.txt",
-            "name": "Declared",
-            "size": len(DECLARED_CONTENT),
-            "sha256": DECLARED_SHA256,
-            "artifact_kind": "file",
-            "manifest_version": 1,
-        }
-    ]
+    assert len(output) == 1
+    artifact = output[0]
+    assert artifact["path"].startswith("artifacts/n_gen/artifact_")
+    assert artifact["path"].endswith("/declared.txt")
+    assert artifact["name"] == "Declared"
+    assert artifact["size"] == len(DECLARED_CONTENT)
+    assert artifact["sha256"] == DECLARED_SHA256
+    assert artifact["artifact_kind"] == "file"
+    assert artifact["manifest_version"] == 1
+    assert artifact["artifact_id"].startswith("artifact_")
+    assert artifact["holder"]["run_id"] == run_id
+    assert artifact["holder"]["node_id"] == "n_gen"
+    assert artifact["holder"]["step_id"].startswith("step_")
+    assert artifact["origin"] == {
+        **artifact["holder"],
+        "artifact_id": artifact["artifact_id"],
+        "node_title": "Artifact",
+    }
+    assert artifact["reused_from"] is None
+    assert artifact["output_port"] == "artifacts"
 
 
 def test_files_list_excludes_undeclared_workspace_files(auth_client, enable_claude_agent):
@@ -179,7 +189,10 @@ def test_files_list_excludes_undeclared_workspace_files(auth_client, enable_clau
 
     response = auth_client.get(f"/api/runs/{run_id}/artifacts")
     assert response.status_code == 200, response.text
-    assert [item["path"] for item in response.json()["artifacts"]] == ["declared.txt"]
+    artifacts = response.json()["artifacts"]
+    assert len(artifacts) == 1
+    assert "path" not in artifacts[0]
+    assert "source_kind" not in artifacts[0]
 
 
 def test_trace_uses_declared_artifact_catalog(auth_client, enable_claude_agent):
@@ -189,12 +202,12 @@ def test_trace_uses_declared_artifact_catalog(auth_client, enable_claude_agent):
     assert response.status_code == 200, response.text
     artifacts = response.json()["artifacts"]
     assert len(artifacts) == 1
-    assert artifacts[0]["path"] == "declared.txt"
+    assert "path" not in artifacts[0]
     assert artifacts[0]["name"] == "Declared"
     assert artifacts[0]["size"] == len(DECLARED_CONTENT)
     assert artifacts[0]["sha256"] == DECLARED_SHA256
     assert artifacts[0]["integrity"] == "verified"
-    assert artifacts[0]["download_url"].startswith(f"/api/runs/{run_id}/artifacts/declared.txt")
+    assert artifacts[0]["download_url"].startswith(f"/api/runs/{run_id}/artifacts/artifacts/n_gen/")
 
 
 def test_failed_artifact_contract_step_is_not_listed(auth_client, enable_claude_agent):
@@ -226,7 +239,12 @@ def test_undeclared_workspace_file_cannot_be_downloaded(auth_client, enable_clau
 def test_modified_manifest_artifact_cannot_be_downloaded(auth_client, enable_claude_agent):
     app_id, run_id, _final = _run_artifact_app(auth_client, enable_claude_agent)
     artifact = auth_client.get(f"/api/runs/{run_id}/artifacts").json()["artifacts"][0]
-    (run_workspace("user_admin", app_id, run_id) / "declared.txt").write_bytes(b"modified")
+    relative_path = urlparse(artifact["download_url"]).path.removeprefix(
+        f"/api/runs/{run_id}/artifacts/"
+    )
+    path = run_workspace("user_admin", app_id, run_id) / relative_path
+    path.chmod(0o644)
+    path.write_bytes(b"modified")
     refreshed = auth_client.get(f"/api/runs/{run_id}/artifacts").json()["artifacts"][0]
     assert refreshed["sha256"] == DECLARED_SHA256
     assert refreshed["integrity"] == "modified"
@@ -251,6 +269,7 @@ def test_run_fails_when_declared_artifact_is_missing_before_success(auth_client,
     )
 
     assert "artifact 完整性校验失败" in final["error"]
+    assert final["failure_kind"] == "integrity"
     assert "文件缺失" in final["error"]
     assert "declared.txt" in final["error"]
 
@@ -264,6 +283,7 @@ def test_run_fails_when_declared_artifact_is_modified_before_success(auth_client
     )
 
     assert "artifact 完整性校验失败" in final["error"]
+    assert final["failure_kind"] == "integrity"
     assert "已被修改" in final["error"]
     assert "declared.txt" in final["error"]
 
@@ -309,61 +329,14 @@ def test_cancel_during_final_artifact_validation_stays_cancelled(
     assert final["status"] == "cancelled"
 
 
-def test_legacy_declared_artifact_is_hashed_but_marked_unverified(auth_client, enable_claude_agent):
-    app_id, run_id, _final = _run_artifact_app(auth_client, enable_claude_agent)
-    path = run_workspace("user_admin", app_id, run_id) / "declared.txt"
-
-    async def replace_with_legacy_output() -> None:
-        async with SessionLocal() as db:
-            step = (
-                await db.execute(select(Step).where(Step.run_id == run_id, Step.node_id == "n_gen"))
-            ).scalar_one()
-            step.output_json = dumps([{"path": str(path), "name": "Legacy"}])
-            await db.commit()
-
-    asyncio.run(replace_with_legacy_output())
-
-    response = auth_client.get(f"/api/runs/{run_id}/artifacts")
-    assert response.status_code == 200, response.text
-    artifact = response.json()["artifacts"][0]
-    assert artifact["sha256"] == DECLARED_SHA256
-    assert artifact["integrity"] == "legacy_unverified"
-    downloaded = auth_client.get(artifact["download_url"])
-    assert downloaded.status_code == 200, downloaded.text
-    assert downloaded.content == DECLARED_CONTENT
-
-
-def test_legacy_hash_bound_download_token_detects_post_listing_change(auth_client, enable_claude_agent):
-    app_id, run_id, _final = _run_artifact_app(auth_client, enable_claude_agent)
-    path = run_workspace("user_admin", app_id, run_id) / "declared.txt"
-
-    async def replace_with_legacy_output() -> None:
-        async with SessionLocal() as db:
-            step = (
-                await db.execute(select(Step).where(Step.run_id == run_id, Step.node_id == "n_gen"))
-            ).scalar_one()
-            step.output_json = dumps([{"path": str(path), "name": "Legacy"}])
-            await db.commit()
-
-    asyncio.run(replace_with_legacy_output())
-    artifact = auth_client.get(f"/api/runs/{run_id}/artifacts").json()["artifacts"][0]
-    path.write_bytes(b"modified legacy artifact")
-
-    headers = dict(auth_client.headers)
-    auth_client.headers.pop("Authorization", None)
-    try:
-        response = auth_client.get(artifact["download_url"])
-    finally:
-        auth_client.headers.update(headers)
-
-    assert response.status_code == 401
-    assert response.json()["detail"] == "下载链接已失效"
-
-
 def test_versioned_artifact_rejects_legacy_download_token(auth_client, enable_claude_agent):
     app_id, run_id, _final = _run_artifact_app(auth_client, enable_claude_agent)
+    artifact = auth_client.get(f"/api/runs/{run_id}/artifacts").json()["artifacts"][0]
     run = Run(id=run_id, app_id=app_id, owner_id="user_admin")
-    legacy_url = signed_run_artifact_download_url(run, "declared.txt")
+    relative_path = urlparse(artifact["download_url"]).path.removeprefix(
+        f"/api/runs/{run_id}/artifacts/"
+    )
+    legacy_url = signed_run_artifact_download_url(run, relative_path)
 
     headers = dict(auth_client.headers)
     auth_client.headers.pop("Authorization", None)
@@ -378,14 +351,18 @@ def test_versioned_artifact_rejects_legacy_download_token(auth_client, enable_cl
 
 def test_hash_bound_token_requires_matching_sha256(auth_client, enable_claude_agent):
     app_id, run_id, _final = _run_artifact_app(auth_client, enable_claude_agent)
+    artifact = auth_client.get(f"/api/runs/{run_id}/artifacts").json()["artifacts"][0]
     run = Run(id=run_id, app_id=app_id, owner_id="user_admin")
-    url = signed_run_artifact_download_url(run, "declared.txt", "0" * 64)
+    relative_path = urlparse(artifact["download_url"]).path.removeprefix(
+        f"/api/runs/{run_id}/artifacts/"
+    )
+    url = signed_run_artifact_download_url(run, relative_path, "0" * 64)
     token = parse_qs(urlparse(url).query)["download_token"][0]
 
     with pytest.raises(HTTPException) as exc_info:
         verify_run_artifact_download_token(
             run_id,
-            "declared.txt",
+            relative_path,
             token,
             sha256=DECLARED_SHA256,
         )
@@ -393,135 +370,12 @@ def test_hash_bound_token_requires_matching_sha256(auth_client, enable_claude_ag
     assert exc_info.value.status_code == 401
 
 
-def test_new_artifact_downstream_download_url_is_hash_bound(auth_client, enable_claude_agent):
-    _app_id, run_id, final = _run_artifact_app(auth_client, enable_claude_agent)
+def test_new_artifact_is_staged_as_a_declared_read_only_input(auth_client, enable_claude_agent):
+    _app_id, _run_id, final = _run_artifact_app(auth_client, enable_claude_agent)
     output_step = next(step for step in final["steps"] if step["node_id"] == "n_out")
     prompt = output_step["input"]["prompt"]
-    url = prompt.split("download_url: ", 1)[1].split(")", 1)[0]
-
-    headers = dict(auth_client.headers)
-    auth_client.headers.pop("Authorization", None)
-    try:
-        response = auth_client.get(url)
-    finally:
-        auth_client.headers.update(headers)
-
-    assert response.status_code == 200, response.text
-    assert response.content == DECLARED_CONTENT
-
-
-def test_legacy_artifact_accepts_explicit_legacy_download_token(auth_client, enable_claude_agent):
-    app_id, run_id, _final = _run_artifact_app(auth_client, enable_claude_agent)
-    path = run_workspace("user_admin", app_id, run_id) / "declared.txt"
-
-    async def replace_with_legacy_output() -> None:
-        async with SessionLocal() as db:
-            step = (
-                await db.execute(select(Step).where(Step.run_id == run_id, Step.node_id == "n_gen"))
-            ).scalar_one()
-            step.output_json = dumps([{"path": str(path), "name": "Legacy"}])
-            await db.commit()
-
-    asyncio.run(replace_with_legacy_output())
-    run = Run(id=run_id, app_id=app_id, owner_id="user_admin")
-    legacy_url = signed_run_artifact_download_url(run, "declared.txt")
-
-    headers = dict(auth_client.headers)
-    auth_client.headers.pop("Authorization", None)
-    try:
-        response = auth_client.get(legacy_url)
-    finally:
-        auth_client.headers.update(headers)
-
-    assert response.status_code == 200, response.text
-    assert response.content == DECLARED_CONTENT
-
-
-def test_modified_versioned_manifest_is_not_hidden_by_legacy_duplicate(auth_client, enable_claude_agent):
-    app_id, run_id, _final = _run_artifact_app(auth_client, enable_claude_agent)
-    path = run_workspace("user_admin", app_id, run_id) / "declared.txt"
-
-    async def add_conflicting_manifests() -> None:
-        async with SessionLocal() as db:
-            step = (
-                await db.execute(select(Step).where(Step.run_id == run_id, Step.node_id == "n_gen"))
-            ).scalar_one()
-            step.output_json = dumps(
-                [
-                    {"path": str(path), "name": "Legacy"},
-                    {
-                        "path": "declared.txt",
-                        "name": "Modified versioned",
-                        "size": len(DECLARED_CONTENT),
-                        "sha256": "0" * 64,
-                        "artifact_kind": "file",
-                        "manifest_version": 1,
-                    },
-                ]
-            )
-            await db.commit()
-
-    asyncio.run(add_conflicting_manifests())
-
-    response = auth_client.get(f"/api/runs/{run_id}/artifacts")
-    assert response.status_code == 200, response.text
-    artifact = response.json()["artifacts"][0]
-    assert artifact["integrity"] == "modified"
-
-    download = auth_client.get(artifact["download_url"])
-    assert download.status_code == 409
-    assert download.json()["detail"] == "文件完整性校验失败"
-
-
-def test_invalid_versioned_manifest_blocks_legacy_duplicate(auth_client, enable_claude_agent):
-    app_id, run_id, _final = _run_artifact_app(auth_client, enable_claude_agent)
-    path = run_workspace("user_admin", app_id, run_id) / "declared.txt"
-
-    async def add_conflicting_manifests() -> None:
-        async with SessionLocal() as db:
-            step = (
-                await db.execute(select(Step).where(Step.run_id == run_id, Step.node_id == "n_gen"))
-            ).scalar_one()
-            step.output_json = dumps(
-                [
-                    {"path": str(path), "name": "Legacy"},
-                    {
-                        "path": "declared.txt",
-                        "name": "Invalid versioned",
-                        "size": len(DECLARED_CONTENT),
-                        "artifact_kind": "file",
-                        "manifest_version": 1,
-                    },
-                ]
-            )
-            await db.commit()
-
-    asyncio.run(add_conflicting_manifests())
-
-    response = auth_client.get(f"/api/runs/{run_id}/artifacts")
-    assert response.status_code == 200, response.text
-    assert response.json()["artifacts"] == []
-    download = auth_client.get(f"/api/runs/{run_id}/artifacts/declared.txt")
-    assert download.status_code == 404
-
-
-def test_run_finalization_does_not_enforce_legacy_manifest(auth_client, enable_claude_agent):
-    app_id, run_id, _final = _run_artifact_app(auth_client, enable_claude_agent)
-    path = run_workspace("user_admin", app_id, run_id) / "declared.txt"
-
-    async def replace_with_missing_legacy_output() -> str | None:
-        async with SessionLocal() as db:
-            step = (
-                await db.execute(select(Step).where(Step.run_id == run_id, Step.node_id == "n_gen"))
-            ).scalar_one()
-            step.output_json = dumps([{"path": str(path), "name": "Legacy"}])
-            await db.commit()
-            path.unlink()
-            run = await db.get(Run, run_id)
-            assert run is not None
-            return await validate_run_artifact_integrity(db, run)
-
-    assert asyncio.run(replace_with_missing_legacy_output()) is None
+    assert DECLARED_SHA256 in prompt
+    assert "/mnt/inputs/" in prompt
 
 
 def test_artifact_validator_enforces_max_count(tmp_path):
@@ -568,7 +422,7 @@ def test_artifact_validator_rejects_duplicate_resolved_paths(tmp_path):
 
 
 def test_artifact_validator_rejects_upload_staging_directory(tmp_path):
-    staged = tmp_path / ".uploads" / "upl_test" / "blob"
+    staged = tmp_path / ".inputs" / "upl_test" / "blob"
     staged.parent.mkdir(parents=True)
     staged.write_text("uploaded source", encoding="utf-8")
     node = {

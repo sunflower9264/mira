@@ -55,7 +55,10 @@ def _build_app(auth_client) -> str:
                 "graph": {
                     "agent": "claude",
                     "nodes": [USER_INPUT_NODE, ASSET_NODE, OUTPUT_NODE],
-                    "edges": [{"id": "e_out", "source": "n_input", "target": "n_out"}],
+                    "edges": [
+                        {"id": "e_input_out", "source": "n_input", "target": "n_out"},
+                        {"id": "e_asset_out", "source": "n_asset", "target": "n_out"},
+                    ],
                 }
             },
     )
@@ -407,6 +410,7 @@ def test_run_only_failure_errors_are_redacted_for_runner(auth_client, enable_cla
     owner_final = _wait_for_terminal(auth_client, owner_run.json()["run_id"])
     assert owner_final["status"] == "failed"
     assert owner_final["error"] == "mock failed"
+    assert owner_final["failure_kind"] == "runtime"
     owner_steps = {step["node_id"]: step for step in owner_final["steps"]}
     assert owner_steps["n_out"]["error"] == "mock failed"
 
@@ -439,7 +443,9 @@ def test_run_only_failure_errors_are_redacted_for_runner(auth_client, enable_cla
     frames = _parse_frames(body)
     assert "step.log" not in [frame.get("event") for frame in frames]
     run_end = next(frame for frame in frames if frame.get("event") == "run.end")
-    assert json.loads(run_end["data"])["error"] == "运行失败"
+    run_end_data = json.loads(run_end["data"])
+    assert run_end_data["error"] == "运行失败"
+    assert run_end_data["failure_kind"] == "runtime"
     step_end = next(
         frame
         for frame in frames

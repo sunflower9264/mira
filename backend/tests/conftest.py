@@ -11,6 +11,7 @@ from app.config import get_settings
 from app.db import SessionLocal, create_all, reconfigure_database
 from app.main import app
 from app.runtime.factory import set_runtime_override
+from app.services import apps as apps_service
 from app.services import prompts as prompts_service
 from app.services.admin import upsert_admin
 from tests.auth_helpers import create_regular_user
@@ -29,6 +30,11 @@ def client(tmp_path, monkeypatch):
     prompt_seed_dir = tmp_path / "seeds" / "prompts"
     shutil.copytree(prompts_service.PROMPT_SEED_DIR, prompt_seed_dir)
     monkeypatch.setattr(prompts_service, "PROMPT_SEED_DIR", prompt_seed_dir)
+    monkeypatch.setattr(
+        apps_service,
+        "GALLERY_SEED_PATH",
+        Path(__file__).parent / "fixtures" / "gallery.json",
+    )
     monkeypatch.setenv("JWT_SECRET", "test-secret-for-mira-backend-tests-32-bytes")
     monkeypatch.setenv("AGENT_CONFIG_SECRET", "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=")
     monkeypatch.setenv("ADMIN_USERNAME", TEST_ADMIN_USERNAME)

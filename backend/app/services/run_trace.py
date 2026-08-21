@@ -76,6 +76,9 @@ async def get_run_step_trace(db: AsyncSession, run_id: str, node_id: str, user_i
         finished_at=step_out.finished_at,
         duration_ms=step_out.duration_ms,
         error=step_out.error,
+        failure_kind=step_out.failure_kind,
+        reused_from_run_id=step_out.reused_from_run_id,
+        reused_from_step_id=step_out.reused_from_step_id,
         prompt=prompt,
         input=step_out.input,
         output=step_out.output,
@@ -145,12 +148,18 @@ async def _trace_artifacts(
     )
     return [
         RunTraceArtifactOut(
-            path=entry.relative_path,
+            id=entry.artifact_id,
             name=entry.name,
             size=entry.size,
             sha256=entry.sha256,
             integrity=entry.integrity,
             download_url=signed_run_artifact_download_url(run, entry.relative_path, entry.sha256),
+            origin_run_id=entry.origin_run_id,
+            origin_artifact_id=entry.origin_artifact_id,
+            origin_node_id=entry.origin_node_id,
+            origin_node_title=entry.origin_node_title,
+            reused_from_run_id=entry.reused_from_run_id,
+            reused_from_artifact_id=entry.reused_from_artifact_id,
         )
         for entry in catalog
     ], truncated

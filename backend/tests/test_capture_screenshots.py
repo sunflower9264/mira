@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import io
 import json
+import signal
 import stat
 import sys
 import tarfile
@@ -35,6 +37,20 @@ class _ExitedProcess:
 
     def poll(self) -> int:
         return 0
+
+
+class _ParentExitsWithLingeringChildren:
+    pid = 4321
+
+    def poll(self) -> None:
+        return None
+
+    def wait(self, *, timeout: int) -> int:
+        assert timeout == 10
+        return 0
+
+    def terminate(self) -> None:
+        raise AssertionError("process-group signalling should be used")
 
 
 class _ReadyResponse:
@@ -70,11 +86,13 @@ def _run_successful_capture(
     with_package_lock: bool,
     routes: list[dict[str, str]] | None = None,
     min_screenshots: int | None = None,
+    viewports: list[dict[str, int | str]] | None = None,
     failed_routes: set[str] | None = None,
     browser_failure_output: str = "browser capture failed",
     route_statuses: dict[str, int] | None = None,
     project_scripts: dict[str, str] | None = None,
     expected_exit_code: int = 0,
+    preexisting_archive: bool = False,
 ):  # noqa: ANN001, ANN202
     archive = tmp_path / "project.zip"
     out_dir = tmp_path / "screenshots"
@@ -84,6 +102,9 @@ def _run_successful_capture(
         with_package_lock=with_package_lock,
         project_scripts=project_scripts,
     )
+    if preexisting_archive:
+        with zipfile.ZipFile(archive_out, "w") as zf:
+            zf.writestr("stale.txt", "stale screenshot artifact")
 
     commands: list[list[str]] = []
     events: list[tuple[str, list[str]]] = []
@@ -93,7 +114,7 @@ def _run_successful_capture(
     def fake_run(command: list[str], **_kwargs):  # noqa: ANN003, ANN202
         commands.append(command)
         events.append(("run", command))
-        if command[0] == "chromium":
+        if command[0] == capture_screenshots.CHROMIUM_BINARY:
             url = command[-1]
             if failed_routes and any(url.endswith(route) for route in failed_routes):
                 return SimpleNamespace(returncode=1, stdout=browser_failure_output)
@@ -133,11 +154,15 @@ def _run_successful_capture(
         argv.extend(["--routes-json", json.dumps(routes, ensure_ascii=False)])
     if min_screenshots is not None:
         argv.extend(["--min-screenshots", str(min_screenshots)])
+    if viewports is not None:
+        argv.extend(["--viewports-json", json.dumps(viewports)])
     monkeypatch.setattr(sys, "argv", argv)
 
     assert capture_screenshots.main() == expected_exit_code
-    with zipfile.ZipFile(archive_out) as zf:
-        members = set(zf.namelist())
+    members: set[str] = set()
+    if archive_out.is_file():
+        with zipfile.ZipFile(archive_out) as zf:
+            members = set(zf.namelist())
     manifest = json.loads((out_dir / "screenshot-manifest.json").read_text(encoding="utf-8"))
     log = (out_dir / "capture-log.txt").read_text(encoding="utf-8")
     return SimpleNamespace(
@@ -156,6 +181,10 @@ def _run_successful_capture(
 def test_capture_keeps_chromium_profile_out_of_screenshot_archive(tmp_path, monkeypatch) -> None:
     result = _run_successful_capture(tmp_path, monkeypatch, with_package_lock=False)
 
+    chromium_command = next(
+        command for command in result.commands if command[0] == capture_screenshots.CHROMIUM_BINARY
+    )
+    assert chromium_command[0] == "/usr/bin/chromium"
     assert result.members == {
         "screenshots/SP-01-home.png",
         "screenshots/capture-log.txt",
@@ -165,6 +194,21 @@ def test_capture_keeps_chromium_profile_out_of_screenshot_archive(tmp_path, monk
     assert result.out_dir not in result.chromium_profiles[0].parents
     assert result.manifest["ok"] is True
     assert result.manifest["failures"] == []
+    assert result.manifest["screenshots"][0]["sha256"] == hashlib.sha256(b"\x89PNG\r\n\x1a\n").hexdigest()
+
+
+def test_stop_process_kills_lingering_server_process_group(monkeypatch) -> None:
+    signals: list[int] = []
+
+    def fake_killpg(process_group: int, sent_signal: int) -> None:
+        assert process_group == _ParentExitsWithLingeringChildren.pid
+        signals.append(sent_signal)
+
+    monkeypatch.setattr(capture_screenshots.os, "killpg", fake_killpg)
+
+    capture_screenshots._stop_process(_ParentExitsWithLingeringChildren(), lambda _message: None)
+
+    assert signals == [signal.SIGTERM, signal.SIGKILL]
 
 
 def test_capture_manifest_and_log_redact_runtime_absolute_paths(tmp_path, monkeypatch) -> None:
@@ -325,7 +369,7 @@ def test_capture_returns_nonzero_when_minimum_screenshot_count_is_not_met(tmp_pa
         expected_exit_code=1,
     )
 
-    assert result.archive_out.is_file()
+    assert not result.archive_out.exists()
     assert len(result.manifest["screenshots"]) == 4
     assert result.manifest["ok"] is False
     assert result.manifest["failures"] == [
@@ -352,6 +396,34 @@ def test_capture_succeeds_at_explicit_minimum_with_no_failures(tmp_path, monkeyp
     assert result.manifest["ok"] is True
 
 
+def test_capture_supports_desktop_and_mobile_viewports(tmp_path, monkeypatch) -> None:
+    result = _run_successful_capture(
+        tmp_path,
+        monkeypatch,
+        with_package_lock=True,
+        routes=[{"route": "/dashboard", "page_name": "仪表盘"}],
+        viewports=[
+            {"name": "desktop", "width": 1440, "height": 1000},
+            {"name": "mobile", "width": 390, "height": 844},
+        ],
+        min_screenshots=2,
+    )
+
+    chromium = [command for command in result.commands if command[0] == capture_screenshots.CHROMIUM_BINARY]
+    assert [next(arg for arg in command if arg.startswith("--window-size=")) for command in chromium] == [
+        "--window-size=1440,1000",
+        "--window-size=390,844",
+    ]
+    assert {item["name"] for item in result.manifest["screenshots"]} == {
+        "SP-01-desktop-dashboard.png",
+        "SP-01-mobile-dashboard.png",
+    }
+    assert result.manifest["viewports"] == [
+        {"name": "desktop", "width": 1440, "height": 1000},
+        {"name": "mobile", "width": 390, "height": 844},
+    ]
+
+
 def test_capture_returns_nonzero_when_any_route_fails_even_if_minimum_is_met(tmp_path, monkeypatch) -> None:
     routes = [
         {"route": "/success", "page_name": "成功页"},
@@ -373,6 +445,21 @@ def test_capture_returns_nonzero_when_any_route_fails_even_if_minimum_is_met(tmp
     assert result.manifest["ok"] is False
 
 
+def test_capture_failure_removes_stale_archive_output(tmp_path, monkeypatch) -> None:
+    result = _run_successful_capture(
+        tmp_path,
+        monkeypatch,
+        with_package_lock=True,
+        routes=[{"route": "/failure", "page_name": "失败页"}],
+        failed_routes={"/failure"},
+        expected_exit_code=1,
+        preexisting_archive=True,
+    )
+
+    assert result.manifest["ok"] is False
+    assert not result.archive_out.exists()
+
+
 @pytest.mark.parametrize("status", [404, 500])
 def test_capture_rejects_routes_with_http_error_status_before_chromium(tmp_path, monkeypatch, status: int) -> None:
     routes = [
@@ -390,7 +477,11 @@ def test_capture_rejects_routes_with_http_error_status_before_chromium(tmp_path,
         expected_exit_code=1,
     )
 
-    chromium_urls = [command[-1] for command in result.commands if command[0] == "chromium"]
+    chromium_urls = [
+        command[-1]
+        for command in result.commands
+        if command[0] == capture_screenshots.CHROMIUM_BINARY
+    ]
     assert chromium_urls == ["http://127.0.0.1:3210/success"]
     assert "http://127.0.0.1:3210/unavailable" in result.http_urls
     assert result.manifest["screenshots"][0]["route"] == "/success"

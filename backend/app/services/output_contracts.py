@@ -67,7 +67,7 @@ ARTIFACT_EXTENSIONS = {
     "zip": {".zip"},
 }
 ARTIFACT_MANIFEST_VERSION = 1
-ARTIFACT_RESERVED_TOP_LEVEL_DIRS = {".uploads"}
+ARTIFACT_RESERVED_TOP_LEVEL_DIRS = {".inputs", ".uploads"}
 OFFICE_VALIDATION_ARTIFACT_KINDS = {"docx", "excel", "ppt", "zip", "file"}
 _FENCED_RE = re.compile(r"^```(?:json|JSON|markdown|md|text)?\s*(.*?)\s*```$", re.DOTALL)
 
@@ -249,9 +249,10 @@ def contract_prompt_suffix(node: dict[str, Any]) -> str:
     elif output_type == "artifact":
         artifact_kind = _artifact_kind_label(contract.get("artifact_kind"))
         lines.append(
-            f'请生成{artifact_kind}到当前工作目录内，并最终只返回 JSON 对象，形状为 '
+            f'请生成{artifact_kind}到当前节点私有工作目录内，并最终只返回 JSON 对象，形状为 '
             '{"artifacts":[{"path":"相对路径或工作区内路径","name":"显示名"}]}。'
         )
+        lines.append("只有 artifacts 中声明的文件会被提交并允许下游读取；不要用固定路径或隐藏 manifest 交接文件。")
         hint = _artifact_kind_hint(contract.get("artifact_kind"))
         if hint:
             lines.append(hint)
@@ -306,6 +307,7 @@ def artifact_output_for_storage(
     output: Any,
     *,
     workspace: Path,
+    artifact_root: Path | None = None,
 ) -> Any:
     contract = output_contract_for_node(node)
     if not isinstance(contract, dict) or contract.get("type") != "artifact":
@@ -314,6 +316,11 @@ def artifact_output_for_storage(
         raise ValueError("artifact 校验结果不是数组")
 
     workspace_resolved = workspace.resolve()
+    artifact_root_resolved = (artifact_root or workspace).resolve()
+    try:
+        workspace_resolved.relative_to(artifact_root_resolved)
+    except ValueError as exc:
+        raise ValueError("节点工作区不在运行工作区内") from exc
     artifact_kind = str(contract.get("artifact_kind") or "file")
     manifest: list[dict[str, Any]] = []
     for index, item in enumerate(output, start=1):
@@ -325,7 +332,7 @@ def artifact_output_for_storage(
         resolved = _resolve_workspace_path(workspace_resolved, path_text)
         if resolved is None or not resolved.is_file():
             raise ValueError(f"第 {index} 个 artifact 文件不存在")
-        relative = resolved.relative_to(workspace_resolved).as_posix()
+        relative = resolved.relative_to(artifact_root_resolved).as_posix()
         if _is_reserved_artifact_path(relative):
             raise ValueError(f"第 {index} 个 artifact 位于上传暂存目录")
         name = item.get("name")

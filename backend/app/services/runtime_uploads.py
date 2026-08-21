@@ -16,6 +16,7 @@ from app.runtime.base import AskUserAttachment, AskUserResult
 class RuntimeUploadRef:
     id: str
     path: Path
+    name: str | None = None
 
 
 _CURRENT_CONTEXT: ContextVar["RuntimeUploadContext | None"] = ContextVar(
@@ -27,14 +28,14 @@ _CURRENT_CONTEXT: ContextVar["RuntimeUploadContext | None"] = ContextVar(
 class RuntimeUploadContext:
     def __init__(self, workspace: Path) -> None:
         self.workspace = workspace.resolve()
-        self.staging_dir = self.workspace / ".uploads" / uuid.uuid4().hex
+        self.staging_dir = self.workspace / ".inputs" / uuid.uuid4().hex
         self._path_rewrites: dict[str, str] = {}
 
     def add_refs(self, refs: Iterable[RuntimeUploadRef]) -> None:
         for ref in refs:
-            self.stage_file(ref.id, ref.path)
+            self.stage_file(ref.id, ref.path, name=ref.name)
 
-    def stage_file(self, upload_id: str, source: Path) -> Path | None:
+    def stage_file(self, upload_id: str, source: Path, *, name: str | None = None) -> Path | None:
         try:
             source_path = source.resolve()
         except OSError:
@@ -42,16 +43,19 @@ class RuntimeUploadContext:
         if not source_path.is_file():
             return None
         safe_id = _safe_segment(upload_id) or uuid.uuid4().hex
-        target = self.staging_dir / safe_id / "blob"
+        safe_name = _safe_filename(name) if name else "blob"
+        target = self.staging_dir / safe_id / safe_name
         if str(source_path) in self._path_rewrites:
-            return Path(self._path_rewrites[str(source_path)])
+            return target
         target.parent.mkdir(parents=True, exist_ok=True)
         try:
             os.link(source_path, target)
         except OSError:
             shutil.copy2(source_path, target)
         staged = target.resolve()
-        self._path_rewrites[str(source_path)] = str(staged)
+        runtime_path = (Path("/mnt/inputs") / staged.relative_to(self.staging_dir)).as_posix()
+        self._path_rewrites[str(source_path)] = runtime_path
+        self._path_rewrites[str(staged)] = runtime_path
         return staged
 
     def rewrite_text(self, value: str) -> str:
@@ -113,3 +117,9 @@ def stage_ask_user_result_for_runtime(context: RuntimeUploadContext, result: Ask
 
 def _safe_segment(value: str) -> str:
     return "".join(char if char.isalnum() or char in {"_", "-"} else "_" for char in value).strip("._")
+
+
+def _safe_filename(value: str | None) -> str:
+    name = Path(value or "blob").name
+    safe = "".join(char if char.isalnum() or char in {"_", "-", "."} else "_" for char in name).strip(".")
+    return safe or "blob"

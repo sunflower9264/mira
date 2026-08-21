@@ -78,6 +78,8 @@ def test_helper_rejects_arbitrary_commands_and_pdf_paths(monkeypatch) -> None:
             )
         with pytest.raises(mira_office_sandbox.SandboxError, match="invalid PDF filename"):
             mira_office_sandbox._pdfinfo_command(root, "../outside.pdf")
+        with pytest.raises(mira_office_sandbox.SandboxError, match="invalid PDF filename"):
+            mira_office_sandbox._pdftotext_command(root, "../outside.pdf")
 
 
 def test_unit_name_is_fixed_hex_identifier() -> None:

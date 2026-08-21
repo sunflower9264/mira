@@ -31,10 +31,19 @@ def _ensure_output(graph: dict) -> dict:
         return graph
     next_graph = deepcopy(graph)
     nodes = next_graph.setdefault("nodes", [])
-    source = next(
-        (node.get("id") for node in reversed(nodes) if isinstance(node, dict) and isinstance(node.get("id"), str)),
-        "",
-    )
+    outgoing = {
+        edge.get("source")
+        for edge in next_graph.get("edges", [])
+        if isinstance(edge, dict) and isinstance(edge.get("source"), str)
+    }
+    sources = [
+        node["id"]
+        for node in nodes
+        if isinstance(node, dict)
+        and isinstance(node.get("id"), str)
+        and node["id"] not in outgoing
+    ]
+    source = sources[0] if sources else ""
     nodes.append(
         {
             "id": "n_auto_out",
@@ -45,8 +54,10 @@ def _ensure_output(graph: dict) -> dict:
             "source_node_id": source,
         }
     )
-    if source:
-        next_graph.setdefault("edges", []).append({"id": "e_auto_out", "source": source, "target": "n_auto_out"})
+    for index, source_id in enumerate(sources, start=1):
+        next_graph.setdefault("edges", []).append(
+            {"id": f"e_auto_out_{index}", "source": source_id, "target": "n_auto_out"}
+        )
     return next_graph
 
 
@@ -97,6 +108,74 @@ def test_condition_binary_selects_true_branch(auth_client, enable_claude_agent):
     assert by_id["n_yes"]["status"] == "success"
     assert by_id["n_yes"]["output"] == "YES"
     assert by_id["n_no"]["status"] == "skipped"
+
+
+def test_condition_rejects_non_exact_branch_key(auth_client, enable_claude_agent):
+    enable_claude_agent()
+    graph = {
+        "agent": "claude",
+        "nodes": [
+            _condition_node(
+                mode="binary",
+                branches=[{"key": "true"}, {"key": "false"}],
+                prompt="判断 [[respond:true。]]",
+            ),
+            _generate_node("n_yes", prompt="是 [[respond:YES]]"),
+            _generate_node("n_no", prompt="否 [[respond:NO]]"),
+            _generate_node("n_merge", prompt="汇总 [[respond:MERGED]]"),
+        ],
+        "edges": [
+            {"id": "e1", "source": "n_cond", "target": "n_yes", "source_handle": "true"},
+            {"id": "e2", "source": "n_cond", "target": "n_no", "source_handle": "false"},
+            {"id": "e3", "source": "n_yes", "target": "n_merge"},
+            {"id": "e4", "source": "n_no", "target": "n_merge"},
+        ],
+    }
+    app_id = _build_app(auth_client, graph=graph)
+    run = auth_client.post("/api/runs", json={"app_id": app_id, "inputs": {}}).json()
+    final = _wait_for_terminal(auth_client, run["run_id"])
+
+    assert final["status"] == "failed"
+    assert final["failure_kind"] == "routing"
+    assert "branch key" in final["error"]
+
+
+def test_run_rejects_condition_branch_that_cannot_reach_output(auth_client, enable_claude_agent):
+    enable_claude_agent()
+    created = auth_client.post("/api/apps", json={"name": "Invalid condition route"}).json()
+    graph = {
+        "agent": "claude",
+        "nodes": [
+            _condition_node(
+                mode="binary",
+                branches=[{"key": "true"}, {"key": "false"}],
+                prompt="判断 [[respond:true]]",
+            ),
+            _generate_node("n_yes", prompt="是 [[respond:YES]]"),
+            _generate_node("n_no", prompt="否 [[respond:NO]]"),
+            {
+                "id": "n_out",
+                "type": "output",
+                "position": {"x": 400, "y": 0},
+                "title": "Output",
+                "prompt": "render [[respond:<section>ok</section>]]",
+                "source_node_id": "n_yes",
+            },
+        ],
+        "edges": [
+            {"id": "e1", "source": "n_cond", "target": "n_yes", "source_handle": "true"},
+            {"id": "e2", "source": "n_cond", "target": "n_no", "source_handle": "false"},
+            {"id": "e3", "source": "n_yes", "target": "n_out"},
+        ],
+    }
+    saved = auth_client.patch(f"/api/apps/{created['id']}", json={"graph": graph})
+    assert saved.status_code == 200, saved.text
+
+    started = auth_client.post("/api/runs", json={"app_id": created["id"], "inputs": {}})
+
+    assert started.status_code == 400
+    assert "false" in started.json()["detail"]
+    assert "output" in started.json()["detail"]
 
 
 def test_condition_cases_unmatched_falls_back_to_default(auth_client, enable_claude_agent):

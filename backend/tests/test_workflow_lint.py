@@ -141,7 +141,7 @@ def test_workflow_lint_reports_blocking_errors(auth_client):
     assert "agent_disabled" in codes
 
 
-def test_workflow_lint_reports_workflow_warnings(auth_client, enable_claude_agent):
+def test_workflow_lint_reports_unconnected_condition_branch_as_error(auth_client, enable_claude_agent):
     enable_claude_agent()
     app_id = _create_app(auth_client)
     graph = {
@@ -168,11 +168,48 @@ def test_workflow_lint_reports_workflow_warnings(auth_client, enable_claude_agen
     }
 
     body = _lint(auth_client, app_id, graph)
-    codes = {issue["code"] for issue in body["issues"] if issue["severity"] == "warning"}
+    codes = {issue["code"] for issue in body["issues"] if issue["severity"] == "error"}
 
-    assert body["ok"] is True
+    assert body["ok"] is False
     assert "condition_branch_unconnected" in codes
     assert "unstructured_generate_dependency" not in codes
+
+
+def test_workflow_lint_warns_about_prompt_hidden_file_channel(auth_client, enable_claude_agent):
+    enable_claude_agent()
+    app_id = _create_app(auth_client)
+    graph = {
+        "agent": "claude",
+        "nodes": [
+            _generate_node("n_gen", prompt="将结果写入 /workspace/handoff.json，供下游节点读取"),
+            _output_node("n_out", "n_gen"),
+        ],
+        "edges": [{"id": "e1", "source": "n_gen", "target": "n_out"}],
+    }
+
+    body = _lint(auth_client, app_id, graph)
+    warning_codes = {issue["code"] for issue in body["issues"] if issue["severity"] == "warning"}
+
+    assert body["ok"] is True
+    assert "prompt_hidden_data_channel" in warning_codes
+
+
+def test_workflow_lint_does_not_warn_for_prompt_that_forbids_hidden_channels(auth_client, enable_claude_agent):
+    enable_claude_agent()
+    app_id = _create_app(auth_client)
+    graph = {
+        "agent": "claude",
+        "nodes": [
+            _generate_node("n_gen", prompt="不得读取固定 Workspace 路径，也不要创建 handoff、sidecar 或 manifest 文件"),
+            _output_node("n_out", "n_gen"),
+        ],
+        "edges": [{"id": "e1", "source": "n_gen", "target": "n_out"}],
+    }
+
+    body = _lint(auth_client, app_id, graph)
+    codes = {issue["code"] for issue in body["issues"]}
+
+    assert "prompt_hidden_data_channel" not in codes
 
 
 def test_workflow_lint_requires_output_for_non_empty_graph(auth_client, enable_claude_agent):

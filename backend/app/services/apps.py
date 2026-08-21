@@ -33,7 +33,8 @@ GALLERY_ASSETS_DIR = GALLERY_SEED_PATH.parent / "assets"
 EMPTY_GRAPH = {"nodes": [], "edges": []}
 
 
-async def seed_gallery(db: AsyncSession, seed_path: Path = GALLERY_SEED_PATH) -> None:
+async def seed_gallery(db: AsyncSession, seed_path: Path | None = None) -> None:
+    seed_path = seed_path or GALLERY_SEED_PATH
     if not seed_path.exists():
         return
     templates = json.loads(seed_path.read_text(encoding="utf-8"))

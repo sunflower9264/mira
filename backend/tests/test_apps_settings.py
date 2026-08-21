@@ -14,20 +14,28 @@ from app.utils import dumps, now_utc
 from tests.auth_helpers import create_regular_user
 
 
-def _output_only_graph() -> dict:
+def _minimal_output_graph() -> dict:
     return {
         "agent": "claude",
         "nodes": [
             {
+                "id": "n_asset",
+                "type": "asset",
+                "position": {"x": 0, "y": 0},
+                "title": "Input",
+                "asset_kind": "text",
+                "content": "input",
+            },
+            {
                 "id": "n_out",
                 "type": "output",
-                "position": {"x": 0, "y": 0},
+                "position": {"x": 200, "y": 0},
                 "title": "Output",
                 "prompt": "render [[respond:<section>ok</section>]]",
-                "source_node_id": "",
+                "source_node_id": "n_asset",
             }
         ],
-        "edges": [],
+        "edges": [{"id": "e_out", "source": "n_asset", "target": "n_out"}],
     }
 
 
@@ -404,7 +412,7 @@ def test_patch_app_rejects_publish_lifecycle_fields(auth_client):
     assert market_access.status_code == 400
     assert market_access.json()["detail"] == "发布设置请使用 /publish 修改"
 
-    graph_patch = auth_client.patch(f"/api/apps/{created['id']}", json={"graph": _output_only_graph()})
+    graph_patch = auth_client.patch(f"/api/apps/{created['id']}", json={"graph": _minimal_output_graph()})
     assert graph_patch.status_code == 200, graph_patch.text
     published = auth_client.post(f"/api/apps/{created['id']}/publish", json={"visibility": "public"})
     assert published.status_code == 200, published.text
@@ -1225,9 +1233,9 @@ def test_published_apps_market_visibility_and_readonly_access(auth_client, enabl
     admin_auth = auth_client.headers["Authorization"]
     public_app = auth_client.post("/api/apps", json={"name": "Public Market App"}).json()
     private_app = auth_client.post("/api/apps", json={"name": "Private Market App"}).json()
-    public_patch = auth_client.patch(f"/api/apps/{public_app['id']}", json={"graph": _output_only_graph()})
+    public_patch = auth_client.patch(f"/api/apps/{public_app['id']}", json={"graph": _minimal_output_graph()})
     assert public_patch.status_code == 200, public_patch.text
-    private_patch = auth_client.patch(f"/api/apps/{private_app['id']}", json={"graph": _output_only_graph()})
+    private_patch = auth_client.patch(f"/api/apps/{private_app['id']}", json={"graph": _minimal_output_graph()})
     assert private_patch.status_code == 200, private_patch.text
 
     public_publish = auth_client.post(f"/api/apps/{public_app['id']}/publish", json={"visibility": "public"})
@@ -1307,7 +1315,10 @@ def test_run_only_market_app_blocks_clone_hides_source_and_tracks_recent(auth_cl
                 "source_node_id": "n_input",
             },
         ],
-        "edges": [{"id": "e_out", "source": "n_input", "target": "n_out"}],
+        "edges": [
+            {"id": "e_input_out", "source": "n_input", "target": "n_out"},
+            {"id": "e_asset_out", "source": "n_asset", "target": "n_out"},
+        ],
     }
     patched = auth_client.patch(f"/api/apps/{created['id']}", json={"graph": graph})
     assert patched.status_code == 200, patched.text
@@ -1366,7 +1377,7 @@ def test_run_only_market_app_blocks_clone_hides_source_and_tracks_recent(auth_cl
 
 def test_version_limit_keeps_published_versions(auth_client):
     created = auth_client.post("/api/apps", json={"name": "Versions"}).json()
-    patched = auth_client.patch(f"/api/apps/{created['id']}", json={"graph": _output_only_graph()})
+    patched = auth_client.patch(f"/api/apps/{created['id']}", json={"graph": _minimal_output_graph()})
     assert patched.status_code == 200, patched.text
     published = auth_client.post(f"/api/apps/{created['id']}/publish")
     assert published.status_code == 200

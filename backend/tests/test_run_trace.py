@@ -157,11 +157,12 @@ def test_run_step_trace_returns_llm_debug_payload(auth_client, enable_claude_age
     assert body["chunks"][1]["type"] == "text"
     assert body["chunks"][0]["raw"]["path"] is None
     assert body["chunks"][0]["raw"]["upload_path"] == "[local path redacted]"
-    assert "download_url" in body["chunks"][1]["raw"]["delta"]
+    assert body["chunks"][1]["raw"]["delta"] == "[local path redacted]"
     assert body["chunks"][1]["raw"]["upload_path"] == "[local path redacted]"
     assert "/runtime/workspaces/" not in body["chunks"][1]["text"]
     assert str(uploads_dir("user_admin")) not in json.dumps(body)
-    assert "download_url" in body["chunks"][1]["text"]
+    assert "download_url" not in body["chunks"][1]["text"]
+    assert "[local path redacted]" in body["chunks"][1]["text"]
     assert body["output"]
     assert body["artifacts"] == []
 

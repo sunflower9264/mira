@@ -97,8 +97,7 @@ export function RunArtifactsPanel({
                   {artifact.size !== null && artifact.size !== undefined ? (
                     <span className="font-mono">{formatBytes(artifact.size)}</span>
                   ) : null}
-                  {artifact.source_node_title ? <span className="truncate">{artifact.source_node_title}</span> : null}
-                  {artifact.path ? <span className="truncate font-mono">{artifact.path}</span> : null}
+                  {artifact.origin_node_title ? <span className="truncate">{artifact.origin_node_title}</span> : null}
                 </div>
               </div>
               <a

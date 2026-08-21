@@ -73,9 +73,40 @@ def node_workspace(user_id: str, app_id: str, node_id: str) -> Path:
 
 
 def run_workspace(user_id: str, app_id: str, run_id: str) -> Path:
-    path = runtime_dir() / "workspaces" / user_id / app_id / run_id
+    path = run_workspace_path(user_id, app_id, run_id)
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def run_workspace_path(user_id: str, app_id: str, run_id: str) -> Path:
+    """Return the run workspace location without creating it."""
+
+    return get_settings().runtime_dir.resolve() / "workspaces" / user_id / app_id / run_id
+
+
+def run_workspaces_root_path() -> Path:
+    """Return the run workspace collection root without creating it."""
+
+    return get_settings().runtime_dir.resolve() / "workspaces"
+
+
+def run_step_workspace(
+    user_id: str,
+    app_id: str,
+    run_id: str,
+    node_id: str,
+    attempt: int,
+) -> Path:
+    safe_node_id = _safe_runtime_segment(node_id)
+    safe_attempt = max(1, int(attempt))
+    path = run_workspace(user_id, app_id, run_id) / "nodes" / safe_node_id / f"attempt-{safe_attempt}" / "work"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _safe_runtime_segment(value: str) -> str:
+    safe = "".join(char if char.isalnum() or char in {"_", "-"} else "_" for char in value).strip("._")
+    return safe or hashlib.sha256(value.encode("utf-8")).hexdigest()[:20]
 
 
 def nlcompile_workspace(user_id: str) -> Path:

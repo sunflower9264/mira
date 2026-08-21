@@ -9,6 +9,7 @@ from app.models import App
 from app.runtime.base import AgentChunk, AgentExecutionResult, AgentProviderStatus
 from app.runtime.factory import set_runtime_override
 from app.services.admin import ADMIN_USER_ID
+from app.services.runtime_paths import run_workspace
 from app.services.uploads import resolve_upload
 from app.utils import dumps, now_utc
 from tests.auth_helpers import create_regular_user
@@ -114,7 +115,10 @@ def test_create_run_with_simple_input_asset_graph(auth_client, enable_claude_age
             ASSET_NODE,
             OUTPUT_FROM_INPUT_NODE,
         ],
-        "edges": [{"id": "e_out", "source": "n_input", "target": "n_out"}],
+        "edges": [
+            {"id": "e_input_out", "source": "n_input", "target": "n_out"},
+            {"id": "e_asset_out", "source": "n_asset", "target": "n_out"},
+        ],
     }
     app_id = _build_app(auth_client, graph=graph)
     response = auth_client.post(
@@ -367,7 +371,7 @@ def test_runtime_prompt_uses_staged_upload_path_for_input_attachment(auth_client
         assert runtime.prompts
         prompt = runtime.prompts[0]
         assert f"/uploads/{upload_id}/blob" not in prompt
-        assert ".uploads/" in prompt
+        assert "/mnt/inputs/" in prompt
         assert f"/{upload_id}/blob" in prompt
     finally:
         set_runtime_override(MockRuntime())
@@ -434,7 +438,7 @@ def test_non_owner_can_run_run_only_app_with_file_asset(auth_client, enable_clau
         assert final["status"] == "success"
         assert runtime.prompts
         prompt = runtime.prompts[0]
-        assert ".uploads/" in prompt
+        assert "/mnt/inputs/" in prompt
         assert f"/{upload_id}/blob" in prompt
         assert f"/uploads/{upload_id}/blob" not in prompt
     finally:
@@ -499,7 +503,7 @@ def test_non_owner_can_run_public_app_with_drawing_asset(auth_client, enable_cla
         assert final["status"] == "success"
         assert runtime.prompts
         prompt = runtime.prompts[0]
-        assert ".uploads/" in prompt
+        assert "/mnt/inputs/" in prompt
         assert f"/{upload_id}/blob" in prompt
         assert f"/uploads/{upload_id}/blob" not in prompt
     finally:
@@ -622,10 +626,13 @@ def test_delete_run_only_after_terminal(auth_client, enable_claude_agent):
     ).json()
     final = _wait_for_terminal(auth_client, run["run_id"])
     assert final["status"] == "success"
+    workspace = run_workspace(ADMIN_USER_ID, app_id, run["run_id"])
+    (workspace / "delete-me.txt").write_text("runtime residue", encoding="utf-8")
     response = auth_client.delete(f"/api/runs/{run['run_id']}")
     assert response.status_code == 204
     response = auth_client.get(f"/api/runs/{run['run_id']}")
     assert response.status_code == 404
+    assert not workspace.exists()
 
 
 def test_delete_app_cleans_run_input_uploads(auth_client, enable_claude_agent):

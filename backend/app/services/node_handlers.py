@@ -26,14 +26,6 @@ from app.runtime.base import AgentChunk, AskUserRequest
 from app.runtime.factory import get_runtime
 from app.schemas import RunInputValue
 from app.services.decision_prompts import append_ask_user_none_option, validate_ask_request_groups
-from app.services.artifacts import (
-    collect_workspace_image_refs,
-    ensure_html_images,
-    fill_image_download_urls,
-    import_runtime_images,
-    replace_workspace_paths_for_prompt,
-    replace_workspace_paths_in_html,
-)
 from app.services.output_contracts import (
     ContractValidationResult,
     contract_prompt_suffix,
@@ -44,12 +36,21 @@ from app.services.output_contracts import (
 from app.services.prompts import get_prompt_content, render_prompt
 from app.services.reasoning_effort import normalize_reasoning_effort_for_agent
 from app.services.run_hub import RunChannel
+from app.services.run_output_sanitizer import sanitize_run_text
 from app.services.runs import attachments_meta
 from app.services.runtime_uploads import RuntimeUploadRef, rewrite_runtime_upload_paths, runtime_upload_context
+from app.services.runtime_paths import run_workspace
 from app.services.tools import RuntimeToolConfig
 from app.services.text_integrity import UNICODE_REPLACEMENT_ERROR, contains_unicode_replacement
 from app.services.uploads import resolve_upload
 from app.services.run_serializer import log_to_out
+from app.services.workflow_data import (
+    WorkflowDataIntegrityError,
+    runtime_input_refs,
+    value_for_prompt,
+    visible_output,
+    workflow_data_prompt,
+)
 from app.utils import dumps, loads, new_id, now_utc
 
 logger = logging.getLogger(__name__)
@@ -127,6 +128,7 @@ class NodeResult:
     status: str  # "success" / "failed" / "skipped" / "waiting" / "cancelled"
     output: Any = None
     error: str | None = None
+    failure_kind: str | None = None
     agent_session_id: str | None = None
 
 
@@ -207,7 +209,7 @@ async def run_node(ctx: ExecutionContext, node: dict[str, Any], step: Step) -> N
         return await _handle_output(ctx, node, step)
     if node_type == "condition":
         return await _handle_condition(ctx, node, step)
-    return NodeResult(status="failed", error=f"未知节点类型: {node_type}")
+    return NodeResult(status="failed", error=f"未知节点类型: {node_type}", failure_kind="routing")
 
 
 # --- 具体 handler -----------------------------------------------------------
@@ -230,15 +232,15 @@ async def _handle_asset(ctx: ExecutionContext, node: dict[str, Any], step: Step)
     if asset_kind == "file":
         uploads = node.get("uploads")
         if not isinstance(uploads, list) or not uploads:
-            return NodeResult(status="failed", error="asset 节点 uploads 缺失")
+            return NodeResult(status="failed", error="asset 节点 uploads 缺失", failure_kind="runtime")
         payloads: list[dict[str, Any]] = []
         for upload in uploads:
             upload_id = upload.get("id") if isinstance(upload, dict) else None
             if not isinstance(upload_id, str) or not upload_id.strip():
-                return NodeResult(status="failed", error="asset 节点 upload 缺失")
+                return NodeResult(status="failed", error="asset 节点 upload 缺失", failure_kind="runtime")
             resolved = resolve_upload(ctx.asset_owner_id, upload_id)
             if resolved is None:
-                return NodeResult(status="failed", error="asset 节点上传文件不存在")
+                return NodeResult(status="failed", error="asset 节点上传文件不存在", failure_kind="runtime")
             payloads.append(resolved.to_tool_payload(ctx.asset_owner_id))
         step.input_json = dumps({"asset_kind": asset_kind, "uploads": payloads})
         await _append_log(ctx, step, "info", "读取上传素材")
@@ -248,10 +250,10 @@ async def _handle_asset(ctx: ExecutionContext, node: dict[str, Any], step: Step)
         upload = node.get("upload")
         upload_id = upload.get("id") if isinstance(upload, dict) else None
         if not isinstance(upload_id, str) or not upload_id.strip():
-            return NodeResult(status="failed", error="asset 节点 upload 缺失")
+            return NodeResult(status="failed", error="asset 节点 upload 缺失", failure_kind="runtime")
         resolved = resolve_upload(ctx.asset_owner_id, upload_id)
         if resolved is None:
-            return NodeResult(status="failed", error="asset 节点上传文件不存在")
+            return NodeResult(status="failed", error="asset 节点上传文件不存在", failure_kind="runtime")
         payload = resolved.to_tool_payload(ctx.asset_owner_id)
         step.input_json = dumps({"asset_kind": asset_kind, "upload": payload})
         await _append_log(ctx, step, "info", "读取上传素材")
@@ -260,7 +262,7 @@ async def _handle_asset(ctx: ExecutionContext, node: dict[str, Any], step: Step)
     if asset_kind == "url":
         urls = node.get("urls")
         if not isinstance(urls, list):
-            return NodeResult(status="failed", error="asset 节点 urls 缺失")
+            return NodeResult(status="failed", error="asset 节点 urls 缺失", failure_kind="runtime")
         payload = [url.strip() for url in urls if isinstance(url, str) and url.strip()]
         step.input_json = dumps({"asset_kind": asset_kind, "urls": payload})
         await _append_log(ctx, step, "info", "读取素材链接")
@@ -268,7 +270,7 @@ async def _handle_asset(ctx: ExecutionContext, node: dict[str, Any], step: Step)
 
     content = node.get("content")
     if not isinstance(content, str):
-        return NodeResult(status="failed", error="asset 节点 content 缺失")
+        return NodeResult(status="failed", error="asset 节点 content 缺失", failure_kind="runtime")
     step.input_json = dumps({"asset_kind": asset_kind, "content": content})
     await _append_log(ctx, step, "info", "读取素材内容")
     return NodeResult(status="success", output=content)
@@ -279,10 +281,7 @@ async def _handle_generate(ctx: ExecutionContext, node: dict[str, Any], step: St
 
 
 async def _handle_output(ctx: ExecutionContext, node: dict[str, Any], step: Step) -> NodeResult:
-    result = await _run_llm(ctx, node, step, expects_text=True)
-    if result.status == "success" and isinstance(result.output, str):
-        result.output = await asyncio.to_thread(_finalize_output_html, ctx, result.output)
-    return result
+    return await _run_llm(ctx, node, step, expects_text=True)
 
 
 async def _handle_condition(ctx: ExecutionContext, node: dict[str, Any], step: Step) -> NodeResult:
@@ -298,7 +297,7 @@ async def _handle_condition(ctx: ExecutionContext, node: dict[str, Any], step: S
         branch_options.append({"key": key, "label": label})
     valid_keys = [option["key"] for option in branch_options]
     if len(valid_keys) < 2:
-        return NodeResult(status="failed", error="condition 节点 branches 数量不足")
+        return NodeResult(status="failed", error="condition 节点 branches 数量不足", failure_kind="routing")
     if node.get("mode") == "cases" and _branch_target_nodes(
         ctx,
         str(node.get("id") or ""),
@@ -331,8 +330,15 @@ async def _handle_condition(ctx: ExecutionContext, node: dict[str, Any], step: S
     result = await _run_llm(ctx, node, step, expects_text=True, override_prompt=prompt)
     if result.status != "success":
         return result
-    answer = _strip_text(str(result.output or "")).lower()
-    chosen = _match_branch(answer, valid_keys, node.get("mode") == "binary")
+    answer = _strip_text(str(result.output or ""))
+    chosen = _match_branch(answer, valid_keys)
+    if chosen is None:
+        return NodeResult(
+            status="failed",
+            error=f"condition 未返回合法 branch key：{answer or '空输出'}",
+            failure_kind="routing",
+            agent_session_id=result.agent_session_id,
+        )
     _apply_condition_branch(ctx, node, chosen)
     await _record_condition_result(
         ctx,
@@ -358,10 +364,18 @@ async def _run_llm(
 ) -> NodeResult:
     agent_kind = ctx.agent.strip()
     if not agent_kind:
-        return NodeResult(status="failed", error="应用未配置 Agent")
+        return NodeResult(status="failed", error="应用未配置 Agent", failure_kind="runtime")
     runtime = get_runtime(agent_kind, ctx.user_id)
     cwd = ctx.workspace
-    with runtime_upload_context(cwd, _runtime_upload_refs_for_node(ctx, node, step)):
+    try:
+        input_refs = _runtime_upload_refs_for_node(ctx, node, step)
+    except WorkflowDataIntegrityError as exc:
+        return NodeResult(
+            status="failed",
+            error=f"上游 artifact 完整性校验失败：{exc}",
+            failure_kind="integrity",
+        )
+    with runtime_upload_context(cwd, input_refs):
         return await _run_llm_with_upload_context(
             ctx,
             node,
@@ -467,6 +481,7 @@ async def _run_llm_with_upload_context(
         return NodeResult(
             status="failed",
             error=f"Agent 执行异常: {exc}",
+            failure_kind="runtime",
             agent_session_id=ctx.agent_session_id,
         )
 
@@ -480,6 +495,7 @@ async def _run_llm_with_upload_context(
         return NodeResult(
             status="failed",
             error=result.error or "Agent 执行失败",
+            failure_kind="runtime",
             agent_session_id=next_session_id,
         )
     text = result.total_text or "".join(chunks)
@@ -492,6 +508,7 @@ async def _run_llm_with_upload_context(
             return NodeResult(
                 status="failed",
                 error=_contract_failure_message(node, validated.error or "输出无效"),
+                failure_kind="contract",
                 agent_session_id=next_session_id,
             )
         output = validated.output
@@ -505,6 +522,7 @@ async def _run_llm_with_upload_context(
                 return NodeResult(
                     status="failed",
                     error=f"输出契约校验不可用：{validated.error or '校验器不可用'}",
+                    failure_kind="contract",
                     agent_session_id=next_session_id,
                 )
             await _append_log(ctx, step, "warn", f"输出契约校验失败，尝试自动修正：{validated.error}")
@@ -524,18 +542,10 @@ async def _run_llm_with_upload_context(
             )
             if repair_result.status != "success":
                 return repair_result
-            if repair_result.output is not None:
-                repair_result.output = await asyncio.to_thread(
-                    import_runtime_images,
-                    repair_result.output,
-                    workspace=ctx.workspace,
-                )
             return repair_result
         output = validated.output
     else:
         output = text if expects_text else text
-    if expects_text and node.get("type") == "generate":
-        output = await asyncio.to_thread(import_runtime_images, output, workspace=ctx.workspace)
     await _append_log(ctx, step, "info", "节点执行完成")
     return NodeResult(status="success", output=output, agent_session_id=next_session_id)
 
@@ -598,6 +608,7 @@ async def _run_ask_user_preflight(
             return NodeResult(
                 status="failed",
                 error=f"Agent 提问预检异常: {exc}",
+                failure_kind="runtime",
                 agent_session_id=ctx.agent_session_id,
             )
 
@@ -607,6 +618,7 @@ async def _run_ask_user_preflight(
             return NodeResult(
                 status="failed",
                 error=result.error or "Agent 提问预检失败",
+                failure_kind="runtime",
                 agent_session_id=ctx.agent_session_id,
             )
 
@@ -647,7 +659,11 @@ async def _run_ask_user_preflight(
         await ctx.db.commit()
         return summary
 
-    return NodeResult(status="failed", error=f"Agent 提问预检输出无效：{feedback or '未返回合法 action'}")
+    return NodeResult(
+        status="failed",
+        error=f"Agent 提问预检输出无效：{feedback or '未返回合法 action'}",
+        failure_kind="contract",
+    )
 
 
 def _preflight_state(input_payload: dict[str, Any]) -> dict[str, Any]:
@@ -698,7 +714,7 @@ def _has_direct_user_input_value(ctx: ExecutionContext, node: dict[str, Any]) ->
         source_node = ctx.nodes_by_id.get(source_id, {})
         if source_node.get("type") != "user_input":
             continue
-        value = ctx.outputs.get(source_id)
+        value = visible_output(ctx.outputs.get(source_id))
         if _has_meaningful_input_value(value):
             return True
     return False
@@ -981,6 +997,7 @@ async def _repair_contract_output(
         return NodeResult(
             status="failed",
             error=f"Agent 修正输出异常: {exc}",
+            failure_kind="runtime",
             agent_session_id=ctx.agent_session_id,
         )
 
@@ -993,6 +1010,7 @@ async def _repair_contract_output(
         return NodeResult(
             status="failed",
             error=result.error or "Agent 修正输出失败",
+            failure_kind="runtime",
             agent_session_id=next_session_id,
         )
     repaired_text = result.total_text or "".join(repair_chunks)
@@ -1008,6 +1026,7 @@ async def _repair_contract_output(
         return NodeResult(
             status="failed",
             error=error,
+            failure_kind="contract",
             agent_session_id=next_session_id,
         )
     await _append_log(ctx, step, "info", "输出契约自动修正完成")
@@ -1127,7 +1146,6 @@ def _extract_session_id(data: dict | None) -> str | None:
 
 
 def _compose_node_prompt(ctx: ExecutionContext, node: dict[str, Any]) -> str:
-    _materialize_context_images(ctx)
     base = str(node.get("prompt") or "").strip()
     if node.get("type") == "output":
         source_id = node.get("source_node_id")
@@ -1138,12 +1156,14 @@ def _compose_node_prompt(ctx: ExecutionContext, node: dict[str, Any]) -> str:
             sections = [primary]
             if upstream:
                 sections.append("# 其它上游上下文\n" + upstream)
+            sections.append(workflow_data_prompt())
             sections.append("# 输出指令\n" + base)
             return "\n\n".join(sections)
     upstream = _format_upstream_context(ctx, node)
     sections: list[str] = []
     if upstream:
         sections.append("# 上游上下文\n" + upstream)
+    sections.append(workflow_data_prompt())
     sections.append("# 当前任务\n" + base)
     return "\n\n".join(sections)
 
@@ -1182,7 +1202,10 @@ def _format_upstream_context(
 
 def _runtime_upload_refs_for_node(ctx: ExecutionContext, node: dict[str, Any], step: Step) -> list[RuntimeUploadRef]:
     refs: dict[str, RuntimeUploadRef] = {}
+    current_run_workspace = run_workspace(ctx.user_id, ctx.app_id, ctx.run_id)
     for source_id in _prompt_source_ids(ctx, node):
+        for ref in runtime_input_refs(ctx.outputs.get(source_id), run_workspace=current_run_workspace):
+            refs[ref.id] = ref
         source_node = ctx.nodes_by_id.get(source_id, {})
         if source_node.get("type") not in {"user_input", "asset"}:
             continue
@@ -1240,34 +1263,18 @@ def _collect_upload_refs_from_value(owner_id: str, value: Any, refs: dict[str, R
 
 
 def _format_value(ctx: ExecutionContext, value: Any) -> str:
-    prepared = _materialize_runtime_images(ctx, value)
+    prepared = value_for_prompt(
+        value,
+        run_workspace=run_workspace(ctx.user_id, ctx.app_id, ctx.run_id),
+    )
     if isinstance(prepared, str):
-        return rewrite_runtime_upload_paths(replace_workspace_paths_for_prompt(prepared, _run_from_context(ctx)))
+        text = rewrite_runtime_upload_paths(prepared)
+        return sanitize_run_text(text, _run_from_context(ctx))
     try:
-        return rewrite_runtime_upload_paths(replace_workspace_paths_for_prompt(dumps(prepared), _run_from_context(ctx)))
+        text = rewrite_runtime_upload_paths(dumps(prepared))
     except Exception:  # noqa: BLE001
-        return rewrite_runtime_upload_paths(replace_workspace_paths_for_prompt(str(prepared), _run_from_context(ctx)))
-
-
-def _materialize_context_images(ctx: ExecutionContext) -> None:
-    for source_id, value in list(ctx.outputs.items()):
-        ctx.outputs[source_id] = _materialize_runtime_images(ctx, value)
-
-
-def _materialize_runtime_images(ctx: ExecutionContext, value: Any) -> Any:
-    workspace = ctx.workspace
-    imported = import_runtime_images(value, workspace=workspace)
-    return fill_image_download_urls(imported, _run_from_context(ctx), workspace)
-
-
-def _finalize_output_html(ctx: ExecutionContext, html_text: str) -> str:
-    run = _run_from_context(ctx)
-    _materialize_context_images(ctx)
-    html_text = replace_workspace_paths_in_html(html_text, run)
-    refs: list[tuple[str, str]] = []
-    for value in ctx.outputs.values():
-        refs.extend(collect_workspace_image_refs(value, run, ctx.workspace))
-    return ensure_html_images(html_text, refs)
+        text = rewrite_runtime_upload_paths(str(prepared))
+    return sanitize_run_text(text, _run_from_context(ctx))
 
 
 def _run_from_context(ctx: ExecutionContext) -> Run:
@@ -1291,19 +1298,8 @@ def _strip_text(text: str) -> str:
     return cleaned
 
 
-def _match_branch(answer: str, valid_keys: list[str], binary_mode: bool) -> str:
-    lowered = {key.lower(): key for key in valid_keys}
-    if answer in lowered:
-        return lowered[answer]
-    # 包含关系兜底：LLM 输出 "true。" 这种带标点的情况。
-    for key_lower, key in lowered.items():
-        if key_lower and key_lower in answer:
-            return key
-    if binary_mode:
-        if "false" in lowered:
-            return lowered["false"]
-        return valid_keys[0] if valid_keys else DEFAULT_BRANCH_KEY
-    return DEFAULT_BRANCH_KEY
+def _match_branch(answer: str, valid_keys: list[str]) -> str | None:
+    return answer if answer in valid_keys else None
 
 
 def _condition_branch_override(ctx: ExecutionContext, node: dict[str, Any]) -> str | None:

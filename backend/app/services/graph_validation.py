@@ -157,8 +157,62 @@ def validate_executable_graph(graph: dict[str, Any]) -> None:
     nodes = list(graph.get("nodes", []))
     if not nodes:
         raise GraphValidationError("工作流没有节点")
-    if not any(isinstance(node, dict) and node.get("type") == "output" for node in nodes):
+    outputs = [node for node in nodes if isinstance(node, dict) and node.get("type") == "output"]
+    if not outputs:
         raise GraphValidationError("工作流必须包含 output 节点")
+    output = outputs[0]
+    output_id = str(output.get("id") or "")
+    edges = [edge for edge in graph.get("edges", []) if isinstance(edge, dict)]
+    if not any(edge.get("target") == output_id for edge in edges):
+        raise GraphValidationError("output 节点必须连接正式上游输入")
+
+    parents: dict[str, set[str]] = {}
+    condition_handles: dict[str, set[str]] = {}
+    for edge in edges:
+        source = edge.get("source")
+        target = edge.get("target")
+        if isinstance(source, str) and isinstance(target, str):
+            parents.setdefault(target, set()).add(source)
+        handle = edge.get("source_handle")
+        if isinstance(source, str) and isinstance(handle, str):
+            condition_handles.setdefault(source, set()).add(handle)
+
+    reaches_output = {output_id}
+    queue = [output_id]
+    while queue:
+        current = queue.pop(0)
+        for parent in parents.get(current, set()):
+            if parent in reaches_output:
+                continue
+            reaches_output.add(parent)
+            queue.append(parent)
+
+    for node in nodes:
+        node_id = node.get("id") if isinstance(node, dict) else None
+        if isinstance(node, dict) and node.get("type") == "condition" and isinstance(node_id, str):
+            declared = {
+                branch.get("key")
+                for branch in node.get("branches", [])
+                if isinstance(branch, dict) and isinstance(branch.get("key"), str)
+            }
+            connected = condition_handles.get(node_id, set())
+            missing = sorted(declared - connected)
+            if missing:
+                raise GraphValidationError(
+                    f"condition 节点 {node_id} 的分支 {', '.join(missing)} 未连接到 output 路径"
+                )
+            for handle in sorted(declared | ({DEFAULT_BRANCH_KEY} if DEFAULT_BRANCH_KEY in connected else set())):
+                targets = {
+                    edge.get("target")
+                    for edge in edges
+                    if edge.get("source") == node_id and edge.get("source_handle") == handle
+                }
+                if any(isinstance(target, str) and target not in reaches_output for target in targets):
+                    raise GraphValidationError(
+                        f"condition 节点 {node_id} 的分支 {handle} 无法到达 output"
+                    )
+        if isinstance(node_id, str) and node_id not in reaches_output:
+            raise GraphValidationError(f"节点 {node_id} 无法到达 output")
 
 
 def user_input_node_ids(graph: dict[str, Any]) -> set[str]:

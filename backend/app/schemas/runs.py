@@ -26,6 +26,7 @@ StepStatus = Literal[
     "skipped",
     "cancelled",
 ]
+FailureKind = Literal["runtime", "contract", "routing", "integrity", "internal"]
 
 
 class RunAttachmentRef(BaseModel):
@@ -129,6 +130,9 @@ class StepOut(BaseModel):
     finished_at: str | None = None
     duration_ms: int | None = None
     error: str | None = None
+    failure_kind: FailureKind | None = None
+    reused_from_run_id: str | None = None
+    reused_from_step_id: str | None = None
     logs: list[LogLineOut] = Field(default_factory=list)
 
 
@@ -140,25 +144,33 @@ class RunTraceChunkOut(BaseModel):
 
 
 class RunTraceArtifactOut(BaseModel):
-    path: str
+    id: str
     name: str
     size: int
     sha256: str
-    integrity: Literal["verified", "modified", "legacy_unverified"]
+    integrity: Literal["verified", "modified"]
     download_url: str
+    origin_run_id: str
+    origin_artifact_id: str
+    origin_node_id: str
+    origin_node_title: str
+    reused_from_run_id: str | None = None
+    reused_from_artifact_id: str | None = None
 
 
 class RunArtifactOut(BaseModel):
     id: str
     name: str
-    path: str | None = None
     size: int | None = None
     sha256: str
-    integrity: Literal["verified", "modified", "legacy_unverified"]
+    integrity: Literal["verified", "modified"]
     download_url: str
-    source_node_id: str | None = None
-    source_node_title: str | None = None
-    source_kind: Literal["workspace_file", "artifact_contract"]
+    origin_run_id: str | None = None
+    origin_artifact_id: str | None = None
+    origin_node_id: str | None = None
+    origin_node_title: str | None = None
+    reused_from_run_id: str | None = None
+    reused_from_artifact_id: str | None = None
     mime: str | None = None
 
 
@@ -181,6 +193,9 @@ class RunStepTraceOut(BaseModel):
     finished_at: str | None = None
     duration_ms: int | None = None
     error: str | None = None
+    failure_kind: FailureKind | None = None
+    reused_from_run_id: str | None = None
+    reused_from_step_id: str | None = None
     prompt: str
     input: Any = None
     output: Any = None
@@ -216,6 +231,9 @@ class RunOut(BaseModel):
     started_at: str | None = None
     finished_at: str | None = None
     error: str | None = None
+    failure_kind: FailureKind | None = None
+    source_run_id: str | None = None
+    rerun_from_node_id: str | None = None
     recovery: RunRecoveryOut | None = None
 
 
@@ -228,6 +246,9 @@ class RunSummaryOut(BaseModel):
     started_at: str | None = None
     finished_at: str | None = None
     error: str | None = None
+    failure_kind: FailureKind | None = None
+    source_run_id: str | None = None
+    rerun_from_node_id: str | None = None
 
 
 class RunCreatedOut(BaseModel):

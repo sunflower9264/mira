@@ -226,6 +226,8 @@ export interface WorkflowEdge {
   source_handle?: string;
 }
 
+export type FailureKind = 'runtime' | 'contract' | 'routing' | 'integrity' | 'internal';
+
 export interface Run {
   id: string;
   app_id: string;
@@ -237,12 +239,25 @@ export interface Run {
   started_at: string;
   finished_at?: string;
   error?: string;
+  failure_kind?: FailureKind | null;
+  source_run_id?: string | null;
+  rerun_from_node_id?: string | null;
   recovery?: RunRecovery | null;
 }
 
 export type RunSummary = Pick<
   Run,
-  'id' | 'app_id' | 'status' | 'name' | 'inputs' | 'started_at' | 'finished_at' | 'error'
+  | 'id'
+  | 'app_id'
+  | 'status'
+  | 'name'
+  | 'inputs'
+  | 'started_at'
+  | 'finished_at'
+  | 'error'
+  | 'failure_kind'
+  | 'source_run_id'
+  | 'rerun_from_node_id'
 >;
 
 export interface Step {
@@ -255,6 +270,9 @@ export interface Step {
   finished_at?: string;
   duration_ms?: number;
   error?: string;
+  failure_kind?: FailureKind | null;
+  reused_from_run_id?: string | null;
+  reused_from_step_id?: string | null;
   logs: LogLine[];
 }
 
@@ -266,25 +284,33 @@ export interface RunTraceChunk {
 }
 
 export interface RunTraceArtifact {
-  path: string;
+  id: string;
   name: string;
   size: number;
   sha256: string;
-  integrity: 'verified' | 'modified' | 'legacy_unverified';
+  integrity: 'verified' | 'modified';
   download_url: string;
+  origin_run_id: string;
+  origin_artifact_id: string;
+  origin_node_id: string;
+  origin_node_title: string;
+  reused_from_run_id?: string | null;
+  reused_from_artifact_id?: string | null;
 }
 
 export interface RunArtifact {
   id: string;
   name: string;
-  path?: string | null;
   size?: number | null;
   sha256: string;
-  integrity: 'verified' | 'modified' | 'legacy_unverified';
+  integrity: 'verified' | 'modified';
   download_url: string;
-  source_node_id?: string | null;
-  source_node_title?: string | null;
-  source_kind: 'workspace_file' | 'artifact_contract';
+  origin_run_id?: string | null;
+  origin_artifact_id?: string | null;
+  origin_node_id?: string | null;
+  origin_node_title?: string | null;
+  reused_from_run_id?: string | null;
+  reused_from_artifact_id?: string | null;
   mime?: string | null;
 }
 
@@ -307,6 +333,9 @@ export interface RunStepTrace {
   finished_at?: string | null;
   duration_ms?: number | null;
   error?: string | null;
+  failure_kind?: FailureKind | null;
+  reused_from_run_id?: string | null;
+  reused_from_step_id?: string | null;
   prompt: string;
   input?: unknown;
   output?: unknown;
@@ -363,7 +392,12 @@ export type RunEvent =
   | { event: 'step.waiting'; node_id: string; request: RunWaitingRequest; question?: string }
   | { event: 'step.end'; node_id: string; step: Step }
   | { event: 'run.waiting_for_user'; node_id: string; question?: string }
-  | { event: 'run.end'; status: 'success' | 'failed' | 'cancelled'; error?: string };
+  | {
+      event: 'run.end';
+      status: 'success' | 'failed' | 'cancelled';
+      error?: string;
+      failure_kind?: FailureKind;
+    };
 
 // JSON Patch ops (subset used by nlcompile, RFC 6902-ish)
 export type GraphPatch =

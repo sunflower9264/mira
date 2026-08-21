@@ -31,17 +31,16 @@ from app.services.node_handlers import (
     build_context,
     run_node,
 )
-from app.services.output_contracts import artifact_output_for_storage
 from app.services.run_artifacts import validate_run_artifact_integrity
 from app.services.run_hub import RunChannel, get_run_hub
 from app.services.run_serializer import step_to_out
 from app.services.runs import touch_run_heartbeat
-from app.services.runtime_paths import run_workspace
+from app.services.runtime_paths import run_step_workspace, run_workspace
 from app.services.tools import planning_runtime_tools_for_graph, runtime_tools_for_graph
+from app.services.workflow_data import build_output_envelope
 from app.utils import iso, loads, now_utc
 
 logger = logging.getLogger(__name__)
-PROMPT_NODE_TYPES = {"generate", "condition", "output"}
 WAITING_SIBLING_SETTLE_SECONDS = 0.05
 
 
@@ -61,6 +60,7 @@ class StepTaskResult:
     status: str
     output: Any = None
     error: str | None = None
+    failure_kind: str | None = None
     agent_session_id: str | None = None
     skipped_nodes: set[str] | None = None
 
@@ -112,15 +112,22 @@ async def _orchestrate(run_id: str, channel: RunChannel, *, continuation: bool =
     async with SessionLocal() as db:
         run = await db.get(Run, run_id)
         if run is None:
-            await channel.publish("run.end", {"status": "failed", "error": "运行记录不存在"})
+            await channel.publish(
+                "run.end",
+                {"status": "failed", "error": "运行记录不存在", "failure_kind": "internal"},
+            )
             return True
         app = await db.get(App, run.app_id)
         if app is None:
             run.status = "failed"
             run.error = "应用不存在"
+            run.failure_kind = "internal"
             run.finished_at = now_utc()
             await db.commit()
-            await channel.publish("run.end", {"status": "failed", "error": "应用不存在"})
+            await channel.publish(
+                "run.end",
+                {"status": "failed", "error": "应用不存在", "failure_kind": "internal"},
+            )
             return True
 
         graph = loads(run.graph_json, {"nodes": [], "edges": []})
@@ -154,6 +161,9 @@ async def _orchestrate(run_id: str, channel: RunChannel, *, continuation: bool =
         )
 
         run.status = "running"
+        run.error = None
+        run.failure_kind = None
+        run.finished_at = None
         run.heartbeat_at = now_utc()
         if run.started_at is None:
             run.started_at = now_utc()
@@ -164,13 +174,14 @@ async def _orchestrate(run_id: str, channel: RunChannel, *, continuation: bool =
             for step in steps
             if step.status == "success" and step.output_json is not None
         }
-        predecessors, children = _graph_dependencies(graph, states)
+        predecessors, _children = _graph_dependencies(graph, states)
         active: dict[asyncio.Task[StepTaskResult], str] = {}
         launched: set[str] = set()
         blocked_by_waiting = False
         run_failed = False
         run_cancelled = False
         run_error: str | None = None
+        run_failure_kind: str | None = None
 
         while True:
             if channel.cancel_event.is_set():
@@ -184,10 +195,18 @@ async def _orchestrate(run_id: str, channel: RunChannel, *, continuation: bool =
                     if node is None:
                         step = await db.get(Step, state.id)
                         if step is not None:
-                            await _finish_step(db, channel, step, status="failed", error="graph 中找不到节点")
+                            await _finish_step(
+                                db,
+                                channel,
+                                step,
+                                status="failed",
+                                error="graph 中找不到节点",
+                                failure_kind="routing",
+                            )
                         state.status = "failed"
                         run_failed = True
                         run_error = run_error or "graph 中找不到节点"
+                        run_failure_kind = run_failure_kind or "routing"
                         continue
                     launched.add(node_id)
                     active[
@@ -202,9 +221,12 @@ async def _orchestrate(run_id: str, channel: RunChannel, *, continuation: bool =
                                 runtime_tools,
                                 planning_runtime_tools,
                                 app.owner_id,
-                                outputs=dict(outputs),
+                                outputs={
+                                    source_id: outputs[source_id]
+                                    for source_id in predecessors.get(node_id, set())
+                                    if source_id in outputs
+                                },
                                 skipped_nodes=set(ctx.skipped_nodes),
-                                initial_session_id=_initial_session_id(node_id, graph, states, predecessors, children),
                             ),
                             name=f"run-{run_id}-step-{node_id}",
                         )
@@ -230,11 +252,17 @@ async def _orchestrate(run_id: str, channel: RunChannel, *, continuation: bool =
                     result = task.result()
                 except Exception as exc:  # noqa: BLE001
                     logger.exception("step task crashed for run=%s", run_id)
-                    result = StepTaskResult(node_id="", status="failed", error=f"节点执行异常: {exc}")
+                    result = StepTaskResult(
+                        node_id="",
+                        status="failed",
+                        error=f"节点执行异常: {exc}",
+                        failure_kind="internal",
+                    )
                 state = states.get(result.node_id)
                 if state is None:
                     run_failed = True
                     run_error = run_error or result.error or "节点执行异常"
+                    run_failure_kind = run_failure_kind or result.failure_kind or "internal"
                     continue
                 state.status = result.status
                 state.output = result.output
@@ -250,6 +278,7 @@ async def _orchestrate(run_id: str, channel: RunChannel, *, continuation: bool =
                 elif result.status == "failed":
                     run_failed = True
                     run_error = run_error or result.error
+                    run_failure_kind = run_failure_kind or result.failure_kind or "internal"
                 if result.skipped_nodes:
                     await _mark_skipped_nodes(db, channel, states, result.skipped_nodes)
                     ctx.skipped_nodes.update(result.skipped_nodes)
@@ -265,10 +294,17 @@ async def _orchestrate(run_id: str, channel: RunChannel, *, continuation: bool =
             await channel.publish("run.end", {"status": "cancelled"})
             return True
         if not run_failed:
+            routing_error = _terminal_routing_error(graph, states)
+            if routing_error:
+                run_failed = True
+                run_error = routing_error
+                run_failure_kind = "routing"
+        if not run_failed:
             artifact_error = await validate_run_artifact_integrity(db, run)
             if artifact_error:
                 run_failed = True
                 run_error = f"artifact 完整性校验失败：{artifact_error}"
+                run_failure_kind = "integrity"
         if await _run_was_cancelled(db, run.id, channel):
             run_cancelled = True
         if run_cancelled:
@@ -282,10 +318,14 @@ async def _orchestrate(run_id: str, channel: RunChannel, *, continuation: bool =
         if run_failed:
             run.status = "failed"
             run.error = run_error or "运行失败"
+            run.failure_kind = run_failure_kind or "internal"
             run.finished_at = finished_at
             _clear_recovery(run)
             await db.commit()
-            await channel.publish("run.end", {"status": "failed", "error": run.error})
+            await channel.publish(
+                "run.end",
+                {"status": "failed", "error": run.error, "failure_kind": run.failure_kind},
+            )
             return True
         success_update = await db.execute(
             update(Run)
@@ -296,6 +336,8 @@ async def _orchestrate(run_id: str, channel: RunChannel, *, continuation: bool =
                 resume_from_node_id=None,
                 recovery_reason=None,
                 interrupted_at=None,
+                error=None,
+                failure_kind=None,
             )
             .execution_options(synchronize_session=False)
         )
@@ -317,7 +359,7 @@ async def _execute_node(ctx: ExecutionContext, node: dict[str, Any], step: Step)
         return await run_node(ctx, node, step)
     except Exception as exc:  # noqa: BLE001
         logger.exception("node handler crashed: node=%s", node.get("id"))
-        return NodeResult(status="failed", error=f"节点执行异常: {exc}")
+        return NodeResult(status="failed", error=f"节点执行异常: {exc}", failure_kind="internal")
 
 
 def _step_states(steps: list[Step]) -> dict[str, StepState]:
@@ -354,6 +396,23 @@ def _graph_dependencies(
     return predecessors, children
 
 
+def _terminal_routing_error(graph: dict[str, Any], states: dict[str, StepState]) -> str | None:
+    output_ids = [
+        node.get("id")
+        for node in graph.get("nodes", [])
+        if isinstance(node, dict) and node.get("type") == "output" and isinstance(node.get("id"), str)
+    ]
+    if len(output_ids) != 1:
+        return "Workflow 必须且只能有一个最终输出节点"
+    output_state = states.get(output_ids[0])
+    if output_state is None or output_state.status != "success":
+        return "最终输出节点未执行成功"
+    unfinished = [state.node_id for state in states.values() if state.status not in {"success", "skipped"}]
+    if unfinished:
+        return f"Workflow 存在未完成节点：{', '.join(sorted(unfinished))}"
+    return None
+
+
 def _ready_node_ids(
     states: dict[str, StepState],
     predecessors: dict[str, set[str]],
@@ -372,36 +431,6 @@ def _ready_node_ids(
     return [state.node_id for state in ready]
 
 
-def _initial_session_id(
-    node_id: str,
-    graph: dict[str, Any],
-    states: dict[str, StepState],
-    predecessors: dict[str, set[str]],
-    children: dict[str, set[str]],
-) -> str | None:
-    nodes_by_id = {
-        node.get("id"): node
-        for node in graph.get("nodes", [])
-        if isinstance(node, dict) and isinstance(node.get("id"), str)
-    }
-    node = nodes_by_id.get(node_id) or {}
-    if node.get("type") not in PROMPT_NODE_TYPES:
-        return None
-    sources = predecessors.get(node_id, set())
-    # Fan-in and roots start a new session; only a linear single-upstream chain may reuse.
-    if len(sources) != 1:
-        return None
-    candidate_sessions: list[str] = []
-    for source_id in sources:
-        source_node = nodes_by_id.get(source_id) or {}
-        source_state = states.get(source_id)
-        if len(children.get(source_id, set())) > 1:
-            continue
-        if source_node.get("type") in PROMPT_NODE_TYPES and source_state and source_state.agent_session_id:
-            candidate_sessions.append(source_state.agent_session_id)
-    return candidate_sessions[0] if len(set(candidate_sessions)) == 1 else None
-
-
 async def _run_step_task(
     run: Run,
     channel: RunChannel,
@@ -415,12 +444,29 @@ async def _run_step_task(
     *,
     outputs: dict[str, Any],
     skipped_nodes: set[str],
-    initial_session_id: str | None,
 ) -> StepTaskResult:
     async with SessionLocal() as db:
         step = await db.get(Step, state.id)
         if step is None:
-            return StepTaskResult(node_id=state.node_id, status="failed", error="运行节点不存在")
+            return StepTaskResult(
+                node_id=state.node_id,
+                status="failed",
+                error="运行节点不存在",
+                failure_kind="internal",
+            )
+        if channel.cancel_event.is_set():
+            await _emit_step_start(db, channel, step)
+            await _finish_step(db, channel, step, status="cancelled")
+            return StepTaskResult(node_id=state.node_id, status="cancelled")
+
+        await _emit_step_start(db, channel, step)
+        step_workspace = run_step_workspace(
+            run.owner_id,
+            run.app_id,
+            run.id,
+            state.node_id,
+            step.attempt,
+        )
         ctx = build_context(
             db,
             channel,
@@ -430,22 +476,15 @@ async def _run_step_task(
             run_id=run.id,
             graph=graph,
             agent=str(graph.get("agent") or "").strip(),
-            workspace=run_workspace(run.owner_id, run.app_id, run.id),
+            workspace=step_workspace,
             inputs=inputs,
             runtime_tools=runtime_tools,
             planning_runtime_tools=planning_runtime_tools,
         )
         ctx.outputs.update(outputs)
         ctx.skipped_nodes.update(skipped_nodes)
-        ctx.agent_session_id = initial_session_id
         before_skipped = set(ctx.skipped_nodes)
 
-        if channel.cancel_event.is_set():
-            await _emit_step_start(db, channel, step)
-            await _finish_step(db, channel, step, status="cancelled")
-            return StepTaskResult(node_id=state.node_id, status="cancelled")
-
-        await _emit_step_start(db, channel, step)
         result = await _execute_node(ctx, node, step)
         skipped_delta = set(ctx.skipped_nodes) - before_skipped
         if result.status == "waiting":
@@ -458,25 +497,31 @@ async def _run_step_task(
         if result.status == "success":
             try:
                 stored_output = await asyncio.to_thread(
-                    artifact_output_for_storage,
+                    build_output_envelope,
                     node,
                     result.output,
-                    workspace=ctx.workspace,
+                    step_workspace=ctx.workspace,
+                    run_workspace=run_workspace(run.owner_id, run.app_id, run.id),
+                    run_id=run.id,
+                    node_id=state.node_id,
+                    step_id=step.id,
                 )
             except (OSError, ValueError) as exc:
-                error = f"artifact manifest 生成失败：{exc}"
+                error = f"节点输出提交失败：{exc}"
                 await _finish_step(
                     db,
                     channel,
                     step,
                     status="failed",
                     error=error,
+                    failure_kind="contract",
                     agent_session_id=result.agent_session_id,
                 )
                 return StepTaskResult(
                     node_id=state.node_id,
                     status="failed",
                     error=error,
+                    failure_kind="contract",
                     agent_session_id=result.agent_session_id,
                     skipped_nodes=skipped_delta,
                 )
@@ -491,7 +536,7 @@ async def _run_step_task(
             return StepTaskResult(
                 node_id=state.node_id,
                 status="success",
-                output=result.output,
+                output=stored_output,
                 agent_session_id=result.agent_session_id,
                 skipped_nodes=skipped_delta,
             )
@@ -511,12 +556,14 @@ async def _run_step_task(
             step,
             status="failed",
             error=result.error,
+            failure_kind=result.failure_kind or "internal",
             agent_session_id=result.agent_session_id,
         )
         return StepTaskResult(
             node_id=state.node_id,
             status="failed",
             error=result.error,
+            failure_kind=result.failure_kind or "internal",
             agent_session_id=result.agent_session_id,
             skipped_nodes=skipped_delta,
         )
@@ -644,6 +691,7 @@ async def _emit_step_start(db, channel: RunChannel, step: Step) -> None:
     step.started_at = now_utc()
     step.finished_at = None
     step.error = None
+    step.failure_kind = None
     step.output_json = None
     step.attempt = (step.attempt or 0) + 1
     await db.commit()
@@ -661,6 +709,7 @@ async def _finish_step(
     status: str,
     output: Any = None,
     error: str | None = None,
+    failure_kind: str | None = None,
     agent_session_id: str | None = None,
 ) -> None:
     finished_at = now_utc()
@@ -700,6 +749,7 @@ async def _finish_step(
         step.output_json = _dumps(output)
     if error is not None:
         step.error = error
+    step.failure_kind = failure_kind if status == "failed" else None
     if status == "cancelled":
         step.agent_session_id = None
     elif agent_session_id is not None:
@@ -736,10 +786,14 @@ async def _finalize_failed(run_id: str, channel: RunChannel, *, error: str) -> N
             if run is not None and run.status not in {"success", "failed", "cancelled"}:
                 run.status = "failed"
                 run.error = error
+                run.failure_kind = "internal"
                 run.finished_at = now_utc()
                 _clear_recovery(run)
                 await db.commit()
-        await channel.publish("run.end", {"status": "failed", "error": error})
+        await channel.publish(
+            "run.end",
+            {"status": "failed", "error": error, "failure_kind": "internal"},
+        )
     except Exception:  # noqa: BLE001
         logger.exception("failed to finalize run=%s", run_id)
 

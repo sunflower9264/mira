@@ -18,6 +18,17 @@ def _fake_which(name: str) -> str:
     return f"/usr/bin/{name}"
 
 
+def _write_bbox(path: Path, *, x_max: float = 100.0) -> None:
+    path.write_text(
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<html xmlns="http://www.w3.org/1999/xhtml"><body><doc>'
+        '<page width="595.30" height="841.89">'
+        f'<word xMin="10.0" yMin="20.0" xMax="{x_max}" yMax="40.0">text</word>'
+        "</page></doc></body></html>",
+        encoding="utf-8",
+    )
+
+
 @pytest.fixture
 def fake_validator_acl(monkeypatch) -> None:
     monkeypatch.setattr(office_documents, "_grant_validator_access", lambda _path, **_kwargs: None)
@@ -39,6 +50,9 @@ def test_validate_office_documents_converts_zip_members(tmp_path, monkeypatch, f
             for input_path in command[command.index("--outdir") + 2 :]:
                 (output_dir / f"{Path(input_path).stem}.pdf").write_bytes(b"%PDF-1.4")
             return office_documents._CommandResult(returncode=0)
+        if command[0].endswith("pdftotext"):
+            _write_bbox(Path(command[-1]))
+            return office_documents._CommandResult(returncode=0)
         return office_documents._CommandResult(returncode=0, stdout="Pages:          2\n")
 
     monkeypatch.setattr(office_documents.shutil, "which", _fake_which)
@@ -47,6 +61,7 @@ def test_validate_office_documents_converts_zip_members(tmp_path, monkeypatch, f
     assert office_documents.validate_office_documents(archive) is None
     assert len([command for command in calls if "--convert-to" in command]) == 1
     assert len([command for command in calls if command[0].endswith("pdfinfo")]) == 2
+    assert len([command for command in calls if command[0].endswith("pdftotext")]) == 2
 
 
 def test_validate_office_documents_requires_at_least_one_document(tmp_path, monkeypatch, fake_validator_acl) -> None:
@@ -92,6 +107,30 @@ def test_validate_office_documents_rejects_zero_page_pdf(tmp_path, monkeypatch, 
     monkeypatch.setattr(office_documents, "_run_command", fake_run)
 
     assert office_documents.validate_office_documents(document) == "Office 文档未生成有效页面：empty.docx"
+
+
+def test_validate_office_documents_rejects_text_outside_page(tmp_path, monkeypatch, fake_validator_acl) -> None:
+    document = tmp_path / "clipped.docx"
+    document.write_bytes(b"docx")
+
+    def fake_run(command: list[str], **_kwargs) -> office_documents._CommandResult:
+        if "--convert-to" in command:
+            output_dir = Path(command[command.index("--outdir") + 1])
+            (output_dir / "001.pdf").write_bytes(b"%PDF-1.4")
+            return office_documents._CommandResult(returncode=0)
+        if command[0].endswith("pdftotext"):
+            _write_bbox(Path(command[-1]), x_max=605.1)
+            return office_documents._CommandResult(returncode=0)
+        return office_documents._CommandResult(returncode=0, stdout="Pages:          1\n")
+
+    monkeypatch.setattr(office_documents.shutil, "which", _fake_which)
+    monkeypatch.setattr(office_documents, "_run_command", fake_run)
+
+    error = office_documents.validate_office_documents(document)
+
+    assert error is not None
+    assert "clipped.docx 第 1 页" in error
+    assert "xMax=605.10 > 页面宽度 595.30" in error
 
 
 def test_validate_office_documents_limits_direct_file_size(tmp_path, monkeypatch, fake_validator_acl) -> None:
@@ -155,6 +194,11 @@ def test_systemd_sandbox_command_uses_only_allowlisted_helper_modes(tmp_path, mo
         ["/usr/bin/pdfinfo", str(pdf)],
         env=env,
     )
+    bbox = output_dir / "001.bbox.html"
+    extract, extract_unit = office_documents._systemd_sandbox_command(
+        ["/usr/bin/pdftotext", "-bbox-layout", str(pdf), str(bbox)],
+        env=env,
+    )
 
     assert convert[:4] == [
         "/usr/bin/sudo",
@@ -164,14 +208,21 @@ def test_systemd_sandbox_command_uses_only_allowlisted_helper_modes(tmp_path, mo
     ]
     assert convert[-2:] == [str(sandbox_root.resolve()), "libreoffice"]
     assert inspect[-3:] == [str(sandbox_root.resolve()), "pdfinfo", "001.pdf"]
+    assert extract[-3:] == [str(sandbox_root.resolve()), "pdftotext", "001.pdf"]
     assert convert_unit is not None and convert_unit.startswith("mira-office-")
     assert inspect_unit is not None and inspect_unit.startswith("mira-office-")
+    assert extract_unit is not None and extract_unit.startswith("mira-office-")
 
     with pytest.raises(office_documents.OfficeValidationUnavailable, match="拒绝未知命令"):
         office_documents._systemd_sandbox_command(["/bin/sh", "-c", "id"], env=env)
     with pytest.raises(office_documents.OfficeValidationUnavailable, match="不符合受限 helper 契约"):
         office_documents._systemd_sandbox_command(
             ["/usr/bin/pdfinfo", str(output_dir / "../outside.pdf")],
+            env=env,
+        )
+    with pytest.raises(office_documents.OfficeValidationUnavailable, match="不符合受限 helper 契约"):
+        office_documents._systemd_sandbox_command(
+            ["/usr/bin/pdftotext", "-bbox-layout", str(pdf), str(output_dir / "other.html")],
             env=env,
         )
 
@@ -311,10 +362,11 @@ def _write_minimal_docx(path: Path, *, prefixed_relationships: bool) -> None:
     not (
         (shutil.which("libreoffice") or shutil.which("soffice"))
         and shutil.which("pdfinfo")
+        and shutil.which("pdftotext")
         and shutil.which("setfacl")
         and office_documents.OFFICE_SANDBOX_HELPER.is_file()
     ),
-    reason="host LibreOffice/pdfinfo/setfacl or system Office sandbox helper unavailable",
+    reason="host LibreOffice/pdfinfo/pdftotext/setfacl or system Office sandbox helper unavailable",
 )
 def test_real_libreoffice_rejects_prefixed_relationship_namespace(tmp_path) -> None:
     valid = tmp_path / "valid.docx"

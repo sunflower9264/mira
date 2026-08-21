@@ -14,28 +14,9 @@
 
 真实部署目录、数据库、日志、备份、`.env`、runtime homes/workspaces、上传文件和构建产物都不应提交到源码仓库。
 
-## Example Script
-
-`deploy/example/mira-deploy.example.sh` 是脱敏模板，供阅读和改造。它默认把部署产物写到仓库根目录的 `.mira-deploy/`，该目录已被忽略。
-
-最小试运行：
-
-```sh
-MIRA_DEPLOY_ADMIN_PASSWORD='<strong-password>' sh deploy/example/mira-deploy.example.sh deploy
-```
-
-常用环境变量：
-
-- `MIRA_DEPLOY_ROOT`：部署产物目录，默认 `.mira-deploy/`。
-- `MIRA_DEPLOY_ADMIN_USERNAME`：管理员用户名，默认 `admin`。
-- `MIRA_DEPLOY_ADMIN_PASSWORD`：管理员密码，必填。
-- `PUBLIC_HOST` / `PUBLIC_PORT`：nginx 对外监听地址，默认 `127.0.0.1:19090`。
-- `BACKEND_PORT`：uvicorn 本机端口，默认 `19091`。
-
 ## Security
 
 - 不要把真实 `.env`、SQLite 数据库、上传文件、runtime homes/workspaces 或日志提交到 Git。
 - `JWT_SECRET` 和 `AGENT_CONFIG_SECRET` 必须随机生成，并和数据库备份一起保管。
 - 共享或远程部署必须修改管理员密码，并配置 HTTPS、访问控制和备份策略。
 - 如果数据库和 `AGENT_CONFIG_SECRET` 同时泄漏，已保存的 Agent 配置可能被解密。
-

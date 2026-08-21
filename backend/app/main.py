@@ -21,6 +21,7 @@ from app.services.nlcompile import mark_active_nlcompile_sessions_interrupted
 from app.services.prompt_assistant import mark_active_prompt_assistant_sessions_interrupted
 from app.services.prompts import seed_prompt_templates
 from app.services.runs import mark_active_runs_interrupted
+from app.services.workspace_gc import cleanup_orphan_run_workspaces
 
 
 @asynccontextmanager
@@ -36,6 +37,7 @@ async def lifespan(app: FastAPI):
         await skills_install.sync_global_skills(db)
         await seed_gallery(db)
         await mark_active_runs_interrupted(db)
+        await cleanup_orphan_run_workspaces(db)
         await mark_active_nlcompile_sessions_interrupted(db)
         await mark_active_prompt_assistant_sessions_interrupted(db)
     disk_task = asyncio.create_task(disk_monitor_loop())

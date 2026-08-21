@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -245,9 +246,20 @@ def lint_workflow(
                             suggestion="补充任务目标、输出格式、约束和判断标准。",
                         )
                     )
+                if _prompt_uses_hidden_data_channel(prompt):
+                    issues.append(
+                        _issue(
+                            "warning",
+                            "prompt_hidden_data_channel",
+                            "提示词包含隐式文件通道",
+                            f"节点「{_label(node)}」疑似通过固定 Workspace 路径或 handoff 文件传递数据。",
+                            node_id=node_id,
+                            suggestion="改为正式节点输出，并通过 Graph 直接入边传递给下游。",
+                        )
+                    )
 
         if node_type == "output" and not incoming.get(node_id):
-            issues.append(_issue("warning", "output_no_input", "output 没有上游输入", f"output 节点「{_label(node)}」没有接入任何上游节点", node_id=node_id))
+            issues.append(_issue("error", "output_no_input", "output 没有上游输入", f"output 节点「{_label(node)}」没有接入任何上游节点", node_id=node_id))
         if node_type == "output":
             source_node_id = node.get("source_node_id")
             sources = incoming.get(node_id, set())
@@ -263,7 +275,7 @@ def lint_workflow(
                 if handle not in connected:
                     issues.append(
                         _issue(
-                            "warning",
+                            "error",
                             "condition_branch_unconnected",
                             "condition 分支未连接",
                             f"condition 节点「{_label(node)}」的分支「{handle}」没有下游连线。",
@@ -318,7 +330,7 @@ def lint_workflow(
             if node_id not in can_reach_terminal:
                 issues.append(
                     _issue(
-                        "warning",
+                        "error",
                         "node_not_reaching_terminal",
                         "节点不会影响最终结果",
                         f"节点「{_label(node)}」无法到达任何 output 节点。",
@@ -404,6 +416,24 @@ def _label(node: dict[str, Any]) -> str:
 def _is_generic_prompt(prompt: str) -> bool:
     normalized = prompt.strip().lower()
     return len(normalized) < 8 or normalized in GENERIC_PROMPTS
+
+
+_HIDDEN_CHANNEL_ACTION_RE = re.compile(
+    r"(?:写入|写到|保存到|读取|加载|查找|依赖|传给|交给|供.{0,8}读取|write|save|read|load|find|consume|depend)"
+    r".{0,40}(?:/workspace(?:/|\b)|\bhandoff\b|\bsidecar\b|\bmanifest\b)",
+    re.IGNORECASE,
+)
+_HIDDEN_CHANNEL_NEGATIONS = ("不得", "禁止", "不要", "不可", "不能", "严禁", "avoid", "do not", "must not", "never")
+
+
+def _prompt_uses_hidden_data_channel(prompt: str) -> bool:
+    for line in prompt.splitlines() or [prompt]:
+        lowered = line.lower()
+        if any(negation in lowered for negation in _HIDDEN_CHANNEL_NEGATIONS):
+            continue
+        if _HIDDEN_CHANNEL_ACTION_RE.search(line):
+            return True
+    return False
 
 
 def _condition_handles(node: dict[str, Any], issues: list[WorkflowLintIssue]) -> set[str]:

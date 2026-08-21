@@ -34,7 +34,8 @@ from app.services.graph_validation import (
 from app.services.graph_inputs import prepare_executable_graph
 from app.services.decision_prompts import validate_decision_answers
 from app.services.run_serializer import run_to_out, run_to_summary_out
-from app.services.runtime_paths import run_workspace
+from app.services.runtime_paths import run_workspace, run_workspace_path
+from app.services.workflow_data import copy_reused_output_envelope, visible_output
 from app.services.settings import NO_ENABLED_AGENT_DETAIL, settings_out
 from app.services.tools import stamp_run_tools_snapshot
 from app.services.uploads import resolve_upload, delete_upload
@@ -329,6 +330,21 @@ async def create_rerun_from_record(
                 detail=f"节点 {reusable_node_id} 的历史结果不可复用，请从更早节点重新执行",
             )
 
+    frozen_skipped_node_ids = _frozen_condition_skipped_node_ids(
+        graph,
+        ordered,
+        reusable_node_ids,
+        source_steps_by_node,
+    )
+    if rerun_start_node_id in frozen_skipped_node_ids:
+        raise HTTPException(status_code=409, detail="冻结 condition 分支未选择该节点，请从 condition 节点重新执行")
+    for reusable_node_id in reusable_node_ids - frozen_skipped_node_ids:
+        if source_steps_by_node[reusable_node_id].status == "skipped":
+            raise HTTPException(
+                status_code=409,
+                detail=f"节点 {reusable_node_id} 在当前 Graph 的冻结分支中需要执行，请从更早节点重新执行",
+            )
+
     graph_snapshot = _graph_with_condition_branch_override(graph, branch_test) if branch_test else graph
     graph_snapshot = await stamp_run_tools_snapshot(db, graph_snapshot, graph_snapshot.get("agent", ""))
     run = Run(
@@ -339,6 +355,8 @@ async def create_rerun_from_record(
         name=_condition_branch_run_name(branch_test) if branch_test else default_run_name(app.name, inputs),
         inputs_json=inputs_json,
         graph_json=dumps(graph_snapshot),
+        source_run_id=source_run.id,
+        rerun_from_node_id=node_id,
         heartbeat_at=None,
         interrupted_at=None,
         recovery_reason=None,
@@ -360,7 +378,7 @@ async def create_rerun_from_record(
             run_id=run.id,
             node_id=current_node_id,
             ordering=index,
-            status="pending",
+            status="skipped" if current_node_id in frozen_skipped_node_ids else "pending",
             attempt=0,
             input_json="null",
             output_json=None,
@@ -368,21 +386,42 @@ async def create_rerun_from_record(
         db.add(step)
         new_steps_by_node[current_node_id] = step
 
-    for reusable_node_id in reusable_node_ids:
-        source_step = source_steps_by_node[reusable_node_id]
-        target_step = new_steps_by_node[reusable_node_id]
-        target_step.status = source_step.status
-        target_step.attempt = source_step.attempt
-        target_step.input_json = source_step.input_json
-        target_step.output_json = _copy_reused_output_workspace_files(
-            source_step.output_json,
-            source_workspace=source_workspace,
-            target_workspace=target_workspace,
-        )
-        target_step.started_at = source_step.started_at
-        target_step.finished_at = source_step.finished_at
-        target_step.duration_ms = source_step.duration_ms
-        target_step.error = source_step.error
+    try:
+        for reusable_node_id in reusable_node_ids:
+            source_step = source_steps_by_node[reusable_node_id]
+            target_step = new_steps_by_node[reusable_node_id]
+            if reusable_node_id in frozen_skipped_node_ids:
+                continue
+            target_step.status = source_step.status
+            target_step.attempt = source_step.attempt
+            target_step.input_json = source_step.input_json
+            target_step.output_json = _copy_reused_output_workspace_files(
+                source_step.output_json,
+                source_workspace=source_workspace,
+                target_workspace=target_workspace,
+                target_run_id=run.id,
+                target_node_id=reusable_node_id,
+                target_step_id=target_step.id,
+            )
+            target_step.started_at = source_step.started_at
+            target_step.finished_at = source_step.finished_at
+            target_step.duration_ms = source_step.duration_ms
+            target_step.error = source_step.error
+            target_step.reused_from_run_id = source_run.id
+            target_step.reused_from_step_id = source_step.id
+            target_step.failure_kind = source_step.failure_kind
+    except (OSError, ValueError) as exc:
+        await db.rollback()
+        try:
+            shutil.rmtree(target_workspace)
+        except FileNotFoundError:
+            pass
+        except OSError:
+            logger.warning("failed to clean rejected rerun workspace: %s", target_workspace, exc_info=True)
+        raise HTTPException(
+            status_code=409,
+            detail=f"历史节点结果不可复用，请从更早节点重新执行：{exc}",
+        ) from None
 
     await db.commit()
     await db.refresh(run)
@@ -516,8 +555,15 @@ async def delete_run_record(db: AsyncSession, run_id: str, user_id: str) -> None
         await db.execute(delete(StepLog).where(StepLog.step_id.in_(step_ids)))
     await db.execute(delete(RunEvent).where(RunEvent.run_id == run.id))
     await db.execute(delete(Step).where(Step.run_id == run.id))
+    workspace = run_workspace_path(run.owner_id, run.app_id, run.id)
     await db.delete(run)
     await db.commit()
+    try:
+        shutil.rmtree(workspace)
+    except FileNotFoundError:
+        pass
+    except OSError:
+        logger.warning("failed to delete run workspace: %s", workspace, exc_info=True)
     for upload_id in upload_ids:
         delete_upload(user_id, upload_id)
 
@@ -789,73 +835,85 @@ def _ancestor_node_ids(graph: dict[str, Any], node_id: str) -> set[str]:
     return ancestors
 
 
+def _frozen_condition_skipped_node_ids(
+    graph: dict[str, Any],
+    ordered_nodes: list[dict[str, Any]],
+    reusable_node_ids: set[str],
+    source_steps_by_node: dict[str, Step],
+) -> set[str]:
+    skipped: set[str] = set()
+    for node in ordered_nodes:
+        node_id = node.get("id")
+        if (
+            not isinstance(node_id, str)
+            or node_id not in reusable_node_ids
+            or node_id in skipped
+            or node.get("type") != "condition"
+        ):
+            continue
+        source_step = source_steps_by_node[node_id]
+        chosen = visible_output(loads(source_step.output_json, None)) if source_step.output_json else None
+        if not isinstance(chosen, str) or chosen not in _condition_branch_handles(node):
+            raise HTTPException(
+                status_code=409,
+                detail=f"condition 节点 {node_id} 的冻结分支在当前 Graph 中不存在，请从该节点重新执行",
+            )
+        chosen_targets = _condition_branch_target_node_ids(graph, node_id, chosen)
+        if not chosen_targets:
+            raise HTTPException(
+                status_code=409,
+                detail=f"condition 节点 {node_id} 的冻结分支在当前 Graph 中未连接，请从该节点重新执行",
+            )
+        all_targets = _condition_branch_target_node_ids(graph, node_id, None)
+        chosen_reachable = _reachable_node_ids(graph, chosen_targets)
+        unchosen_reachable = _reachable_node_ids(graph, all_targets - chosen_targets)
+        skipped.update(unchosen_reachable - chosen_reachable)
+    return skipped
+
+
+def _reachable_node_ids(graph: dict[str, Any], start_ids: set[str]) -> set[str]:
+    children: dict[str, set[str]] = {}
+    for edge in graph.get("edges", []):
+        if not isinstance(edge, dict):
+            continue
+        source = edge.get("source")
+        target = edge.get("target")
+        if isinstance(source, str) and isinstance(target, str):
+            children.setdefault(source, set()).add(target)
+    reachable: set[str] = set()
+    stack = list(start_ids)
+    while stack:
+        current = stack.pop()
+        if current in reachable:
+            continue
+        reachable.add(current)
+        stack.extend(children.get(current, set()))
+    return reachable
+
+
 def _copy_reused_output_workspace_files(
     output_json: str | None,
     *,
     source_workspace: Path,
     target_workspace: Path,
+    target_run_id: str,
+    target_node_id: str,
+    target_step_id: str,
 ) -> str | None:
     if output_json is None:
         return None
     output = loads(output_json, None)
     if output is None:
         return output_json
-    copied = _copy_reused_output_value(
+    copied = copy_reused_output_envelope(
         output,
         source_workspace=source_workspace.resolve(),
         target_workspace=target_workspace.resolve(),
+        target_run_id=target_run_id,
+        target_node_id=target_node_id,
+        target_step_id=target_step_id,
     )
     return dumps(copied)
-
-
-def _copy_reused_output_value(value: Any, *, source_workspace: Path, target_workspace: Path) -> Any:
-    if isinstance(value, list):
-        return [
-            _copy_reused_output_value(item, source_workspace=source_workspace, target_workspace=target_workspace)
-            for item in value
-        ]
-    if not isinstance(value, dict):
-        return value
-
-    copied: dict[str, Any] = {}
-    for key, item in value.items():
-        if key == "path" and isinstance(item, str):
-            copied[key] = _copy_reused_output_path(
-                item,
-                source_workspace=source_workspace,
-                target_workspace=target_workspace,
-            )
-        else:
-            copied[key] = _copy_reused_output_value(
-                item,
-                source_workspace=source_workspace,
-                target_workspace=target_workspace,
-            )
-    return copied
-
-
-def _copy_reused_output_path(path_text: str, *, source_workspace: Path, target_workspace: Path) -> str:
-    path_value = path_text.strip()
-    if not path_value:
-        return path_text
-
-    source_path = Path(path_value)
-    was_absolute = source_path.is_absolute()
-    if not was_absolute:
-        source_path = source_workspace / source_path
-    try:
-        source_resolved = source_path.resolve()
-        relative_path = source_resolved.relative_to(source_workspace)
-    except (OSError, ValueError):
-        return path_text
-    if not source_resolved.is_file():
-        return path_text
-
-    target_path = target_workspace / relative_path
-    target_path.parent.mkdir(parents=True, exist_ok=True)
-    if source_resolved != target_path:
-        shutil.copy2(source_resolved, target_path)
-    return str(target_path) if was_absolute else str(relative_path)
 
 
 def _validate_condition_branch_override(
@@ -917,12 +975,18 @@ def _condition_branch_label(node: dict[str, Any], branch_key: str) -> str:
     return branch_key
 
 
-def _condition_branch_target_node_ids(graph: dict[str, Any], condition_id: str, branch_key: str) -> set[str]:
+def _condition_branch_target_node_ids(
+    graph: dict[str, Any],
+    condition_id: str,
+    branch_key: str | None,
+) -> set[str]:
     targets: set[str] = set()
     for edge in graph.get("edges", []):
         if not isinstance(edge, dict):
             continue
-        if edge.get("source") != condition_id or edge.get("source_handle") != branch_key:
+        if edge.get("source") != condition_id:
+            continue
+        if branch_key is not None and edge.get("source_handle") != branch_key:
             continue
         target = edge.get("target")
         if isinstance(target, str):

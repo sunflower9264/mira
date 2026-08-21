@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 CONTAINER_WORKSPACE = Path("/workspace")
 CONTAINER_HOME = Path("/home/mira")
-CONTAINER_UPLOADS = Path("/mnt/uploads")
+CONTAINER_UPLOADS = Path("/mnt/inputs")
 
 
 class DockerSandboxError(RuntimeError):
@@ -223,6 +223,7 @@ class DockerSandboxRunner:
             "image": settings.runtime_sandbox_image,
             "command": container_command,
             "detach": True,
+            "init": True,
             "environment": spec.env,
             "working_dir": str(CONTAINER_WORKSPACE),
             "user": _container_user(),

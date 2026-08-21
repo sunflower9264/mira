@@ -645,9 +645,9 @@ function RunTraceDialog({
               {trace.artifacts.length ? (
                 <ul className="divide-y divide-black/5 overflow-hidden rounded-xl border border-black/10">
                   {trace.artifacts.map((artifact) => (
-                    <li key={artifact.path} className="flex items-center gap-3 px-3 py-2 text-sm">
+                    <li key={artifact.id} className="flex items-center gap-3 px-3 py-2 text-sm">
                       <span className="min-w-0 flex-1 truncate font-mono text-xs text-black/70">
-                        {artifact.path}
+                        {artifact.name}
                       </span>
                       <span className="shrink-0 font-mono text-xs text-black/40">
                         {formatBytes(artifact.size)}

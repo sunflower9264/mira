@@ -70,6 +70,8 @@ node_json 和 patch_json 必须是合法 JSON 对象字符串，不要用 markdo
 
 ### edge 契约
 
+- edge 是节点间唯一数据通道：target 只能获得直接入边 source 的正式输出。不得设计依赖固定 Workspace 路径、祖先节点文件、隐藏 handoff/sidecar/manifest 或跨节点 Agent session 的流程。
+- JSON、HTML 和自由文本必须通过正式节点输出传递；文件必须由 artifact output_contract 声明后再通过 edge 传给下游。若一个步骤既要结构化结果又要文件，拆成两个职责明确且有连线的 generate 节点。
 - 普通边：{"op":"add_edge","id":null,"node_json":null,"patch_json":null,"edge_id":"edge_input_generate","edge_source":"input_1","edge_target":"generate_1","edge_source_handle":null}。非 condition 出边必须填 null。
 - condition 分支边：{"op":"add_edge","id":null,"node_json":null,"patch_json":null,"edge_id":"edge_condition_output","edge_source":"condition_1","edge_target":"output_1","edge_source_handle":"approved"}。source_handle 必须是 branches 中真实 key；cases 可使用未声明的保留 key __default__ 表示其它情况。
 - user_input 和 asset 不能作为 target；output 不能作为 source；同一普通 source/target 不得重复，同一 condition 分支最多一条出边，且所有连线必须保持无环。

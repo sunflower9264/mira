@@ -28,7 +28,7 @@
 - `useRunStore.status` 是前端 UI 状态，包含 `idle` / `starting` / 后端真实 run status；只有存在 `runId` 且状态可取消时才能调用 cancel。
 - 刷新或重新进入时通过 `useRunStore.restoreActiveRun` 恢复 active run；`pending`、`running`、`waiting_for_user` 进入 live SSE，`interrupted` 显示继续运行语义，终态 run 才按历史回放展示。
 - 运行和发布前使用 workflow lint；error 阻断，warning 只提示。`can_view_source=false` 的市场应用必须让后端基于真实 graph 预检，前端不展示内部节点/prompt 细节。
-- Run artifacts 通过 `GET /api/runs/:id/artifacts` 展示，Step Trace 的 artifacts 也由后端返回；两者只包含成功 artifact contract Step 声明的产物，不扫描 workspace。前端契约接收后端返回的 `sha256`、`integrity`（`verified` / `modified` / `legacy_unverified`）和 `download_url`；下载只使用 `download_url`，不拼 runtime 本地路径，也不从 HTML 输出扫描文件链接。
+- Run artifacts 通过 `GET /api/runs/:id/artifacts` 展示，Step Trace 的 artifacts 也由后端返回；两者只包含成功 artifact contract Step 声明的产物，不扫描 workspace。前端契约接收后端返回的 artifact identity、`origin` / 可选 `reused_from` lineage、`sha256`、`integrity`（`verified` / `modified`）和 `download_url`；响应没有内部 `path`，下载只使用 `download_url`，也不从 HTML 输出扫描文件链接。
 - Prompt Assistant 生成态当前保存在 `useEditorStore.promptAssistantGenerations`，由 StepTab 发起 generate/resume/cancel；前端尚未通过 active endpoint 做刷新后恢复。若补恢复，必须先补 `lib/api.ts` helper，再接入 Editor/StepTab 恢复流程。
 
 ## Workflow Rules

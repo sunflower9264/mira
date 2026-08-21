@@ -18,6 +18,7 @@ SYSTEMD_RUN = Path("/usr/bin/systemd-run")
 SYSTEMCTL = Path("/usr/bin/systemctl")
 LIBREOFFICE_CANDIDATES = (Path("/usr/bin/libreoffice"), Path("/usr/bin/soffice"))
 PDFINFO = Path("/usr/bin/pdfinfo")
+PDFTOTEXT = Path("/usr/bin/pdftotext")
 PRLIMIT = Path("/usr/bin/prlimit")
 PYTHON = Path("/usr/bin/python3")
 TEMP_ROOT = Path("/tmp")
@@ -255,6 +256,19 @@ def _pdfinfo_command(job_root: Path, filename: str) -> list[str]:
     return _limited([str(PDFINFO), str(path)])
 
 
+def _pdftotext_command(job_root: Path, filename: str) -> list[str]:
+    if PDF_RE.fullmatch(filename) is None:
+        raise SandboxError("invalid PDF filename")
+    path = job_root / "output" / filename
+    if not path.is_file() or path.is_symlink():
+        raise SandboxError("PDF is unavailable")
+    output = job_root / "output" / f"{path.stem}.bbox.html"
+    if output.is_symlink():
+        raise SandboxError("PDF text-boundary output is unsafe")
+    _require_executable(PDFTOTEXT)
+    return _limited([str(PDFTOTEXT), "-bbox-layout", str(path), str(output)])
+
+
 def _systemd_command(unit: str, job_root: Path, command: list[str]) -> list[str]:
     _require_executable(SYSTEMD_RUN)
     home_dir = job_root / "home"
@@ -317,7 +331,7 @@ def _relay(completed: subprocess.CompletedProcess[str]) -> int:
 
 def _run(argv: list[str]) -> int:
     if len(argv) not in {3, 4}:
-        return _fail("usage: run <unit-id> <job-root> libreoffice|pdfinfo [NNN.pdf]")
+        return _fail("usage: run <unit-id> <job-root> libreoffice|pdfinfo|pdftotext [NNN.pdf]")
     unit = _validate_unit(argv[0])
     job_root = _validate_job_root(argv[1])
     mode = argv[2]
@@ -326,6 +340,8 @@ def _run(argv: list[str]) -> int:
         command = _libreoffice_command(job_root)
     elif mode == "pdfinfo" and len(argv) == 4:
         command = _pdfinfo_command(job_root, argv[3])
+    elif mode == "pdftotext" and len(argv) == 4:
+        command = _pdftotext_command(job_root, argv[3])
     else:
         raise SandboxError("unsupported validator command")
     return _relay(_run_transient(unit, job_root, command))
@@ -411,6 +427,16 @@ def _smoke(argv: list[str]) -> int:
     match = _PAGES_RE.search(info.stdout)
     if match is None or int(match.group(1)) < 1:
         raise SandboxError("pdfinfo smoke did not report a non-empty PDF")
+    text_bounds = _run_transient(
+        f"mira-office-{uuid.uuid4().hex}",
+        job_root,
+        _pdftotext_command(job_root, pdf_path.name),
+    )
+    if text_bounds.returncode != 0:
+        return _relay(text_bounds)
+    bbox_path = job_root / "output" / "001.bbox.html"
+    if not bbox_path.is_file() or b"<page " not in bbox_path.read_bytes():
+        raise SandboxError("pdftotext smoke did not report page text bounds")
     result["pdf_pages"] = int(match.group(1))
     print(json.dumps(result, sort_keys=True))
     return 0

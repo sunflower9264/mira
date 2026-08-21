@@ -2,15 +2,10 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from pathlib import Path
 from pathlib import PureWindowsPath
 from typing import Any
 
 from app.models import Run
-from app.services.artifacts import (
-    replace_workspace_paths_for_prompt_with_workspace,
-    replace_workspace_paths_in_html_with_workspace,
-)
 from app.services.runtime_paths import data_dir, runtime_dir
 
 _ABSOLUTE_PATH_RE = re.compile(r"/[^\s`\"'<>()\[\]{}]+")
@@ -21,19 +16,14 @@ _REDACTED_LOCAL_PATH = "[local path redacted]"
 @dataclass(frozen=True)
 class RunSanitizeContext:
     run: Run
-    workspace: Path
-    workspace_text: str
     local_roots: tuple[str, ...]
 
 
 def build_run_sanitize_context(run: Run) -> RunSanitizeContext:
     runtime_root = runtime_dir()
     data_root = data_dir()
-    workspace = runtime_root / "workspaces" / run.owner_id / run.app_id / run.id
     return RunSanitizeContext(
         run=run,
-        workspace=workspace,
-        workspace_text=str(workspace),
         local_roots=(
             str(data_root / run.owner_id / "uploads"),
             str(runtime_root / "workspaces" / run.owner_id),
@@ -60,20 +50,6 @@ def sanitize_run_value(value: Any, run: Run | RunSanitizeContext, *, html_mode: 
 
 def sanitize_run_text(text: str, run: Run | RunSanitizeContext, *, html_mode: bool = False) -> str:
     context = run if isinstance(run, RunSanitizeContext) else build_run_sanitize_context(run)
-    if html_mode:
-        text = replace_workspace_paths_in_html_with_workspace(
-            text,
-            context.run,
-            context.workspace,
-            context.workspace_text,
-        )
-    else:
-        text = replace_workspace_paths_for_prompt_with_workspace(
-            text,
-            context.run,
-            context.workspace,
-            context.workspace_text,
-        )
     return _scrub_local_paths(text, context)
 
 

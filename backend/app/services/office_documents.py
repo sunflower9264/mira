@@ -13,6 +13,7 @@ import zipfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
+from xml.etree import ElementTree
 
 
 OFFICE_DOCUMENT_SUFFIXES = {
@@ -28,6 +29,7 @@ OFFICE_DOCUMENT_SUFFIXES = {
 }
 MAX_OFFICE_DOCUMENTS = 50
 MAX_OFFICE_DOCUMENT_BYTES = 512 * 1024 * 1024
+MAX_PDF_BBOX_BYTES = 64 * 1024 * 1024
 OFFICE_VALIDATION_TIMEOUT_SECONDS = 120
 OFFICE_VALIDATOR_USER = "mira-office-validator"
 OFFICE_SANDBOX_HELPER = Path("/usr/local/libexec/mira-office-sandbox")
@@ -36,6 +38,8 @@ OFFICE_TEMP_ROOT = Path("/tmp")
 OFFICE_HELPER_UNAVAILABLE_EXIT = 69
 _COMMAND_POLL_SECONDS = 0.25
 _PAGES_RE = re.compile(r"^Pages:\s*(\d+)\s*$", re.MULTILINE)
+_PDF_BBOX_NAME_RE = re.compile(r"[0-9]{3}\.bbox\.html\Z")
+_TEXT_BOUNDS_TOLERANCE_POINTS = 1.0
 
 
 class OfficeValidationUnavailable(RuntimeError):
@@ -83,6 +87,9 @@ def validate_office_documents(
         pdfinfo = shutil.which("pdfinfo")
         if pdfinfo is None:
             raise OfficeValidationUnavailable("Office 文档深检不可用：宿主机未安装 pdfinfo")
+        pdftotext = shutil.which("pdftotext")
+        if pdftotext is None:
+            raise OfficeValidationUnavailable("Office 文档深检不可用：宿主机未安装 pdftotext")
         with tempfile.TemporaryDirectory(prefix="mira-office-", dir=OFFICE_TEMP_ROOT) as temp_dir_text:
             temp_dir = Path(temp_dir_text)
             documents = _materialize_office_documents(
@@ -97,6 +104,7 @@ def validate_office_documents(
                 documents,
                 libreoffice=libreoffice,
                 pdfinfo=pdfinfo,
+                pdftotext=pdftotext,
                 temp_dir=temp_dir,
                 deadline=deadline,
                 cancelled=cancelled,
@@ -186,6 +194,7 @@ def _convert_and_check(
     *,
     libreoffice: str,
     pdfinfo: str,
+    pdftotext: str,
     temp_dir: Path,
     deadline: float,
     cancelled: Callable[[], bool] | None,
@@ -246,6 +255,79 @@ def _convert_and_check(
         match = _PAGES_RE.search(info.stdout)
         if info.returncode != 0 or match is None or int(match.group(1)) < 1:
             return f"Office 文档未生成有效页面：{document.label}"
+        bbox_path = output_dir / f"{document.path.stem}.bbox.html"
+        bbox = _run_command(
+            [pdftotext, "-bbox-layout", str(pdf_path), str(bbox_path)],
+            env=env,
+            deadline=deadline,
+            cancelled=cancelled,
+        )
+        if bbox.cancelled:
+            return "Office 文档深检已取消"
+        if bbox.timed_out:
+            return f"Office 文档深检超过 {OFFICE_VALIDATION_TIMEOUT_SECONDS} 秒"
+        if bbox.returncode != 0 or not bbox_path.is_file():
+            return f"Office 文档无法提取页面文字边界：{document.label}"
+        bounds_error = _check_pdf_text_bounds(bbox_path, document.label)
+        if bounds_error:
+            return bounds_error
+    return None
+
+
+def _check_pdf_text_bounds(path: Path, label: str) -> str | None:
+    if path.stat().st_size > MAX_PDF_BBOX_BYTES:
+        return f"Office 文档页面文字边界数据超过 64 MiB：{label}"
+    try:
+        pages = 0
+        for _event, element in ElementTree.iterparse(path, events=("end",)):
+            if element.tag.rsplit("}", 1)[-1] != "page":
+                continue
+            pages += 1
+            width = float(element.attrib["width"])
+            height = float(element.attrib["height"])
+            for word in element.iter():
+                if word.tag.rsplit("}", 1)[-1] != "word":
+                    continue
+                x_min = float(word.attrib["xMin"])
+                y_min = float(word.attrib["yMin"])
+                x_max = float(word.attrib["xMax"])
+                y_max = float(word.attrib["yMax"])
+                violation = _text_bounds_violation(
+                    x_min=x_min,
+                    y_min=y_min,
+                    x_max=x_max,
+                    y_max=y_max,
+                    page_width=width,
+                    page_height=height,
+                )
+                if violation:
+                    return f"Office 文档页面外存在文字，可能被裁切：{label} 第 {pages} 页（{violation}）"
+            element.clear()
+    except (ElementTree.ParseError, KeyError, OSError, ValueError) as exc:
+        return f"Office 文档页面文字边界无效：{label}（{exc}）"
+    if pages < 1:
+        return f"Office 文档页面文字边界为空：{label}"
+    return None
+
+
+def _text_bounds_violation(
+    *,
+    x_min: float,
+    y_min: float,
+    x_max: float,
+    y_max: float,
+    page_width: float,
+    page_height: float,
+) -> str | None:
+    tolerance = _TEXT_BOUNDS_TOLERANCE_POINTS
+    if x_min < -tolerance:
+        return f"xMin={x_min:.2f} < 0"
+    if y_min < -tolerance:
+        return f"yMin={y_min:.2f} < 0"
+    if x_max > page_width + tolerance:
+        return f"xMax={x_max:.2f} > 页面宽度 {page_width:.2f}"
+    if y_max > page_height + tolerance:
+        return f"yMax={y_max:.2f} > 页面高度 {page_height:.2f}"
     return None
 
 
@@ -347,6 +429,18 @@ def _systemd_sandbox_command(command: list[str], *, env: dict[str, str]) -> tupl
         if pdf_path.parent != sandbox_root / "output" or re.fullmatch(r"[0-9]{3}\.pdf", pdf_path.name) is None:
             raise OfficeValidationUnavailable("Office 文档深检不可用：pdfinfo 校验目标不符合受限 helper 契约")
         helper_args = ["pdfinfo", pdf_path.name]
+    elif executable == "pdftotext" and len(command) == 4 and command[1] == "-bbox-layout":
+        pdf_path = Path(command[2]).resolve()
+        bbox_path = Path(command[3]).resolve()
+        expected_bbox = sandbox_root / "output" / f"{pdf_path.stem}.bbox.html"
+        if (
+            pdf_path.parent != sandbox_root / "output"
+            or re.fullmatch(r"[0-9]{3}\.pdf", pdf_path.name) is None
+            or bbox_path != expected_bbox
+            or _PDF_BBOX_NAME_RE.fullmatch(bbox_path.name) is None
+        ):
+            raise OfficeValidationUnavailable("Office 文档深检不可用：pdftotext 校验目标不符合受限 helper 契约")
+        helper_args = ["pdftotext", pdf_path.name]
     else:
         raise OfficeValidationUnavailable("Office 文档深检不可用：受限校验 helper 拒绝未知命令")
     unit = f"mira-office-{uuid.uuid4().hex}"

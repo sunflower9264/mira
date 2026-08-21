@@ -281,10 +281,10 @@ def test_prompt_assistant_uses_ai_with_graph_context_and_user_request(auth_clien
     assert "生成草稿" in runtime.last_prompt
     assert "保留这个输出格式。" in runtime.last_prompt
     assert "改成更适合市场分析" in runtime.last_prompt
-    assert "先判断用户输入属于哪类" in runtime.last_prompt
-    assert "以当前提示词为唯一底稿" in runtime.last_prompt
-    assert "未涉及内容必须原样保留" in runtime.last_prompt
-    assert "不要把修改指令本身写进最终 prompt" in runtime.last_prompt
+    assert "先选模式；有歧义时最小改动" in runtime.last_prompt
+    assert "以当前 prompt 为底稿" in runtime.last_prompt
+    assert "其余逐字保留" in runtime.last_prompt
+    assert "不写修改说明" in runtime.last_prompt
     assert "输入行业" in runtime.last_prompt
     assert "输出报告" in runtime.last_prompt
     assert "直接上游节点" in runtime.last_prompt
@@ -334,7 +334,7 @@ def test_prompt_assistant_keeps_full_target_prompt_and_related_prompt_tail(auth_
     assert "中间已省略" in runtime.last_prompt
     assert '"summary"' in runtime.last_prompt
     assert "当前 output_contract" in runtime.last_prompt
-    assert "未涉及内容必须原样保留" in runtime.last_prompt
+    assert "其余逐字保留" in runtime.last_prompt
     assert "当前设置仍合适且无需修改时返回 null" in runtime.last_prompt
 
 
@@ -503,7 +503,7 @@ def test_prompt_assistant_accepts_prompt_with_inner_codeblock(auth_client, enabl
     assert response.json() == {"status": "completed", "prompt": prompt, "output_contract": None}
 
 
-def test_prompt_assistant_guides_recommendation_nodes_to_ask_when_key_basis_is_missing(
+def test_prompt_assistant_uses_conservative_ask_user_default(
     auth_client,
     enable_claude_agent,
 ):
@@ -546,9 +546,9 @@ def test_prompt_assistant_guides_recommendation_nodes_to_ask_when_key_basis_is_m
 
     assert response.status_code == 200, response.text
     assert runtime.last_prompt is not None
-    assert "推荐、选择、排序、个性化类 generate 节点" in runtime.last_prompt
-    assert "缺少目标、偏好、约束、数量或理由形式等关键依据时，应先问最关键的一项" in runtime.last_prompt
-    assert "信息足够时不要确认" in runtime.last_prompt
+    assert "只有信息无法可靠推断且不同答案会显著改变 prompt 或 `output_contract` 时才调用 ask_user" in runtime.last_prompt
+    assert "否则采用保守默认直接生成" in runtime.last_prompt
+    assert "一次最多问一项" in runtime.last_prompt
 
 
 def test_prompt_assistant_allows_intermediate_graph_and_strips_runtime_snapshot(auth_client, enable_claude_agent):
@@ -765,8 +765,8 @@ def test_prompt_assistant_guides_format_cleanup_as_edit(auth_client, enable_clau
     assert runtime.last_prompt is not None
     assert "第一段目标。\n\n\n第二段约束。" in runtime.last_prompt
     assert "清除提示词多余的换行，换成正常的 txt 格式" in runtime.last_prompt
-    assert "格式清理：只整理换行、空格、列表层级、标点和可读性" in runtime.last_prompt
-    assert "不改变业务语义、输出要求或节点职责" in runtime.last_prompt
+    assert "格式清理**：只改排版和标点，不改文字、字面量或语义" in runtime.last_prompt
+    assert "格式清理和精确修改只用上下文理解指代" in runtime.last_prompt
 
 
 def test_prompt_assistant_returns_generate_output_contract(auth_client, enable_claude_agent):

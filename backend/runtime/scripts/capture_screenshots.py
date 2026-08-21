@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -23,6 +24,7 @@ from typing import Any
 
 MAX_ARCHIVE_MEMBERS = 10_000
 MAX_ARCHIVE_EXPANDED_BYTES = 1024 * 1024 * 1024
+CHROMIUM_BINARY = "/usr/bin/chromium"
 URL_PATTERN = re.compile(r"[a-zA-Z][a-zA-Z0-9+.-]*://[^\s]+")
 RUNTIME_PATH_REDACTIONS = (
     ("/home/mira", "<runtime-home>"),
@@ -42,6 +44,11 @@ def main() -> int:
     parser.add_argument("--port", type=int, default=3210)
     parser.add_argument("--max-routes", type=int, default=10)
     parser.add_argument("--min-screenshots", type=int, default=1)
+    parser.add_argument(
+        "--viewports-json",
+        default="",
+        help='JSON array such as [{"name":"desktop","width":1440,"height":1000}].',
+    )
     parser.add_argument("--install-timeout", type=int, default=240)
     parser.add_argument("--startup-timeout", type=int, default=90)
     args = parser.parse_args()
@@ -52,6 +59,9 @@ def main() -> int:
     archive = _resolve_path(cwd, args.archive)
     out_dir = _resolve_output_dir(cwd, args.out_dir)
     archive_out = _resolve_path(cwd, args.archive_out) if args.archive_out else out_dir.with_suffix(".zip")
+    if archive_out == archive:
+        raise RuntimeError("archive-out must differ from the source archive")
+    archive_out.unlink(missing_ok=True)
     out_dir.mkdir(parents=True, exist_ok=True)
     log_path = out_dir / "capture-log.txt"
     manifest_path = out_dir / "screenshot-manifest.json"
@@ -117,8 +127,21 @@ def main() -> int:
             server = _start_dev_server(project_root, args.port, note)
             _wait_for_url(f"http://127.0.0.1:{args.port}/", args.startup_timeout, note)
 
+            viewports = _viewport_items(args.viewports_json)
+            manifest["viewports"] = viewports
             for index, item in enumerate(routes, start=1):
-                _capture_route(index, item, args.port, out_dir, manifest, note, path_redactions)
+                for viewport in viewports:
+                    _capture_route(
+                        index,
+                        item,
+                        viewport,
+                        include_viewport_name=len(viewports) > 1,
+                        port=args.port,
+                        out_dir=out_dir,
+                        manifest=manifest,
+                        note=note,
+                        path_redactions=path_redactions,
+                    )
 
             screenshot_count = len(manifest["screenshots"])
             if screenshot_count < args.min_screenshots:
@@ -134,9 +157,14 @@ def main() -> int:
             if server is not None:
                 _stop_process(server, note)
             manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
-            log_path.write_text("\n".join(log) + "\n", encoding="utf-8")
-            _zip_dir(out_dir, archive_out)
-            note(f"wrote archive: {archive_out}")
+            if manifest["ok"]:
+                log_path.write_text("\n".join(log) + "\n", encoding="utf-8")
+                _zip_dir(out_dir, archive_out)
+                note(f"wrote archive: {archive_out}")
+            else:
+                archive_out.unlink(missing_ok=True)
+                note("capture failed; archive output was not written")
+                log_path.write_text("\n".join(log) + "\n", encoding="utf-8")
 
     return 0 if manifest["ok"] else 1
 
@@ -343,6 +371,39 @@ def _route_label(route: str) -> str:
     return route.strip("/").replace("-", " ").replace("_", " ") or route
 
 
+def _viewport_items(value: str) -> list[dict[str, Any]]:
+    if not value.strip():
+        return [{"name": "desktop", "width": 1440, "height": 1000}]
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"viewports-json is not valid JSON: {exc}") from exc
+    if not isinstance(parsed, list) or not 1 <= len(parsed) <= 4:
+        raise RuntimeError("viewports-json must contain 1-4 viewport objects")
+    viewports: list[dict[str, Any]] = []
+    names: set[str] = set()
+    for item in parsed:
+        if not isinstance(item, dict):
+            raise RuntimeError("each viewport must be an object")
+        name = str(item.get("name") or "").strip().lower()
+        width = item.get("width")
+        height = item.get("height")
+        if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,31}", name) or name in names:
+            raise RuntimeError(f"viewport name is invalid or duplicated: {name or '(empty)'}")
+        if (
+            not isinstance(width, int)
+            or isinstance(width, bool)
+            or not 320 <= width <= 3840
+            or not isinstance(height, int)
+            or isinstance(height, bool)
+            or not 320 <= height <= 2160
+        ):
+            raise RuntimeError(f"viewport dimensions are invalid: {name}")
+        names.add(name)
+        viewports.append({"name": name, "width": width, "height": height})
+    return viewports
+
+
 def _node_env(project_root: Path, port: int) -> dict[str, str]:
     env = os.environ.copy()
     env.update(
@@ -428,6 +489,9 @@ def _check_route_url(url: str) -> int:
 def _capture_route(
     index: int,
     item: dict[str, str],
+    viewport: dict[str, Any],
+    *,
+    include_viewport_name: bool,
     port: int,
     out_dir: Path,
     manifest: dict[str, Any],
@@ -436,7 +500,9 @@ def _capture_route(
 ) -> None:
     route = _normalize_route(item["route"])
     url = f"http://127.0.0.1:{port}{route}"
-    filename = f"SP-{index:02d}-{_slug(route)}.png"
+    viewport_name = str(viewport["name"])
+    viewport_suffix = f"-{viewport_name}" if include_viewport_name else ""
+    filename = f"SP-{index:02d}{viewport_suffix}-{_slug(route)}.png"
     output = out_dir / filename
     try:
         status = _check_route_url(url)
@@ -450,14 +516,14 @@ def _capture_route(
         chromium_home = Path(chromium_temp)
         path_redactions.append((str(chromium_home), "<runtime-temp>"))
         command = [
-            "chromium",
+            CHROMIUM_BINARY,
             "--headless=new",
             "--no-sandbox",
             "--disable-crash-reporter",
             "--disable-crashpad",
             "--disable-dev-shm-usage",
             "--hide-scrollbars",
-            "--window-size=1440,1000",
+            f"--window-size={viewport['width']},{viewport['height']}",
             "--virtual-time-budget=3000",
             f"--user-data-dir={chromium_home}",
             f"--screenshot={output}",
@@ -476,11 +542,13 @@ def _capture_route(
     if result.returncode == 0 and output.exists() and output.stat().st_size > 0:
         manifest["screenshots"].append(
             {
-                "ref": f"SP-{index:02d}",
+                "ref": f"SP-{index:02d}{viewport_suffix}",
                 "page_name": item["page_name"],
                 "route": route,
+                "viewport": viewport,
                 "path": str(output.relative_to(out_dir.parent)),
                 "name": filename,
+                "sha256": hashlib.sha256(output.read_bytes()).hexdigest(),
                 "source": "chromium headless capture",
             }
         )
@@ -498,20 +566,27 @@ def _slug(route: str) -> str:
 
 
 def _stop_process(process: subprocess.Popen[str], note) -> None:
-    if process.poll() is not None:
-        return
-    try:
-        os.killpg(process.pid, signal.SIGTERM)
-    except Exception:
-        process.terminate()
-    try:
-        process.wait(timeout=10)
-    except subprocess.TimeoutExpired:
+    if process.poll() is None:
         try:
-            os.killpg(process.pid, signal.SIGKILL)
+            os.killpg(process.pid, signal.SIGTERM)
         except Exception:
-            process.kill()
-        process.wait(timeout=5)
+            process.terminate()
+        try:
+            process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except Exception:
+                process.kill()
+            process.wait(timeout=5)
+            return
+
+    # npm may exit before its Next/Vite children finish graceful shutdown. Stop
+    # any remaining writers before TemporaryDirectory removes the project tree.
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
 
 
 def _zip_dir(source: Path, output: Path) -> None:

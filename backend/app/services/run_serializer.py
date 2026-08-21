@@ -10,6 +10,7 @@ from app.schemas import LogLineOut, RunOut, RunRecoveryOut, RunSummaryOut, RunWa
 from app.services.apps import public_run_graph
 from app.services.graph_validation import sanitize_prompt_template_tokens
 from app.services.run_output_sanitizer import RunSanitizeContext, build_run_sanitize_context, sanitize_run_value
+from app.services.workflow_data import visible_output
 from app.utils import iso, loads
 
 REDACTED_RUN_ERROR = "运行失败"
@@ -30,7 +31,7 @@ def step_to_out(
     node_type: str | None = None,
 ) -> StepOut:
     input_value = loads(step.input_json, None)
-    output_value = loads(step.output_json, None) if step.output_json else None
+    output_value = visible_output(loads(step.output_json, None)) if step.output_json else None
     if run is not None:
         input_value = sanitize_run_value(input_value, run)
         output_value = sanitize_run_value(output_value, run, html_mode=node_type == "output")
@@ -44,6 +45,9 @@ def step_to_out(
         finished_at=iso(step.finished_at),
         duration_ms=step.duration_ms,
         error=step.error,
+        failure_kind=step.failure_kind,
+        reused_from_run_id=step.reused_from_run_id,
+        reused_from_step_id=step.reused_from_step_id,
         logs=[log_to_out(log) for log in sorted(logs, key=lambda item: item.ts)],
     )
 
@@ -76,6 +80,9 @@ def run_to_out(
         started_at=iso(run.started_at),
         finished_at=iso(run.finished_at),
         error=_redacted_error(run.error, redact_source),
+        failure_kind=run.failure_kind,
+        source_run_id=None if redact_source else run.source_run_id,
+        rerun_from_node_id=None if redact_source else run.rerun_from_node_id,
         recovery=recovery,
     )
 
@@ -90,6 +97,9 @@ def run_to_summary_out(run: Run, *, redact_source: bool = False) -> RunSummaryOu
         started_at=iso(run.started_at),
         finished_at=iso(run.finished_at),
         error=_redacted_error(run.error, redact_source),
+        failure_kind=run.failure_kind,
+        source_run_id=None if redact_source else run.source_run_id,
+        rerun_from_node_id=None if redact_source else run.rerun_from_node_id,
     )
 
 

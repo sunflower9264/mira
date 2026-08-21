@@ -15,14 +15,15 @@ from sqlalchemy import select
 from app.db import SessionLocal
 from app.models import Run, Step
 from app.services.artifacts import file_sha256
-from app.services import output_contracts
+from app.services import node_handlers, output_contracts, run_orchestrator
 from app.services.office_documents import OfficeValidationUnavailable
 from app.services.run_orchestrator import start_run
-from app.services.runtime_paths import run_workspace, scoped_runtime_home, uploads_dir
+from app.services.runtime_paths import run_workspace, uploads_dir
 from app.runtime.base import AgentChunk, AgentExecutionResult, AgentProviderStatus, AskUserRequest
 from app.runtime.factory import set_runtime_override
 from app.schemas.decision import DecisionGroup
-from app.services.node_handlers import _ASK_USER_PREFLIGHT_OUTPUT_SCHEMA
+from app.services.node_handlers import NodeResult, _ASK_USER_PREFLIGHT_OUTPUT_SCHEMA
+from app.services.workflow_data import WorkflowDataIntegrityError
 from app.utils import dumps, loads, now_utc
 from tests.runtime_mock import MockRuntime
 
@@ -210,27 +211,19 @@ class GeneratedImageRuntime:
             await on_chunk(AgentChunk(type="text", text=text))
             return AgentExecutionResult(session_id=session_id, total_text=text, finished_with="done")
         if "你正在生成 Mira output 节点" in prompt:
-            assert "/api/runs/" in prompt
-            assert "download_token=" in prompt
-            text = _structured_text("<section>GPT 图片暂不可渲染</section>", output_schema)
+            assert "/mnt/inputs/" in prompt
+            text = _structured_text("<section>FINAL</section>", output_schema)
             await on_chunk(AgentChunk(type="text", text=text))
             return AgentExecutionResult(
                 session_id=session_id or "generated_image_session",
                 total_text=text,
                 finished_with="done",
             )
-        image = scoped_runtime_home("codex_home", cwd) / "generated_images" / "sess" / "cover.png"
-        image.parent.mkdir(parents=True, exist_ok=True)
+        image = cwd / "cover.png"
         image.write_bytes(b"png-bytes")
         text = json.dumps(
             {
-                "gpt_generated_images": [
-                    {
-                        "image_id": "gpt_image_1",
-                        "image_url": "",
-                        "artifact_id": str(image),
-                    }
-                ]
+                "artifacts": [{"name": "cover.png", "path": str(image)}]
             },
             ensure_ascii=False,
         )
@@ -422,53 +415,6 @@ class OfficeArtifactRepairRuntime:
         await on_chunk(AgentChunk(type="text", text=text))
         return AgentExecutionResult(
             session_id=session_id or "office_artifact_repair_session",
-            total_text=text,
-            finished_with="done",
-        )
-
-
-class ReusedArtifactPathRuntime:
-    async def detect_status(self) -> AgentProviderStatus:
-        return AgentProviderStatus(
-            installed=True,
-            runnable=True,
-            identity="reused-artifact-path",
-            method="test",
-            checked_at=now_utc(),
-        )
-
-    async def execute(
-        self,
-        *,
-        prompt: str,
-        session_id: str | None,
-        allowed_tools: list[str] | None,
-        model: str | None,
-        reasoning_effort: str | None,
-        cwd: Path,
-        on_chunk,
-        cancel_event: asyncio.Event,
-        on_ask_user=None,
-        runtime_tools=None,
-        runtime_policy="execute",
-        output_schema=None,
-    ) -> AgentExecutionResult:
-        if runtime_policy == "ask_user_plan":
-            text = '{"action":"complete","decision_summary":"无需额外提问。","reason":"测试场景不需要补充用户决策。"}'
-        elif _is_output_prompt(prompt):
-            text = _structured_text("<section>OK</section>", output_schema)
-        elif "write-bundle" in prompt:
-            bundle = cwd / "bundle.zip"
-            with zipfile.ZipFile(bundle, "w", compression=zipfile.ZIP_STORED) as archive:
-                archive.writestr("README.txt", b"bundle")
-            text = json.dumps({"artifacts": [{"name": "Bundle", "path": str(bundle)}]}, ensure_ascii=False)
-        elif "relative-ref" in prompt:
-            text = json.dumps({"code_package_ref": {"path": "bundle.zip"}}, ensure_ascii=False)
-        else:
-            text = "OK"
-        await on_chunk(AgentChunk(type="text", text=text))
-        return AgentExecutionResult(
-            session_id=session_id or "reused_artifact_path_session",
             total_text=text,
             finished_with="done",
         )
@@ -1113,7 +1059,35 @@ def test_executor_runs_input_generate_output(auth_client, enable_claude_agent):
     assert by_id["n_gen"]["agent_session_id"] is not None
     assert by_id["n_out"]["status"] == "success"
     assert by_id["n_out"]["output"] == "<section>FINAL-HTML</section>"
-    assert by_id["n_out"]["agent_session_id"] == by_id["n_gen"]["agent_session_id"]
+    assert by_id["n_out"]["agent_session_id"] is not None
+
+
+def test_run_cannot_succeed_when_output_step_is_skipped(auth_client, enable_claude_agent, monkeypatch):
+    enable_claude_agent()
+    graph = {
+        "agent": "claude",
+        "nodes": [
+            _generate_node("n_gen", prompt="生成 [[respond:READY]]"),
+            _output_node("n_out", source="n_gen", prompt="展示 [[respond:<section>OK</section>]]"),
+        ],
+        "edges": [{"id": "e1", "source": "n_gen", "target": "n_out"}],
+    }
+    original_run_node = run_orchestrator.run_node
+
+    async def skip_output(ctx, node, step):
+        if node.get("type") == "output":
+            return NodeResult(status="skipped")
+        return await original_run_node(ctx, node, step)
+
+    monkeypatch.setattr(run_orchestrator, "run_node", skip_output)
+    app_id = _build_app(auth_client, graph=graph)
+    created = auth_client.post("/api/runs", json={"app_id": app_id, "inputs": {}})
+    final = _wait_for_terminal(auth_client, created.json()["run_id"])
+
+    assert final["status"] == "failed"
+    assert final["failure_kind"] == "routing"
+    assert "最终输出节点未执行成功" in final["error"]
+    assert next(step for step in final["steps"] if step["node_id"] == "n_out")["status"] == "skipped"
 
 
 def test_executor_runs_independent_generate_nodes_concurrently(auth_client, enable_claude_agent):
@@ -1125,8 +1099,12 @@ def test_executor_runs_independent_generate_nodes_concurrently(auth_client, enab
         "nodes": [
             _generate_node("n_gen_a", prompt="A [[respond:A]]"),
             _generate_node("n_gen_b", prompt="B [[respond:B]]"),
+            _output_node("n_out", source="n_gen_a", prompt="merge [[respond:<section>DONE</section>]]"),
         ],
-        "edges": [],
+        "edges": [
+            {"id": "e1", "source": "n_gen_a", "target": "n_out"},
+            {"id": "e2", "source": "n_gen_b", "target": "n_out"},
+        ],
     }
     try:
         app_id = _build_app(auth_client, graph=graph)
@@ -1176,7 +1154,10 @@ def test_executor_does_not_start_new_downstream_after_parallel_failure(auth_clie
             _generate_node("n_gen_slow", prompt="please [[delay:0.2]] [[respond:SLOW_OK]]"),
             _output_node("n_out", source="n_gen_slow"),
         ],
-        "edges": [{"id": "e1", "source": "n_gen_slow", "target": "n_out"}],
+        "edges": [
+            {"id": "e1", "source": "n_gen_slow", "target": "n_out"},
+            {"id": "e2", "source": "n_gen_fail", "target": "n_out"},
+        ],
     }
     app_id = _build_app(auth_client, graph=graph)
     run = auth_client.post("/api/runs", json={"app_id": app_id, "inputs": {}}).json()
@@ -1256,7 +1237,7 @@ def test_rerun_from_parallel_failure_reuses_only_ancestors(auth_client, enable_c
     assert source_after_by_id["n_gen_sibling"]["output"] == "OLD_SIBLING"
 
 
-def test_executor_reuses_session_for_linear_chain_but_not_fanout(auth_client, enable_claude_agent):
+def test_executor_starts_a_fresh_session_for_every_node(auth_client, enable_claude_agent):
     enable_claude_agent()
     runtime = ParallelProbeRuntime(delay=0.05)
     set_runtime_override(runtime)
@@ -1272,6 +1253,7 @@ def test_executor_reuses_session_for_linear_chain_but_not_fanout(auth_client, en
             {"id": "e1", "source": "n_root", "target": "n_child_a"},
             {"id": "e2", "source": "n_root", "target": "n_child_b"},
             {"id": "e3", "source": "n_child_a", "target": "n_out"},
+            {"id": "e4", "source": "n_child_b", "target": "n_out"},
         ],
     }
     try:
@@ -1282,7 +1264,7 @@ def test_executor_reuses_session_for_linear_chain_but_not_fanout(auth_client, en
         assert final["status"] == "success", final
         assert by_id["n_child_a"]["agent_session_id"] != by_id["n_root"]["agent_session_id"]
         assert by_id["n_child_b"]["agent_session_id"] != by_id["n_root"]["agent_session_id"]
-        assert by_id["n_out"]["agent_session_id"] == by_id["n_child_a"]["agent_session_id"]
+        assert by_id["n_out"]["agent_session_id"] != by_id["n_child_a"]["agent_session_id"]
     finally:
         set_runtime_override(MockRuntime())
 
@@ -1400,8 +1382,12 @@ def test_parallel_ask_user_requests_are_queued(auth_client, enable_claude_agent)
         "nodes": [
             _generate_node("n_gen_a", prompt=f"ask a [[ask_user:{ask_a}]] [[respond:A_DONE]]"),
             _generate_node("n_gen_b", prompt=f"ask b [[ask_user:{ask_b}]] [[respond:B_DONE]]"),
+            _output_node("n_out", source="n_gen_a", prompt="render [[respond:<section>DONE</section>]]"),
         ],
-        "edges": [],
+        "edges": [
+            {"id": "e_a_out", "source": "n_gen_a", "target": "n_out"},
+            {"id": "e_b_out", "source": "n_gen_b", "target": "n_out"},
+        ],
     }
     try:
         app_id = _build_app(auth_client, graph=graph)
@@ -1469,6 +1455,8 @@ def test_parallel_second_ask_after_resume_keeps_run_waiting(auth_client, enable_
             {"id": "e_first_second", "source": "n_first", "target": "n_second"},
             {"id": "e_first_long", "source": "n_first", "target": "n_long"},
             {"id": "e_second_out", "source": "n_second", "target": "n_out"},
+            {"id": "e_short_out", "source": "n_short", "target": "n_out"},
+            {"id": "e_long_out", "source": "n_long", "target": "n_out"},
         ],
     }
     try:
@@ -2006,10 +1994,15 @@ def test_rerun_from_reuses_ancestor_outputs_and_uses_current_graph(auth_client, 
     final = _wait_for_terminal(auth_client, created.json()["run_id"])
     assert final["status"] == "success", final
     assert final["id"] != source["run_id"]
+    assert final["source_run_id"] == source["run_id"]
+    assert final["rerun_from_node_id"] == "n_gen_b"
     by_id = {step["node_id"]: step for step in final["steps"]}
     assert by_id["n_input"]["output"]["value"] == "hello"
     assert by_id["n_gen_a"]["output"] == "OLD_A"
+    assert by_id["n_gen_a"]["reused_from_run_id"] == source["run_id"]
+    assert by_id["n_gen_a"]["reused_from_step_id"].startswith("step_")
     assert by_id["n_gen_b"]["output"] == "NEW_B"
+    assert by_id["n_gen_b"]["reused_from_run_id"] is None
     assert "OLD_A" in by_id["n_gen_b"]["input"]["prompt"]
     assert by_id["n_out"]["output"] == "<section>NEW_OUT</section>"
     assert final["graph"]["nodes"][1]["prompt"] == "第一步 [[respond:NEW_A_SHOULD_NOT_RUN]]"
@@ -2017,90 +2010,6 @@ def test_rerun_from_reuses_ancestor_outputs_and_uses_current_graph(auth_client, 
     source_after = auth_client.get(f"/api/runs/{source['run_id']}").json()
     assert source_after["status"] == "success"
     assert {step["node_id"]: step for step in source_after["steps"]}["n_gen_a"]["output"] == "OLD_A"
-
-
-def test_rerun_from_copies_reused_workspace_artifact_paths(auth_client, enable_claude_agent):
-    enable_claude_agent()
-    set_runtime_override(ReusedArtifactPathRuntime())
-    try:
-        graph = {
-            "agent": "claude",
-            "nodes": [
-                USER_INPUT_NODE,
-                _contract_node(
-                    "n_bundle",
-                    prompt="write-bundle",
-                    output_contract={"type": "artifact", "artifact_kind": "archive"},
-                ),
-                _contract_node(
-                    "n_ref",
-                    prompt="relative-ref",
-                    output_contract={
-                        "type": "json",
-                        "json_schema": {
-                            "type": "object",
-                            "additionalProperties": False,
-                            "properties": {
-                                "code_package_ref": {
-                                    "type": "object",
-                                    "additionalProperties": False,
-                                    "properties": {"path": {"type": "string"}},
-                                    "required": ["path"],
-                                }
-                            },
-                            "required": ["code_package_ref"],
-                        },
-                    },
-                ),
-                _output_node("n_out", source="n_ref", prompt="输出"),
-            ],
-            "edges": [
-                {"id": "e1", "source": "n_input", "target": "n_bundle"},
-                {"id": "e2", "source": "n_bundle", "target": "n_ref"},
-                {"id": "e3", "source": "n_ref", "target": "n_out"},
-            ],
-        }
-        app_id = _build_app(auth_client, graph=graph)
-        source = auth_client.post(
-            "/api/runs", json={"app_id": app_id, "inputs": {"n_input": "hello"}}
-        ).json()
-        source_final = _wait_for_terminal(auth_client, source["run_id"])
-        assert source_final["status"] == "success", source_final
-
-        created = auth_client.post(
-            f"/api/runs/{source['run_id']}/rerun-from",
-            json={"app_id": app_id, "node_id": "n_out"},
-        )
-        assert created.status_code == 200, created.text
-        rerun_id = created.json()["run_id"]
-        final = _wait_for_terminal(auth_client, rerun_id)
-        assert final["status"] == "success", final
-
-        async def load_raw_outputs() -> dict[str, Any]:
-            async with SessionLocal() as db:
-                rows = (
-                    await db.execute(
-                        select(Step).where(Step.run_id == rerun_id, Step.node_id.in_(["n_bundle", "n_ref"]))
-                    )
-                ).scalars().all()
-                return {row.node_id: loads(row.output_json, None) for row in rows}
-
-        raw_outputs = asyncio.run(load_raw_outputs())
-        bundle_output = raw_outputs["n_bundle"][0]
-        assert bundle_output["path"] == "bundle.zip"
-        assert bundle_output["manifest_version"] == 1
-        bundle_path = run_workspace("user_admin", app_id, rerun_id) / bundle_output["path"]
-        assert bundle_path.exists()
-        assert bundle_output["sha256"] == file_sha256(bundle_path)
-        with zipfile.ZipFile(bundle_path) as archive:
-            assert archive.read("README.txt") == b"bundle"
-
-        ref_output = raw_outputs["n_ref"]
-        assert ref_output["code_package_ref"]["path"] == "bundle.zip"
-        with zipfile.ZipFile(run_workspace("user_admin", app_id, rerun_id) / "bundle.zip") as archive:
-            assert archive.read("README.txt") == b"bundle"
-    finally:
-        set_runtime_override(None)
 
 
 def test_rerun_from_does_not_copy_reused_ancestor_agent_session(auth_client, enable_claude_agent):
@@ -2156,7 +2065,7 @@ def test_rerun_from_does_not_copy_reused_ancestor_agent_session(auth_client, ena
         assert by_id["n_gen_a"]["agent_session_id"] is None
         assert by_id["n_gen_b"]["output"] == "NEW_B"
         assert by_id["n_gen_b"]["agent_session_id"] is not None
-        assert by_id["n_out"]["agent_session_id"] == by_id["n_gen_b"]["agent_session_id"]
+        assert by_id["n_out"]["agent_session_id"] != by_id["n_gen_b"]["agent_session_id"]
 
         gen_b_call = next(call for call in runtime.execute_calls if "第二步" in (call["prompt"] or ""))
         assert gen_b_call["session_id"] is None
@@ -2201,11 +2110,16 @@ def test_rerun_from_condition_branch_override_forces_branch(auth_client, enable_
             ),
             _generate_node("n_yes", prompt="是 [[respond:YES]]"),
             _generate_node("n_no", prompt="否 [[respond:NO]]"),
+            _generate_node("n_merge", prompt="汇总 [[respond:MERGED]]"),
+            _output_node("n_out", source="n_merge", prompt="输出 [[respond:<section>OUT</section>]]"),
         ],
         "edges": [
             {"id": "e1", "source": "n_input", "target": "n_cond"},
             {"id": "e2", "source": "n_cond", "target": "n_yes", "source_handle": "true"},
             {"id": "e3", "source": "n_cond", "target": "n_no", "source_handle": "false"},
+            {"id": "e4", "source": "n_yes", "target": "n_merge"},
+            {"id": "e5", "source": "n_no", "target": "n_merge"},
+            {"id": "e6", "source": "n_merge", "target": "n_out"},
         ],
     }
     app_id = _build_app(auth_client, graph=graph)
@@ -2231,6 +2145,8 @@ def test_rerun_from_condition_branch_override_forces_branch(auth_client, enable_
             ),
             _generate_node("n_yes", prompt="是 [[respond:YES_NEW]]"),
             _generate_node("n_no", prompt="否 [[respond:NO_NEW]]"),
+            _generate_node("n_merge", prompt="汇总 [[respond:MERGED_NEW]]"),
+            _output_node("n_out", source="n_merge", prompt="输出 [[respond:<section>OUT_NEW</section>]]"),
         ],
     }
     response = auth_client.patch(f"/api/apps/{app_id}", json={"graph": _ensure_output(patched_graph)})
@@ -2263,6 +2179,87 @@ def test_rerun_from_condition_branch_override_forces_branch(auth_client, enable_
     assert by_id["n_no"]["output"] == "NO_NEW"
 
 
+def test_rerun_replays_reused_condition_branch_on_current_graph(auth_client, enable_claude_agent):
+    enable_claude_agent()
+    graph = {
+        "agent": "claude",
+        "nodes": [
+            _condition_node(
+                "n_cond",
+                mode="binary",
+                branches=[{"key": "true"}, {"key": "false"}],
+                prompt="判断 [[respond:true]]",
+            ),
+            _generate_node("n_yes", prompt="是 [[respond:YES]]"),
+            _generate_node("n_no", prompt="否 [[respond:NO]]"),
+            _generate_node("n_merge", prompt="汇总 [[respond:MERGED]]"),
+            _output_node("n_out", source="n_merge", prompt="输出 [[respond:<section>OUT</section>]]"),
+        ],
+        "edges": [
+            {"id": "e1", "source": "n_cond", "target": "n_yes", "source_handle": "true"},
+            {"id": "e2", "source": "n_cond", "target": "n_no", "source_handle": "false"},
+            {"id": "e3", "source": "n_yes", "target": "n_merge"},
+            {"id": "e4", "source": "n_no", "target": "n_merge"},
+            {"id": "e5", "source": "n_merge", "target": "n_out"},
+        ],
+    }
+    app_id = _build_app(auth_client, graph=graph)
+    source = auth_client.post("/api/runs", json={"app_id": app_id, "inputs": {}}).json()
+    source_final = _wait_for_terminal(auth_client, source["run_id"])
+    assert source_final["status"] == "success"
+
+    created = auth_client.post(
+        f"/api/runs/{source['run_id']}/rerun-from",
+        json={"app_id": app_id, "node_id": "n_yes"},
+    )
+    assert created.status_code == 200, created.text
+    final = _wait_for_terminal(auth_client, created.json()["run_id"])
+    by_id = {step["node_id"]: step for step in final["steps"]}
+
+    assert final["status"] == "success", final
+    assert by_id["n_cond"]["output"] == "true"
+    assert by_id["n_cond"]["reused_from_run_id"] == source["run_id"]
+    assert by_id["n_yes"]["status"] == "success"
+    assert by_id["n_no"]["status"] == "skipped"
+
+
+def test_rerun_rejects_start_in_frozen_condition_unchosen_branch(auth_client, enable_claude_agent):
+    enable_claude_agent()
+    graph = {
+        "agent": "claude",
+        "nodes": [
+            _condition_node(
+                "n_cond",
+                mode="binary",
+                branches=[{"key": "true"}, {"key": "false"}],
+                prompt="判断 [[respond:true]]",
+            ),
+            _generate_node("n_yes", prompt="是 [[respond:YES]]"),
+            _generate_node("n_no", prompt="否 [[respond:NO]]"),
+            _generate_node("n_merge", prompt="汇总 [[respond:MERGED]]"),
+            _output_node("n_out", source="n_merge", prompt="输出 [[respond:<section>OUT</section>]]"),
+        ],
+        "edges": [
+            {"id": "e1", "source": "n_cond", "target": "n_yes", "source_handle": "true"},
+            {"id": "e2", "source": "n_cond", "target": "n_no", "source_handle": "false"},
+            {"id": "e3", "source": "n_yes", "target": "n_merge"},
+            {"id": "e4", "source": "n_no", "target": "n_merge"},
+            {"id": "e5", "source": "n_merge", "target": "n_out"},
+        ],
+    }
+    app_id = _build_app(auth_client, graph=graph)
+    source = auth_client.post("/api/runs", json={"app_id": app_id, "inputs": {}}).json()
+    assert _wait_for_terminal(auth_client, source["run_id"])["status"] == "success"
+
+    response = auth_client.post(
+        f"/api/runs/{source['run_id']}/rerun-from",
+        json={"app_id": app_id, "node_id": "n_no"},
+    )
+
+    assert response.status_code == 409
+    assert "冻结 condition 分支未选择该节点" in response.json()["detail"]
+
+
 def test_rerun_from_condition_branch_override_rejects_invalid_branch(auth_client, enable_claude_agent):
     enable_claude_agent()
     graph = {
@@ -2275,8 +2272,15 @@ def test_rerun_from_condition_branch_override_rejects_invalid_branch(auth_client
                 prompt="判断 [[respond:true]]",
             ),
             _generate_node("n_yes", prompt="是 [[respond:YES]]"),
+            _generate_node("n_no", prompt="否 [[respond:NO]]"),
+            _output_node("n_out", source="n_yes", prompt="输出 [[respond:<section>OUT</section>]]"),
         ],
-        "edges": [{"id": "e1", "source": "n_cond", "target": "n_yes", "source_handle": "true"}],
+        "edges": [
+            {"id": "e1", "source": "n_cond", "target": "n_yes", "source_handle": "true"},
+            {"id": "e2", "source": "n_cond", "target": "n_no", "source_handle": "false"},
+            {"id": "e3", "source": "n_yes", "target": "n_out"},
+            {"id": "e4", "source": "n_no", "target": "n_out"},
+        ],
     }
     app_id = _build_app(auth_client, graph=graph)
     source = auth_client.post("/api/runs", json={"app_id": app_id, "inputs": {}}).json()
@@ -2292,17 +2296,6 @@ def test_rerun_from_condition_branch_override_rejects_invalid_branch(auth_client
     )
     assert invalid.status_code == 400
     assert "condition 分支不存在" in invalid.json()["detail"]
-
-    unconnected = auth_client.post(
-        f"/api/runs/{source['run_id']}/rerun-from",
-        json={
-            "app_id": app_id,
-            "node_id": "n_cond",
-            "condition_branch_override": {"node_id": "n_cond", "branch_key": "false"},
-        },
-    )
-    assert unconnected.status_code == 400
-    assert "condition 分支未连接" in unconnected.json()["detail"]
 
 
 def test_rerun_from_failed_node_uses_current_fixed_prompt(auth_client, enable_claude_agent):
@@ -2896,7 +2889,8 @@ def test_executor_repairs_office_artifact_validation_once(
     assert len(runtime.prompts) == 2
     assert "Office 文档无法打开" in runtime.prompts[1]
     manifest = final["steps"][0]["output"]
-    assert manifest[0]["path"] == "documents.zip"
+    assert manifest[0]["path"].startswith("artifacts/n_gen/artifact_")
+    assert manifest[0]["path"].endswith("/documents.zip")
     assert manifest[0]["manifest_version"] == 1
 
 
@@ -3158,6 +3152,7 @@ def test_executor_output_node_rejects_tool_result_html_without_final_html(auth_c
         set_runtime_override(MockRuntime())
 
     assert final["status"] == "failed", final
+    assert final["failure_kind"] == "contract"
     by_id = {step["node_id"]: step for step in final["steps"]}
     assert by_id["n_gen"]["status"] == "success"
     assert by_id["n_out"]["status"] == "failed"
@@ -3181,11 +3176,45 @@ def test_executor_propagates_failure(auth_client, enable_claude_agent):
     run = auth_client.post("/api/runs", json={"app_id": app_id, "inputs": {}}).json()
     final = _wait_for_terminal(auth_client, run["run_id"])
     assert final["status"] == "failed"
+    assert final["failure_kind"] == "runtime"
     by_id = {step["node_id"]: step for step in final["steps"]}
     assert by_id["n_gen_fail"]["status"] == "failed"
     assert "mock failed" in (by_id["n_gen_fail"].get("error") or "")
     # 上游失败后下游 step 应保持 pending（未启动）。
     assert by_id["n_out"]["status"] == "pending"
+
+
+def test_executor_classifies_unavailable_upstream_artifact_as_integrity(
+    auth_client,
+    enable_claude_agent,
+    monkeypatch,
+):
+    enable_claude_agent()
+    original_refs = node_handlers._runtime_upload_refs_for_node
+
+    def unavailable_refs(ctx, node, step):
+        if node.get("id") == "n_out":
+            raise WorkflowDataIntegrityError("artifacts/n_gen/missing.txt")
+        return original_refs(ctx, node, step)
+
+    monkeypatch.setattr(node_handlers, "_runtime_upload_refs_for_node", unavailable_refs)
+    graph = {
+        "agent": "claude",
+        "nodes": [
+            _generate_node("n_gen", prompt="生成 [[respond:READY]]"),
+            _output_node("n_out", source="n_gen"),
+        ],
+        "edges": [{"id": "e1", "source": "n_gen", "target": "n_out"}],
+    }
+    app_id = _build_app(auth_client, graph=graph)
+    run = auth_client.post("/api/runs", json={"app_id": app_id, "inputs": {}}).json()
+    final = _wait_for_terminal(auth_client, run["run_id"])
+
+    assert final["status"] == "failed"
+    assert final["failure_kind"] == "integrity"
+    output_step = next(step for step in final["steps"] if step["node_id"] == "n_out")
+    assert output_step["failure_kind"] == "integrity"
+    assert "上游 artifact 完整性校验失败" in output_step["error"]
 
 
 def test_executor_cancel_during_running_step(auth_client, enable_claude_agent):
@@ -3432,7 +3461,10 @@ def test_executor_user_input_attachment_prompt_includes_download_url(auth_client
     assert str(uploads_dir("user_admin") / upload["id"] / "blob") not in json.dumps(final)
 
 
-def test_executor_replaces_workspace_paths_with_signed_download_urls(auth_client, enable_claude_agent):
+def test_executor_redacts_undeclared_workspace_paths_without_download_side_channel(
+    auth_client,
+    enable_claude_agent,
+):
     enable_claude_agent()
     graph = {
         "agent": "claude",
@@ -3452,18 +3484,17 @@ def test_executor_replaces_workspace_paths_with_signed_download_urls(auth_client
     finally:
         set_runtime_override(MockRuntime())
 
-    artifact_path = str(
-        run_workspace("user_admin", app_id, run_id) / "deliverable.zip"
-    )
     assert final["status"] == "success", final
     by_id = {step["node_id"]: step for step in final["steps"]}
     gen_prompt = by_id["n_out"]["input"]["prompt"]
     output_html = by_id["n_out"]["output"]
-    assert artifact_path not in gen_prompt
-    assert artifact_path not in output_html
-    assert "deliverable.zip (download_url: /api/runs/" in gen_prompt
-    assert '<a href="/api/runs/' in output_html
-    assert "download_token=" in output_html
+    assert "[local path redacted]" in gen_prompt
+    assert "[local path redacted]" in output_html
+    assert "/runtime/workspaces/" not in gen_prompt
+    assert "/runtime/workspaces/" not in output_html
+    assert "download_url: /api/runs/" not in gen_prompt
+    assert "/api/runs/" not in output_html
+    assert "download_token=" not in output_html
 
     artifacts_response = auth_client.get(f"/api/runs/{run_id}/artifacts")
     assert artifacts_response.status_code == 200, artifacts_response.text
@@ -3471,22 +3502,17 @@ def test_executor_replaces_workspace_paths_with_signed_download_urls(auth_client
     assert artifacts_body["truncated"] is False
     assert artifacts_body["artifacts"] == []
 
-    href = output_html.split('href="', 1)[1].split('"', 1)[0].replace("&amp;", "&")
-    headers = dict(auth_client.headers)
-    auth_client.headers.pop("Authorization", None)
-    try:
-        downloaded = auth_client.get(href)
-    finally:
-        auth_client.headers.update(headers)
-    assert downloaded.status_code == 404
 
-
-def test_executor_imports_generated_images_and_renders_img_src(auth_client, enable_claude_agent):
+def test_executor_transfers_generated_images_only_as_declared_artifacts(auth_client, enable_claude_agent):
     enable_claude_agent()
     graph = {
         "agent": "claude",
         "nodes": [
-            _generate_node("n_gen", prompt="生成配图 [[respond:PLACEHOLDER]]"),
+            _contract_node(
+                "n_gen",
+                prompt="生成配图",
+                output_contract={"type": "artifact", "artifact_kind": "image", "max_count": 1},
+            ),
             _output_node("n_out", source="n_gen", prompt="展示 [[respond:<section>FINAL</section>]]"),
         ],
         "edges": [{"id": "e1", "source": "n_gen", "target": "n_out"}],
@@ -3504,22 +3530,23 @@ def test_executor_imports_generated_images_and_renders_img_src(auth_client, enab
     assert final["status"] == "success", final
     by_id = {step["node_id"]: step for step in final["steps"]}
     gen_output = by_id["n_gen"]["output"]
-    workspace_image = run_workspace("user_admin", app_id, run_id) / "generated_images" / "cover.png"
-    assert workspace_image.is_file()
-    assert workspace_image.read_bytes() == b"png-bytes"
-    assert "cover.png (download_url: /api/runs/" in json.dumps(gen_output, ensure_ascii=False)
-    assert "codex_home" not in str(gen_output)
+    assert len(gen_output) == 1
+    assert gen_output[0]["path"].startswith("artifacts/n_gen/artifact_")
+    assert gen_output[0]["path"].endswith("/cover.png")
+    assert "/mnt/inputs/" in by_id["n_out"]["input"]["prompt"]
+    assert "generated_images" not in by_id["n_out"]["input"]["prompt"]
 
     output_html = by_id["n_out"]["output"]
-    assert '<img src="/api/runs/' in output_html
-    assert "download_token=" in output_html
-    assert "GPT 图片暂不可渲染" not in output_html
+    assert output_html == "<section>FINAL</section>"
 
     artifacts_response = auth_client.get(f"/api/runs/{run_id}/artifacts")
     assert artifacts_response.status_code == 200, artifacts_response.text
-    assert artifacts_response.json()["artifacts"] == []
+    artifacts = artifacts_response.json()["artifacts"]
+    assert len(artifacts) == 1
+    assert artifacts[0]["name"] == "cover.png"
+    assert artifacts[0]["integrity"] == "verified"
 
-    src = output_html.split('src="', 1)[1].split('"', 1)[0].replace("&amp;", "&")
+    src = artifacts[0]["download_url"]
     headers = dict(auth_client.headers)
     auth_client.headers.pop("Authorization", None)
     try:
@@ -3562,13 +3589,15 @@ def test_run_artifacts_list_uses_artifact_contract_metadata(auth_client, enable_
     artifacts = {artifact["name"]: artifact for artifact in body["artifacts"]}
     artifact = artifacts["Report"]
     assert artifact["name"] == "Report"
-    assert artifact["path"] == "report.txt"
+    assert "path" not in artifact
     assert artifact["size"] == len("artifact report".encode("utf-8"))
-    assert artifact["source_kind"] == "artifact_contract"
-    assert artifact["source_node_id"] == "n_gen"
-    assert artifact["source_node_title"] == "n_gen"
+    assert "source_kind" not in artifact
+    assert artifact["origin_run_id"] == run_id
+    assert artifact["origin_artifact_id"] == artifact["id"]
+    assert artifact["origin_node_id"] == "n_gen"
+    assert artifact["origin_node_title"] == "n_gen"
     assert artifact["mime"] == "text/plain"
-    assert artifact["download_url"].startswith(f"/api/runs/{run_id}/artifacts/report.txt")
+    assert artifact["download_url"].startswith(f"/api/runs/{run_id}/artifacts/artifacts/n_gen/artifact_")
     assert "/tmp/private/export.pdf" not in json.dumps(body)
     assert "javascript:" not in json.dumps(body)
 
