@@ -21,6 +21,7 @@
 - condition 分支测试只放在桌面编辑器 Console，使用 `condition_branch_override` 写入新 run snapshot，不修改 App graph。
 - waiting/ask_user 面板使用后端 context/groups/options；先展示 `context.title` 和 `context.summary`，补充文本和附件按题目隔离，多问题只在最后一题提交，提交后显示摘要并保留停止入口。
 - StepTab 的“生成提示词”调用 Prompt Assistant API，只写回目标节点 prompt/可选 output_contract；生成态按节点 id 存在 editor store，切换节点不自动取消。
+- StepTab 将 JSON output contract 呈现为“可引用结果”：原始 Schema 不对用户展示，结果大纲直接编辑业务名称、说明和“一个/多个”，内部 key 保持稳定；选择该输出方式或点击“根据提示词整理”时复用 Prompt Assistant 生成/更新 Schema。
 - Prompt Assistant 前端当前不做 active endpoint 刷新恢复；不要在组件文案或状态里假设它已恢复。
 - 模型下拉只显示当前 Agent 的 `supported_models`；推理等级使用 provider 固定选项，默认最低 `low`。
 

@@ -34,15 +34,15 @@ export function mergePromptFieldTokens(fields: PromptFieldDefinition[]): PromptT
       merged.set(field.value, { ...field });
       continue;
     }
-    if (current.label !== field.label) current.label = field.value;
+    if (current.label !== field.label) current.label = '引用结果';
     if (current.description !== field.description) current.description = undefined;
   }
   return [...merged.values()].sort((a, b) => b.value.length - a.value.length || a.value.localeCompare(b.value));
 }
 
 export function promptFieldOptionLabel(field: PromptFieldDefinition): string {
-  const scope = field.scope === 'upstream' ? '上游' : '当前输出';
-  return `${scope} · ${field.sourceLabel} · ${field.label}`;
+  const source = field.scope === 'upstream' ? field.sourceLabel : '当前步骤';
+  return `${source} → ${field.label}`;
 }
 
 function appendNodeSchemaTokens(
@@ -52,7 +52,7 @@ function appendNodeSchemaTokens(
 ): void {
   const schema = jsonSchemaForNode(node);
   if (!schema || !isRecord(schema.properties)) return;
-  appendProperties(tokens, schema.properties, '', {
+  appendProperties(tokens, schema.properties, '', '', {
     sourceNodeId: node.id,
     sourceLabel: node.title?.trim() || node.id,
     scope,
@@ -63,6 +63,7 @@ function appendProperties(
   tokens: PromptFieldDefinition[],
   properties: Record<string, unknown>,
   parentPath: string,
+  parentLabel: string,
   source: Pick<PromptFieldDefinition, 'sourceNodeId' | 'sourceLabel' | 'scope'>,
 ): void {
   for (const [name, rawSchema] of Object.entries(properties)) {
@@ -70,10 +71,13 @@ function appendProperties(
     const path = parentPath ? `${parentPath}.${name}` : name;
     const title = nonEmptyString(rawSchema.title);
     const description = nonEmptyString(rawSchema.description);
+    const label = parentLabel
+      ? `${parentLabel} / ${title ?? '未命名内容'}`
+      : title ?? '未命名内容';
     tokens.push({
       ...source,
       value: path,
-      label: title ? `${title} · ${path}` : path,
+      label,
       kind: 'field',
       description,
     });
@@ -85,19 +89,19 @@ function appendProperties(
         tokens.push({
           ...source,
           value,
-          label: title ? `${title}：${displayValue} · ${value}` : value,
+          label: `${label}：${displayValue}`,
           kind: 'enum',
           description,
         });
       }
     }
     if (rawSchema.type === 'object' && isRecord(rawSchema.properties)) {
-      appendProperties(tokens, rawSchema.properties, path, source);
+      appendProperties(tokens, rawSchema.properties, path, label, source);
     }
     if (rawSchema.type === 'array' && isRecord(rawSchema.items)) {
       const items = rawSchema.items;
       if (items.type === 'object' && isRecord(items.properties)) {
-        appendProperties(tokens, items.properties, `${path}[]`, source);
+        appendProperties(tokens, items.properties, `${path}[]`, label, source);
       }
     }
   }

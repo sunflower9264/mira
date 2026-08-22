@@ -45,6 +45,7 @@ import { buildPromptFieldTokens, mergePromptFieldTokens, promptFieldOptionLabel 
 import { PromptTokenEditor, type PromptTokenEditorHandle } from '../common/PromptTokenEditor';
 import { buildPromptTokens, promptTokenOptionLabel, type PromptTokenDefinition } from '../common/promptTokens';
 import { EditIcon, PlusIcon, SendIcon, SparkleIcon, StopIcon, TrashIcon } from '../common/Icons';
+import { defaultReferenceableSchema, ResultOutlineEditor } from './ResultOutlineEditor';
 
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const PROMPT_PLACEHOLDER = '在这里输入内容。';
@@ -62,6 +63,12 @@ const NODE_TYPE_LABEL: Record<WorkflowNode['type'], string> = {
 };
 type PatchNode = (id: string, patch: Partial<WorkflowNode>, opts?: { skipHistory?: boolean; skipSave?: boolean }) => void;
 type PromptChangeOptions = { skipSave?: boolean };
+interface PromptAssistantLaunchRequest {
+  id: number;
+  nodeId: string;
+  text: string;
+  contractOnly?: boolean;
+}
 const TEXT_EDIT_HISTORY_OPTS = { skipHistory: true } as const;
 
 export function StepTab() {
@@ -142,6 +149,9 @@ function GenerateEditor({
   const settings = useSettingsStore((s) => s.settings);
   const loadSettings = useSettingsStore((s) => s.load);
   const promptEditorRef = useRef<PromptTokenEditorHandle>(null);
+  const assistantRequestSeq = useRef(0);
+  const [assistantRequest, setAssistantRequest] = useState<PromptAssistantLaunchRequest | null>(null);
+  const generatingPrompt = useEditorStore((s) => s.promptAssistantGenerations[node.id] != null);
   const updatePrompt = (prompt: string, opts?: PromptChangeOptions) =>
     patchNode(node.id, { prompt } as Partial<WorkflowNode>, { ...TEXT_EDIT_HISTORY_OPTS, ...opts });
   const modelOptions = useMemo(() => supportedModelsForAgent(settings, appAgent), [settings, appAgent]);
@@ -151,6 +161,16 @@ function GenerateEditor({
   useEffect(() => {
     if (!settings) void loadSettings().catch(() => undefined);
   }, [settings, loadSettings]);
+
+  const inferResultOutline = () => {
+    assistantRequestSeq.current += 1;
+    setAssistantRequest({
+      id: assistantRequestSeq.current,
+      nodeId: node.id,
+      text: '根据当前提示词整理可引用结果，保持提示词正文和输出方式不变；信息不足时使用合理默认值。',
+      contractOnly: true,
+    });
+  };
 
   return (
     <EditorShell
@@ -180,13 +200,23 @@ function GenerateEditor({
         <OutputContractField
           contract={node.output_contract}
           onChange={(output_contract) => patchNode(node.id, { output_contract } as Partial<WorkflowNode>)}
+          onReferenceableSelected={inferResultOutline}
+          disabled={generatingPrompt}
         />
         <PromptToolInsertField node={node} editorRef={promptEditorRef} />
         <PromptStructuredFieldInsert node={node} editorRef={promptEditorRef} />
       </div>
-      <JsonContractSchemaEditor
+      <ResultOutlineEditor
+        nodeId={node.id}
         contract={node.output_contract}
         onChange={(output_contract) => patchNode(node.id, { output_contract } as Partial<WorkflowNode>)}
+        onTextChange={(output_contract) => patchNode(
+          node.id,
+          { output_contract } as Partial<WorkflowNode>,
+          TEXT_EDIT_HISTORY_OPTS,
+        )}
+        onInfer={inferResultOutline}
+        inferring={generatingPrompt}
       />
       <label className="inline-flex w-fit items-center gap-2 rounded-full bg-[#F9F9F9] px-3 py-2 text-xs font-medium text-black/65">
         <input
@@ -203,7 +233,14 @@ function GenerateEditor({
         运行前允许追问
       </label>
       {settings && !hasSelectedAgent && <div className="text-xs text-red-600">请先在应用页选择已启用 Agent。</div>}
-      <PromptField editorRef={promptEditorRef} node={node} value={node.prompt ?? ''} onChange={updatePrompt} nodeLabel={node.title || '生成'} />
+      <PromptField
+        editorRef={promptEditorRef}
+        node={node}
+        value={node.prompt ?? ''}
+        onChange={updatePrompt}
+        nodeLabel={node.title || '生成'}
+        assistantRequest={assistantRequest}
+      />
     </EditorShell>
   );
 }
@@ -576,9 +613,9 @@ function BranchListEditor({
 type OutputContractOptionValue = 'free' | 'json' | 'html' | `artifact:${ArtifactContractKind}`;
 
 const OUTPUT_CONTRACT_OPTIONS: { label: string; value: OutputContractOptionValue }[] = [
-  { label: '普通文本（默认）', value: 'free' },
-  { label: '结构化 JSON', value: 'json' },
-  { label: 'HTML', value: 'html' },
+  { label: '完整内容（默认）', value: 'free' },
+  { label: '可引用结果', value: 'json' },
+  { label: '网页内容', value: 'html' },
   { label: '图片', value: 'artifact:image' },
   { label: '代码包', value: 'artifact:code' },
   { label: 'HTML 文件', value: 'artifact:html' },
@@ -596,16 +633,21 @@ const OUTPUT_CONTRACT_OPTIONS: { label: string; value: OutputContractOptionValue
 function OutputContractField({
   contract,
   onChange,
+  onReferenceableSelected,
+  disabled = false,
 }: {
   contract: NodeOutputContract | undefined;
   onChange: (next: NodeOutputContract | undefined) => void;
+  onReferenceableSelected?(): void;
+  disabled?: boolean;
 }) {
   const selectedValue = contractOptionValue(contract);
 
   const setOption = (value: string) => {
     if (value === selectedValue) return;
     if (value === 'json') {
-      onChange({ type: 'json', json_schema: defaultJsonContractSchema() });
+      onChange({ type: 'json', json_schema: defaultReferenceableSchema() });
+      onReferenceableSelected?.();
       return;
     }
     if (value === 'html') {
@@ -621,58 +663,15 @@ function OutputContractField({
   };
 
   return (
-    <Field label="输出契约">
+    <Field label="输出方式">
       <SelectDropdown
         value={selectedValue}
         options={OUTPUT_CONTRACT_OPTIONS}
         onChange={setOption}
+        disabled={disabled}
         buttonClassName={boundedSelectButtonCls}
       />
     </Field>
-  );
-}
-
-function JsonContractSchemaEditor({
-  contract,
-  onChange,
-}: {
-  contract: NodeOutputContract | undefined;
-  onChange: (next: NodeOutputContract | undefined) => void;
-}) {
-  const schemaText = JSON.stringify(contract?.type === 'json' ? contract.json_schema : defaultJsonContractSchema(), null, 2);
-  const [schemaDraft, setSchemaDraft] = useState(schemaText);
-
-  useEffect(() => {
-    setSchemaDraft(schemaText);
-  }, [schemaText]);
-
-  const updateSchema = (value: string) => {
-    setSchemaDraft(value);
-    if (!contract || contract.type !== 'json') return;
-    try {
-      const parsed = JSON.parse(value);
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        onChange({ ...contract, json_schema: parsed as Record<string, unknown> });
-      }
-    } catch {
-      return;
-    }
-  };
-
-  if (contract?.type !== 'json') return null;
-
-  return (
-    <div className="grid w-full min-w-0 gap-1.5">
-      <div className="text-[11px] leading-relaxed text-black/40">
-        高级配置：JSON Schema 会严格校验字段；请为根对象和每个业务字段填写简短准确的中文 title 与 description。
-      </div>
-      <textarea
-        className="min-h-32 w-full min-w-0 resize-y rounded border border-black/10 bg-white px-3 py-2 font-mono text-xs leading-relaxed outline-none focus:border-black/30"
-        value={schemaDraft}
-        onChange={(event) => updateSchema(event.target.value)}
-        spellCheck={false}
-      />
-    </div>
   );
 }
 
@@ -682,23 +681,6 @@ function contractOptionValue(contract: NodeOutputContract | undefined): OutputCo
   if (contract.type === 'html') return 'html';
   if (contract.type === 'artifact') return `artifact:${contract.artifact_kind ?? 'file'}`;
   return 'free';
-}
-
-function defaultJsonContractSchema(): Record<string, unknown> {
-  return {
-    title: '结构化结果',
-    description: '当前节点的结构化输出。',
-    type: 'object',
-    additionalProperties: false,
-    properties: {
-      result: {
-        title: '结果',
-        description: '当前节点生成的主要结果。',
-        type: 'string',
-      },
-    },
-    required: ['result'],
-  };
 }
 
 function PromptToolInsertField({
@@ -747,18 +729,20 @@ function PromptStructuredFieldInsert({
   const graph = useEditorStore((s) => s.app?.graph);
   const generating = useEditorStore((s) => s.promptAssistantGenerations[node.id] != null);
   const choices = useMemo(
-    () => buildPromptFieldTokens(graph, node.id).map((field, index) => ({
-      field,
-      option: {
-        label: promptFieldOptionLabel(field),
-        value: `field:${index}:${field.sourceNodeId}:${field.value}`,
-      },
-    })),
+    () => buildPromptFieldTokens(graph, node.id)
+      .filter((field) => field.scope === 'upstream')
+      .map((field, index) => ({
+        field,
+        option: {
+          label: promptFieldOptionLabel(field),
+          value: `field:${index}:${field.sourceNodeId}:${field.value}`,
+        },
+      })),
     [graph, node.id],
   );
 
   return (
-    <Field label="插入字段">
+    <Field label="引用上游结果">
       <SelectDropdown
         value=""
         options={choices.map((choice) => choice.option)}
@@ -766,8 +750,8 @@ function PromptStructuredFieldInsert({
           const choice = choices.find((item) => item.option.value === optionValue);
           if (choice) editorRef.current?.insertToken(choice.field.value);
         }}
-        placeholder="请选择字段"
-        emptyLabel="当前节点及直接上游没有 JSON 字段。"
+        placeholder="选择一项结果"
+        emptyLabel="直接上游还没有可单独引用的结果。"
         disabled={generating}
         buttonClassName={boundedSelectButtonCls}
         menuClassName="absolute left-0 top-full z-30 mt-1 max-h-64 w-96 overflow-y-auto rounded-xl border border-black/10 bg-white p-1 shadow-lg"
@@ -782,12 +766,14 @@ function PromptField({
   node,
   nodeLabel,
   editorRef,
+  assistantRequest,
 }: {
   value: string;
   onChange: (next: string, opts?: PromptChangeOptions) => void;
   node: GenerateNode | OutputNode | ConditionNode;
   nodeLabel: string;
   editorRef: RefObject<PromptTokenEditorHandle>;
+  assistantRequest?: PromptAssistantLaunchRequest | null;
 }) {
   const app = useEditorStore((s) => s.app);
   const tools = useSettingsStore((s) => s.settings?.tools ?? EMPTY_TOOLS);
@@ -805,6 +791,8 @@ function PromptField({
   const [submittedDecisionSummary, setSubmittedDecisionSummary] = useState<DecisionSubmittedSummary | null>(null);
   const [submittingDecision, setSubmittingDecision] = useState(false);
   const mountedRef = useRef(true);
+  const consumedAssistantRequestRef = useRef(0);
+  const contractOnlyGenerationIdsRef = useRef(new Set<string>());
   const generating = promptGeneration !== null;
   const requestValue = promptGeneration?.request ?? request;
   const waitingRequest = promptGeneration?.waitingRequest ?? null;
@@ -870,15 +858,36 @@ function PromptField({
     setDecisionDrafts({});
     setSubmittedDecisionSummary(null);
     setSubmittingDecision(false);
+    contractOnlyGenerationIdsRef.current.delete(active.generationId);
   };
 
-  const applyCompletedPrompt = (result: Extract<PromptAssistantResponse, { status: 'completed' }>) => {
+  const applyCompletedPrompt = (
+    result: Extract<PromptAssistantResponse, { status: 'completed' }>,
+    contractOnly: boolean,
+  ) => {
+    const closeAssistant = () => {
+      if (!mountedRef.current) return;
+      setRequest('');
+      setOpen(false);
+      setDecisionAnswers([]);
+      setActiveDecisionGroupId('');
+      setActiveDecisionGroupIndex(0);
+      setDecisionDrafts({});
+      setSubmittedDecisionSummary(null);
+      setSubmittingDecision(false);
+    };
     const state = useEditorStore.getState();
     const stateApp = state.app;
     if (!stateApp || stateApp.id !== app?.id) return;
     const currentNode = stateApp.graph.nodes.find((item) => item.id === node.id);
     if (!currentNode) return;
-    const patch = { prompt: result.prompt } as Partial<WorkflowNode>;
+    if (contractOnly && result.output_contract?.type !== 'json') {
+      closeAssistant();
+      return;
+    }
+    const patch = {
+      prompt: contractOnly && 'prompt' in currentNode ? currentNode.prompt : result.prompt,
+    } as Partial<WorkflowNode>;
     if (currentNode.type === 'generate' && result.output_contract) {
       const { validate_office_documents, ...contract } = result.output_contract;
       const nextContract: NodeOutputContract =
@@ -894,19 +903,12 @@ function PromptField({
       ) {
         nextContract.validate_office_documents = true;
       }
-      (patch as Partial<GenerateNode>).output_contract = nextContract;
+      if (!contractOnly || nextContract.type === 'json') {
+        (patch as Partial<GenerateNode>).output_contract = nextContract;
+      }
     }
     state.patchNode(node.id, patch);
-    if (mountedRef.current) {
-      setRequest('');
-      setOpen(false);
-      setDecisionAnswers([]);
-      setActiveDecisionGroupId('');
-      setActiveDecisionGroupIndex(0);
-      setDecisionDrafts({});
-      setSubmittedDecisionSummary(null);
-      setSubmittingDecision(false);
-    }
+    closeAssistant();
   };
 
   const updateActiveDecisionDraft = (patch: Partial<{ text: string; attachments: PillAttachment[] }>) => {
@@ -967,14 +969,16 @@ function PromptField({
       return true;
     }
     if (result.status === 'interrupted') {
+      contractOnlyGenerationIdsRef.current.delete(generationId);
       showErrorDialog(result.error || '提示词生成已中断，请重新生成', '提示词生成失败');
       return false;
     }
-    applyCompletedPrompt(result);
+    applyCompletedPrompt(result, contractOnlyGenerationIdsRef.current.has(generationId));
+    contractOnlyGenerationIdsRef.current.delete(generationId);
     return false;
   };
 
-  const generatePrompt = async () => {
+  const generatePrompt = async (requestOverride?: string, contractOnly = false) => {
     if (promptGeneration) return;
     const appId = app?.id;
     const agent = app?.graph.agent;
@@ -988,7 +992,8 @@ function PromptField({
     }
     const generationId = `pa_${uuid()}`;
     const controller = new AbortController();
-    const requestText = request.trim();
+    const requestText = (requestOverride ?? request).trim();
+    if (contractOnly) contractOnlyGenerationIdsRef.current.add(generationId);
     setLocalError(null);
     startPromptAssistantGeneration({
       appId,
@@ -1013,9 +1018,24 @@ function PromptField({
     } catch (e) {
       if (!isAbortError(e) && mountedRef.current) showCaughtError(e, '生成提示词失败', '生成失败');
     } finally {
-      if (!keepSession) finishPromptAssistantGeneration(node.id, generationId);
+      if (!keepSession) {
+        finishPromptAssistantGeneration(node.id, generationId);
+        contractOnlyGenerationIdsRef.current.delete(generationId);
+      }
     }
   };
+
+  useEffect(() => {
+    if (
+      !assistantRequest ||
+      assistantRequest.nodeId !== node.id ||
+      consumedAssistantRequestRef.current === assistantRequest.id
+    ) return;
+    consumedAssistantRequestRef.current = assistantRequest.id;
+    setOpen(true);
+    setRequest(assistantRequest.text);
+    void generatePrompt(assistantRequest.text, assistantRequest.contractOnly === true);
+  }, [assistantRequest?.id, node.id]);
 
   const submitPromptAssistantDecision = async () => {
     const active = promptGeneration;

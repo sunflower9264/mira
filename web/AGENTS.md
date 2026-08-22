@@ -38,6 +38,7 @@
 - 应用默认 Agent 写在 `graph.agent`；`generate` / `condition` / `output` 节点只保存 prompt、model、reasoning_effort、output_contract 等节点级字段，`ask_user_enabled` 仅允许出现在 `generate`。
 - App 级 Tools 排除项写入 `graph.tools.disabled_tool_ids`。Preview、App View 和 Mobile Run 可展示/调整 App 级 Tools；不要把 Tools 重新做成 generate 节点配置。
 - `generate.output_contract` 只在 generate 节点配置，支持 json/html/artifact；普通 generate 默认自由文本且不保存契约。只有下游需要稳定字段、当前节点明确输出 HTML 片段或需要可下载文件产物时才使用契约。JSON 契约必须携带 strict object `json_schema`，artifact 必须携带 `artifact_kind`；`zip` kind 表示只接受真实 `.zip` 文件，`validate_office_documents` 是 artifact-only 的可选严格打开校验；`output` 节点固定为 HTML 最终展示。
+- JSON 契约在用户界面中称为“可引用结果”；不要向普通用户展示或要求编辑 JSON Schema。Step 面板只展示由 Schema 投影出的结果名称、说明和“一个/多个”，内部 property key 保持隐藏和稳定；“引用上游结果”使用 Schema 的 `title` / `description` 展示业务名称。
 - `generate.ask_user_enabled` 是可选 bool；`false` 完全跳过该节点的运行期 ask_user preflight，省略或 `true` 沿用后端默认判定。不要把该字段扩展到 condition 或 output。
 - 条件分支 edge 必须保持 `source_handle` 与分支 key 对齐；`CONDITION_DEFAULT_BRANCH_KEY` 是系统保留 fallback key。
 - 从历史 run 节点重新执行、失败修复和 condition 分支测试走 `useRunStore.rerunFrom`，创建新 run，不修改来源 run 或 App graph。

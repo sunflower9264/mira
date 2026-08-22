@@ -227,7 +227,7 @@ function promptTokenKindLabel(kind: PromptTokenDefinition['kind']): string {
   if (kind === 'skill') return 'Skill';
   if (kind === 'mcp') return 'MCP';
   if (kind === 'enum') return '状态值';
-  return '结构化字段';
+  return '引用结果';
 }
 
 function splitPrompt(value: string, tokens: PromptTokenDefinition[]): Array<string | PromptTokenDefinition> {
