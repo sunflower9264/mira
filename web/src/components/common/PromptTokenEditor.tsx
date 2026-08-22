@@ -63,22 +63,15 @@ export const PromptTokenEditor = forwardRef<PromptTokenEditorHandle, PromptToken
     }
   }, [tokenSignature, tokens, value]);
 
-  const syncValue = (restoreCaret: boolean) => {
+  const syncValue = () => {
     const editor = editorRef.current;
     if (!editor) return;
     const next = readPromptValue(editor);
-    const caretOffset = restoreCaret ? getCaretOffset(editor) : null;
+    const caretOffset = getCaretOffset(editor);
     if (caretOffset !== null) caretOffsetRef.current = caretOffset;
     if (next !== valueRef.current) {
       valueRef.current = next;
       onChange(next);
-    }
-    if (restoreCaret) {
-      const scrollTop = editor.scrollTop;
-      renderPromptValue(editor, next, tokens);
-      editor.dataset.tokenSignature = tokenSignature;
-      editor.scrollTop = scrollTop;
-      if (caretOffset !== null) setCaretOffset(editor, caretOffset);
     }
   };
 
@@ -113,12 +106,12 @@ export const PromptTokenEditor = forwardRef<PromptTokenEditorHandle, PromptToken
   }), [onChange, readOnly, tokenSignature, tokens]);
 
   const handleInput = (_event: FormEvent<HTMLDivElement>) => {
-    if (!composingRef.current) syncValue(true);
+    if (!composingRef.current) syncValue();
   };
 
   const handleCompositionEnd = (_event: CompositionEvent<HTMLDivElement>) => {
     composingRef.current = false;
-    syncValue(true);
+    syncValue();
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -126,7 +119,7 @@ export const PromptTokenEditor = forwardRef<PromptTokenEditorHandle, PromptToken
     if (event.key === 'Enter') {
       event.preventDefault();
       insertPlainText('\n');
-      syncValue(true);
+      syncValue();
       return;
     }
     if (event.key !== 'Backspace' && event.key !== 'Delete') return;
@@ -139,7 +132,7 @@ export const PromptTokenEditor = forwardRef<PromptTokenEditorHandle, PromptToken
     const caretOffset = getCaretOffset(editor) ?? 0;
     const tokenValue = token.getAttribute(TOKEN_ATTRIBUTE) ?? '';
     token.remove();
-    syncValue(false);
+    syncValue();
     const nextOffset = event.key === 'Backspace' ? Math.max(0, caretOffset - tokenValue.length) : caretOffset;
     caretOffsetRef.current = nextOffset;
     setCaretOffset(editor, nextOffset);
@@ -149,7 +142,7 @@ export const PromptTokenEditor = forwardRef<PromptTokenEditorHandle, PromptToken
     if (readOnly) return;
     event.preventDefault();
     insertPlainText(event.clipboardData.getData('text/plain').replace(/\r\n?/g, '\n'));
-    syncValue(true);
+    syncValue();
   };
 
   const handleCopy = (event: ClipboardEvent<HTMLDivElement>) => {
@@ -169,7 +162,7 @@ export const PromptTokenEditor = forwardRef<PromptTokenEditorHandle, PromptToken
     event.preventDefault();
     event.clipboardData.setData('text/plain', readPromptValue(editor).slice(offsets.start, offsets.end));
     selection.getRangeAt(0).deleteContents();
-    syncValue(true);
+    syncValue();
   };
 
   return (
