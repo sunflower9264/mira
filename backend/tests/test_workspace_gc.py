@@ -7,11 +7,10 @@ from app.services.runtime_paths import run_workspace, runtime_dir
 from app.services.workspace_gc import cleanup_orphan_run_workspaces
 
 
-def test_workspace_gc_removes_only_orphan_run_directories(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_workspace_gc_removes_only_orphan_run_directories(auth_client, configure_codex):
+    configure_codex()
     created = auth_client.post("/api/apps", json={"name": "Workspace GC"}).json()
     graph = {
-        "agent": "claude",
         "nodes": [
             {
                 "id": "input",

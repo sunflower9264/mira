@@ -6,7 +6,7 @@ import time
 import uuid
 from pathlib import Path
 
-from app.runtime.base import AgentChunk, AgentExecutionResult, AgentProviderStatus
+from app.runtime.base import AgentChunk, AgentExecutionResult, AgentRuntimeStatus
 from app.runtime.factory import set_runtime_override
 from app.services.runtime_paths import uploads_dir
 from app.utils import now_utc
@@ -15,8 +15,8 @@ from tests.runtime_mock import MockRuntime
 
 
 class TraceRuntime:
-    async def detect_status(self) -> AgentProviderStatus:
-        return AgentProviderStatus(
+    async def detect_status(self) -> AgentRuntimeStatus:
+        return AgentRuntimeStatus(
             installed=True,
             runnable=True,
             identity="trace-runtime",
@@ -101,7 +101,6 @@ def _wait_for_terminal(auth_client, run_id: str, *, timeout: float = 5.0) -> dic
 
 def _generate_graph() -> dict:
     return {
-        "agent": "claude",
         "nodes": [
             {
                 "id": "n_gen",
@@ -124,8 +123,8 @@ def _generate_graph() -> dict:
     }
 
 
-def test_run_step_trace_returns_llm_debug_payload(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_run_step_trace_returns_llm_debug_payload(auth_client, configure_codex):
+    configure_codex()
     app_id = _build_app(auth_client, graph=_generate_graph())
     set_runtime_override(TraceRuntime())
     try:
@@ -145,7 +144,6 @@ def test_run_step_trace_returns_llm_debug_payload(auth_client, enable_claude_age
     assert body["node_type"] == "generate"
     assert body["node_title"] == "Generate Trace"
     assert body["status"] == "success"
-    assert body["agent"] == "claude"
     assert body["model"] == "test-model"
     assert body["reasoning_effort"] == "high"
     assert "agent_session_id" not in body
@@ -168,10 +166,9 @@ def test_run_step_trace_returns_llm_debug_payload(auth_client, enable_claude_age
     assert body["artifacts"] == []
 
 
-def test_run_step_trace_rejects_non_llm_node(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_run_step_trace_rejects_non_llm_node(auth_client, configure_codex):
+    configure_codex()
     graph = {
-        "agent": "claude",
         "nodes": [
             {
                 "id": "n_input",
@@ -201,8 +198,8 @@ def test_run_step_trace_rejects_non_llm_node(auth_client, enable_claude_agent):
     assert response.json()["detail"] == "Trace 仅支持 LLM 节点"
 
 
-def test_run_step_trace_404_for_other_user(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_run_step_trace_404_for_other_user(auth_client, configure_codex):
+    configure_codex()
     app_id = _build_app(auth_client, graph=_generate_graph())
     created = auth_client.post("/api/runs", json={"app_id": app_id, "inputs": {}})
     assert created.status_code == 200, created.text

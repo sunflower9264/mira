@@ -10,13 +10,13 @@
 - 后端：在 `backend/` 执行 `uv sync --frozen`，用 uvicorn 启动 `app.main:app`。
 - 反向代理：nginx 对外监听 HTTP 端口，静态文件走 `/`，后端 API 走 `/api/`。
 - 数据：默认 SQLite，`DATABASE_URL` 指向部署数据目录内的数据库文件。
-- Runtime：Claude/Codex CLI 只在 Docker sandbox runtime 中执行，运行 homes、workspaces 和 CLI 缓存都属于本机运行产物。
+- Runtime：Codex App Server 只在 Docker sandbox runtime 中执行，运行 homes、workspaces 和 Codex 缓存都属于本机运行产物。
 
 真实部署目录、数据库、日志、备份、`.env`、runtime homes/workspaces、上传文件和构建产物都不应提交到源码仓库。
 
 ## Security
 
 - 不要把真实 `.env`、SQLite 数据库、上传文件、runtime homes/workspaces 或日志提交到 Git。
-- `JWT_SECRET` 和 `AGENT_CONFIG_SECRET` 必须随机生成，并和数据库备份一起保管。
+- `JWT_SECRET` 和 `CODEX_CONFIG_SECRET` 必须随机生成，并和数据库备份一起保管。
 - 共享或远程部署必须修改管理员密码，并配置 HTTPS、访问控制和备份策略。
-- 如果数据库和 `AGENT_CONFIG_SECRET` 同时泄漏，已保存的 Agent 配置可能被解密。
+- 如果数据库和 `CODEX_CONFIG_SECRET` 同时泄漏，已保存的 Codex 配置可能被解密。

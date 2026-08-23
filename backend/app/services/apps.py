@@ -106,8 +106,6 @@ def clone_graph(
         validate_asset_upload_ownership(cloned, source_owner_id)
     should_copy_uploads = bool(source_owner_id and target_owner_id and source_owner_id != target_owner_id)
     for node in cloned.get("nodes", []):
-        if "agent_session_id" in node:
-            node["agent_session_id"] = None
         if not should_copy_uploads or not isinstance(node, dict) or node.get("type") != "asset":
             continue
         if node.get("asset_kind") == "file":

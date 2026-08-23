@@ -70,13 +70,11 @@ class RunAgent:
         run: Run,
         channel: RunChannel,
         *,
-        agent: str,
         runtime_tools: RuntimeToolConfig | None,
     ) -> None:
         self.db = db
         self.run = run
         self.channel = channel
-        self.agent = agent
         self.runtime_tools = runtime_tools
         self.run_root = run_workspace(run.owner_id, run.app_id, run.id)
         self.workspaces = WorkspaceTree(self.run_root)
@@ -308,10 +306,17 @@ class RunAgent:
         expected = _expected_receipt_paths(manifests)
         evidence_hash = await asyncio.to_thread(tree_hash, staging)
         prompt = _join_prompt(node_id=node_id, source_ids=[item.id for item in sources])
-        runtime = get_runtime(self.agent, self.run.owner_id)
+        runtime = get_runtime(self.run.owner_id)
         chunks: list[str] = []
 
         async def on_chunk(chunk: AgentChunk) -> None:
+            if chunk.type == "session":
+                session_id = _session_id_from_chunk(chunk)
+                if session_id:
+                    coordinator.provider_session_id = session_id
+                    coordinator.fork_from_session_id = None
+                    await self.db.commit()
+                return
             if chunk.type == "text" and chunk.text:
                 chunks.append(chunk.text)
             await self.channel.publish(
@@ -472,6 +477,16 @@ def _expected_receipt_paths(
             if isinstance(path, str):
                 expected.setdefault(path, {})[branch_id] = change
     return expected
+
+
+def _session_id_from_chunk(chunk: AgentChunk) -> str | None:
+    raw = chunk.raw
+    if not isinstance(raw, dict):
+        return None
+    thread = raw.get("thread")
+    if isinstance(thread, dict) and isinstance(thread.get("id"), str):
+        return thread["id"]
+    return None
 
 
 def _validate_merge_receipt(

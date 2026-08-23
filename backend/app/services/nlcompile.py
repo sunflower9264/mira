@@ -35,7 +35,6 @@ from app.services import runtime_config
 from app.services.prompts import get_prompt_content, render_prompt
 from app.services.prompt_assistant import build_prompt_assistant_prompt, run_prompt_assistant
 from app.services.prompt_contracts import (
-    append_nlcompile_ask_user_rules,
     append_patch_protocol,
     build_structured_repair_prompt,
     max_attempts_for,
@@ -43,8 +42,7 @@ from app.services.prompt_contracts import (
 )
 from app.services.runtime_paths import nlcompile_workspace
 from app.services.runtime_uploads import RuntimeUploadRef, rewrite_runtime_upload_paths, runtime_upload_context
-from app.services.reasoning_effort import max_reasoning_effort_for_agent
-from app.services.settings import NO_ENABLED_AGENT_DETAIL, settings_out
+from app.services.reasoning_effort import max_reasoning_effort
 from app.services.structured_output import parse_structured_json_object
 from app.services.template import contains_template_token, strip_template_tokens
 from app.services.tools import RuntimeToolConfig, planning_runtime_tools_for_graph
@@ -52,30 +50,6 @@ from app.services.uploads import resolve_upload
 from app.utils import now_utc
 
 logger = logging.getLogger(__name__)
-
-_ASK_USER_TOOL_FAILURE_MARKERS = (
-    "user cancelled mcp tool call",
-    "user canceled mcp tool call",
-    "ask_user bridge is not configured",
-    "ask_user bridge returned invalid payload",
-    "bridge is not ready",
-    "haven't granted",
-    "requested permissions to use",
-    "permissions to use mcp__ask_user__ask_user",
-    "mira_ask_user_bridge_url",
-    "mira_ask_user_bridge_token",
-)
-_ASK_USER_BRIDGE_CONNECTION_MARKERS = (
-    "connection refused",
-    "failed to connect",
-    "connection reset",
-    "connection aborted",
-    "timed out",
-    "timeout",
-    "no route to host",
-)
-_ASK_USER_TOOL_FAILURE_DETAIL = "ask_user 工具调用失败，请检查 Agent MCP 配置后重试"
-_ASK_USER_WAITING_STOPPED_DETAIL = "ask_user runtime stopped while waiting; resume from persisted pending request"
 
 # 与前端 CONDITION_DEFAULT_BRANCH_KEY 对齐；condition cases 模式的隐式兜底 handle，
 # 用户分支不能复用这个 key。
@@ -439,14 +413,6 @@ async def apply_compile(
     session.history = _history_from_row(row)
     session.qa_history = _qa_history_from_history(session.history)
 
-    settings = await settings_out(db, reveal_keys=True)
-    graph_agent = str(session.current_graph.get("agent") or "").strip()
-    if not graph_agent:
-        raise HTTPException(status_code=400, detail="应用未配置 Agent")
-    agent = next((item for item in settings.agents if item.enabled and item.runtime == graph_agent), None)
-    if not agent:
-        raise HTTPException(status_code=400, detail=NO_ENABLED_AGENT_DETAIL)
-
     await runtime_config.write_configs(db)
     prompt_template = await get_prompt_content(db, "nlcompile_graph_patch")
     prompt_assistant_template = await get_prompt_content(db, "prompt_assistant")
@@ -461,14 +427,13 @@ async def apply_compile(
     )
     prompt = _append_initial_attachment_context(prompt, attachment_refs)
     _ensure_prompt_size(prompt)
-    runtime = get_runtime(agent.runtime, user_id)
+    runtime = get_runtime(user_id)
     _apply_row_update(row, status="applying", error=None)
     await db.commit()
     try:
         result = await _execute_apply_session(
             session=session,
             runtime=runtime,
-            agent=agent.runtime,
             prompt=prompt,
             prompt_assistant_template=prompt_assistant_template,
             graph_layout_template=graph_layout_template,
@@ -658,27 +623,17 @@ async def mark_active_nlcompile_sessions_interrupted(db: AsyncSession) -> int:
 
 
 async def _start_plan_session_from_row(db: AsyncSession, row: NlCompileSessionRow) -> NlCompileSession:
-    settings = await settings_out(db, reveal_keys=True)
-    if not any(item.enabled for item in settings.agents):
-        raise HTTPException(status_code=400, detail=NO_ENABLED_AGENT_DETAIL)
     graph = _graph_from_row(row)
-    graph_agent = str(graph.get("agent") or "").strip()
-    if not graph_agent:
-        raise HTTPException(status_code=400, detail="应用未配置 Agent")
-    agent = next((item for item in settings.agents if item.enabled and item.runtime == graph_agent), None)
-    if not agent:
-        raise HTTPException(status_code=400, detail=NO_ENABLED_AGENT_DETAIL)
 
     await runtime_config.write_configs(db)
     prompt_template = await get_prompt_content(db, "nlcompile_plan")
-    ask_user_protocol = await get_prompt_content(db, "ask_user_protocol")
     history = _history_from_row(row)
     attachment_refs = _initial_attachment_runtime_refs(row.user_id, history)
-    prompt = build_plan_prompt(row.instruction, graph, prompt_template, ask_user_protocol, history=history)
+    prompt = build_plan_prompt(row.instruction, graph, prompt_template, history=history)
     prompt = _append_initial_attachment_context(prompt, attachment_refs)
     _ensure_prompt_size(prompt)
-    runtime = get_runtime(agent.runtime, row.user_id)
-    planning_runtime_tools = await planning_runtime_tools_for_graph(db, graph, agent.runtime)
+    runtime = get_runtime(row.user_id)
+    planning_runtime_tools = await planning_runtime_tools_for_graph(db, graph)
     session = _session_from_row(row)
     session.response_future = asyncio.get_running_loop().create_future()
     session.cancel_event = asyncio.Event()
@@ -687,7 +642,6 @@ async def _start_plan_session_from_row(db: AsyncSession, row: NlCompileSessionRo
         _run_plan_session(
             session=session,
             runtime=runtime,
-            agent=agent.runtime,
             prompt=prompt,
             runtime_tools=planning_runtime_tools,
             attachment_refs=attachment_refs,
@@ -701,7 +655,6 @@ async def _run_plan_session(
     *,
     session: NlCompileSession,
     runtime: Any,
-    agent: str,
     prompt: str,
     runtime_tools: RuntimeToolConfig | None,
     attachment_refs: list[RuntimeUploadRef],
@@ -739,16 +692,9 @@ async def _run_plan_session(
 
     try:
         chunks: list[str] = []
-        diagnostic_chunks: list[str] = []
-
         async def on_chunk(chunk: AgentChunk) -> None:
-            if chunk.text:
-                if chunk.type == "text":
-                    chunks.append(chunk.text)
-                if chunk.type in {"text", "tool_result", "error"}:
-                    diagnostic_chunks.append(chunk.text)
-                    if chunk.raw:
-                        diagnostic_chunks.append(json.dumps(chunk.raw, ensure_ascii=False))
+            if chunk.type == "text" and chunk.text:
+                chunks.append(chunk.text)
 
         workspace = nlcompile_workspace(session.user_id)
         with runtime_upload_context(workspace, attachment_refs):
@@ -758,7 +704,7 @@ async def _run_plan_session(
                 session_id=None,
                 allowed_tools=None,
                 model=None,
-                reasoning_effort=max_reasoning_effort_for_agent(agent),
+                reasoning_effort=max_reasoning_effort(),
                 cwd=workspace,
                 on_chunk=on_chunk,
                 cancel_event=session.cancel_event or asyncio.Event(),
@@ -767,27 +713,7 @@ async def _run_plan_session(
                 runtime_policy="ask_user_plan",
                 output_schema=output_schema_for("nlcompile_plan"),
             )
-        ask_user_failure = _ask_user_tool_failure_detail([result.total_text, result.error, *diagnostic_chunks])
-        if ask_user_failure:
-            if await _preserve_waiting_plan_session_after_tool_failure(session):
-                logger.warning("nlcompile plan ask_user tool failure while waiting; preserved session: %s", ask_user_failure)
-                return
-            logger.warning("nlcompile plan ask_user tool failure: %s", ask_user_failure)
-            await _write_compile_row(
-                session.id,
-                status="failed",
-                pending_request=None,
-                error=_ASK_USER_TOOL_FAILURE_DETAIL,
-            )
-            _publish_compile_exception(
-                session,
-                HTTPException(status_code=502, detail=_ASK_USER_TOOL_FAILURE_DETAIL),
-            )
-            return
         if result.finished_with != "done":
-            if await _preserve_waiting_plan_session_after_tool_failure(session):
-                logger.warning("nlcompile plan runtime stopped while waiting: status=%s error=%s", result.finished_with, result.error)
-                return
             logger.warning("nlcompile plan runtime non-done: status=%s error=%s", result.finished_with, result.error)
             await _write_compile_row(
                 session.id,
@@ -804,7 +730,6 @@ async def _run_plan_session(
         raw_output = result.total_text or "".join(chunks)
         plan = await _repair_plan_output_if_needed(
             runtime=runtime,
-            agent=agent,
             prompt=runtime_prompt,
             raw_output=raw_output,
             user_id=session.user_id,
@@ -855,7 +780,6 @@ async def _run_plan_session(
 async def _repair_plan_output_if_needed(
     *,
     runtime: Any,
-    agent: str,
     prompt: str,
     raw_output: str,
     user_id: str,
@@ -892,7 +816,7 @@ async def _repair_plan_output_if_needed(
                 session_id=None,
                 allowed_tools=None,
                 model=None,
-                reasoning_effort=max_reasoning_effort_for_agent(agent),
+                reasoning_effort=max_reasoning_effort(),
                 cwd=workspace,
                 on_chunk=on_repair_chunk,
                 cancel_event=cancel_event,
@@ -917,7 +841,6 @@ async def _execute_apply_session(
     *,
     session: NlCompileSession,
     runtime: Any,
-    agent: str,
     prompt: str,
     prompt_assistant_template: str,
     graph_layout_template: str,
@@ -945,7 +868,7 @@ async def _execute_apply_session(
                 session_id=None,
                 allowed_tools=None,
                 model=None,
-                reasoning_effort=max_reasoning_effort_for_agent(agent),
+                reasoning_effort=max_reasoning_effort(),
                 cwd=workspace,
                 on_chunk=on_chunk,
                 cancel_event=session.cancel_event or asyncio.Event(),
@@ -965,7 +888,6 @@ async def _execute_apply_session(
             runtime=runtime,
             graph_layout_template=graph_layout_template,
             user_id=user_id,
-            agent=agent,
             prompt_assistant_template=prompt_assistant_template,
             cancel_event=session.cancel_event or asyncio.Event(),
             confirmed_plan=session.confirmed_plan,
@@ -999,7 +921,6 @@ async def _compile_completed_result(
     runtime: Any,
     graph_layout_template: str,
     user_id: str,
-    agent: str,
     prompt_assistant_template: str,
     cancel_event: asyncio.Event,
     confirmed_plan: dict[str, Any] | None = None,
@@ -1014,8 +935,6 @@ async def _compile_completed_result(
         "nodes": [dict(node) for node in current_graph.get("nodes", [])],
         "execution_edges": [dict(edge) for edge in current_graph.get("execution_edges", [])],
     }
-    if "agent" in current_graph:
-        new_graph["agent"] = current_graph["agent"]
     if "viewport" in current_graph:
         new_graph["viewport"] = current_graph["viewport"]
 
@@ -1044,7 +963,6 @@ async def _compile_completed_result(
         instruction,
         runtime=runtime,
         user_id=user_id,
-        agent=agent,
         template=prompt_assistant_template,
         cancel_event=cancel_event,
         confirmed_plan=confirmed_plan,
@@ -1068,7 +986,6 @@ async def _compile_completed_result(
         new_graph = await beautify_graph_layout_with_runtime(
             runtime=runtime,
             user_id=user_id,
-            agent=agent,
             graph=new_graph,
             node_sizes={},
             template=graph_layout_template,
@@ -1195,7 +1112,6 @@ async def _apply_prompt_assistant_to_patches(
     *,
     runtime: Any,
     user_id: str,
-    agent: str,
     template: str,
     cancel_event: asyncio.Event,
     confirmed_plan: dict[str, Any] | None = None,
@@ -1233,10 +1149,9 @@ async def _apply_prompt_assistant_to_patches(
                 return await run_prompt_assistant(
                     runtime=runtime,
                     user_id=user_id,
-                    agent=agent,
                     prompt=assistant_prompt,
                     model=str(node.get("model") or "").strip() or None,
-                    reasoning_effort=max_reasoning_effort_for_agent(agent),
+                    reasoning_effort=max_reasoning_effort(),
                     cancel_event=cancel_event,
                 )
             except HTTPException as exc:
@@ -1396,27 +1311,6 @@ def _publish_compile_exception(session: NlCompileSession, exc: HTTPException) ->
         session.response_future.set_exception(exc)
 
 
-async def _preserve_waiting_plan_session_after_tool_failure(session: NlCompileSession) -> bool:
-    async with SessionLocal() as db:
-        row = await db.get(NlCompileSessionRow, session.id)
-        request_payload = _json_loads(row.pending_request_json if row is not None else None, None)
-        if row is None or row.status != "waiting_for_user" or not isinstance(request_payload, dict):
-            return False
-
-    if session.resume_future is not None and not session.resume_future.done():
-        session.resume_future.set_result(AskUserResult(ok=False, error=_ASK_USER_WAITING_STOPPED_DETAIL))
-    if not session.response_future.done():
-        session.response_future.set_result(
-            {
-                "status": "waiting_for_user",
-                "compile_id": session.id,
-                "request": request_payload,
-            }
-        )
-    _compile_sessions.pop(session.id, None)
-    return True
-
-
 def _cancel_compile_session(session: NlCompileSession, *, notify_waiter: bool = False) -> None:
     if session.cancel_event is not None:
         session.cancel_event.set()
@@ -1501,7 +1395,6 @@ def build_plan_prompt(
     instruction: str,
     graph: dict[str, Any],
     template: str,
-    ask_user_protocol: str,
     history: list[dict[str, Any]] | None = None,
 ) -> str:
     base = render_prompt(
@@ -1514,7 +1407,7 @@ def build_plan_prompt(
     history_context = _history_context_for_plan(history or [])
     if history_context:
         base = "\n\n".join([base.strip(), "## 会话历史（必须继承）\n" + history_context])
-    return append_nlcompile_ask_user_rules(base, ask_user_protocol, final_shape='{"plan":{...}}')
+    return base.strip()
 
 
 def build_patch_prompt(
@@ -1572,19 +1465,6 @@ def build_repair_prompt(
 {json.dumps(failure_info, ensure_ascii=False)}
 """.strip()
     return append_patch_protocol(prompt)
-
-
-def _ask_user_tool_failure_detail(messages: list[str | None]) -> str | None:
-    text = "\n".join(item for item in messages if item)
-    lowered = text.lower()
-    for marker in _ASK_USER_TOOL_FAILURE_MARKERS:
-        if marker in lowered:
-            return marker
-    if "ask_user" in lowered or "mcp__ask_user__ask_user" in lowered:
-        for marker in _ASK_USER_BRIDGE_CONNECTION_MARKERS:
-            if marker in lowered:
-                return marker
-    return None
 
 
 def _failure_payload(failure: PatchFailure | None) -> dict[str, Any]:

@@ -12,7 +12,6 @@ import zlib
 import pytest
 
 from app.services import output_contracts, text_integrity
-from app.services.node_handlers import _parse_preflight_action
 from app.services.output_contracts import validate_contract_output
 
 
@@ -168,24 +167,6 @@ def test_output_html_rejects_unicode_replacement_character() -> None:
 
     assert result.ok is False
     assert "U+FFFD" in str(result.error)
-
-
-def test_preflight_action_rejects_unicode_replacement_character() -> None:
-    raw = json.dumps(
-        {
-            "action": "complete",
-            "rationale": None,
-            "request": None,
-            "decision_summary": "采用损坏�方案",
-            "reason": "信息充分",
-        },
-        ensure_ascii=False,
-    )
-
-    payload, feedback = _parse_preflight_action(raw)
-
-    assert payload is None
-    assert "U+FFFD" in str(feedback)
 
 
 @pytest.mark.parametrize("suffix", [".zip", ".tar"])

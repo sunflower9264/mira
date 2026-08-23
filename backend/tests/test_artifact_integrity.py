@@ -13,7 +13,7 @@ from sqlalchemy import select
 
 from app.db import SessionLocal
 from app.models import Run, Step
-from app.runtime.base import AgentChunk, AgentExecutionResult, AgentProviderStatus
+from app.runtime.base import AgentChunk, AgentExecutionResult, AgentRuntimeStatus
 from app.runtime.factory import set_runtime_override
 from app.services import run_orchestrator
 from app.services.artifacts import (
@@ -32,8 +32,8 @@ DECLARED_SHA256 = "4a461ec8a71c461e3fd44012ae36d9dd7401327b37f02e95a60ea01949708
 
 
 class ArtifactCatalogRuntime:
-    async def detect_status(self) -> AgentProviderStatus:
-        return AgentProviderStatus(
+    async def detect_status(self) -> AgentRuntimeStatus:
+        return AgentRuntimeStatus(
             installed=True,
             runnable=True,
             identity="artifact-catalog",
@@ -98,7 +98,6 @@ class FinalizeMutatingArtifactRuntime(ArtifactCatalogRuntime):
 
 def _artifact_graph() -> dict:
     return {
-        "agent": "claude",
         "nodes": [
             {
                 "id": "n_gen",
@@ -140,12 +139,12 @@ def _wait_for_terminal(auth_client, run_id: str, *, timeout: float = 6.0) -> dic
 
 def _run_artifact_app(
     auth_client,
-    enable_claude_agent,
+    configure_codex,
     *,
     runtime: ArtifactCatalogRuntime | None = None,
     expected_status: str = "success",
 ) -> tuple[str, str, dict]:
-    enable_claude_agent()
+    configure_codex()
     app_id = _build_app(auth_client)
     set_runtime_override(runtime or ArtifactCatalogRuntime())
     try:
@@ -159,8 +158,8 @@ def _run_artifact_app(
     return app_id, run_id, final
 
 
-def test_artifact_step_persists_versioned_relative_manifest(auth_client, enable_claude_agent):
-    _app_id, run_id, final = _run_artifact_app(auth_client, enable_claude_agent)
+def test_artifact_step_persists_versioned_relative_manifest(auth_client, configure_codex):
+    _app_id, run_id, final = _run_artifact_app(auth_client, configure_codex)
 
     output = next(step["output"] for step in final["steps"] if step["node_id"] == "n_gen")
     assert len(output) == 1
@@ -185,8 +184,8 @@ def test_artifact_step_persists_versioned_relative_manifest(auth_client, enable_
     assert artifact["output_port"] == "artifacts"
 
 
-def test_files_list_excludes_undeclared_workspace_files(auth_client, enable_claude_agent):
-    _app_id, run_id, _final = _run_artifact_app(auth_client, enable_claude_agent)
+def test_files_list_excludes_undeclared_workspace_files(auth_client, configure_codex):
+    _app_id, run_id, _final = _run_artifact_app(auth_client, configure_codex)
 
     response = auth_client.get(f"/api/runs/{run_id}/artifacts")
     assert response.status_code == 200, response.text
@@ -196,8 +195,8 @@ def test_files_list_excludes_undeclared_workspace_files(auth_client, enable_clau
     assert "source_kind" not in artifacts[0]
 
 
-def test_trace_uses_declared_artifact_catalog(auth_client, enable_claude_agent):
-    _app_id, run_id, _final = _run_artifact_app(auth_client, enable_claude_agent)
+def test_trace_uses_declared_artifact_catalog(auth_client, configure_codex):
+    _app_id, run_id, _final = _run_artifact_app(auth_client, configure_codex)
 
     response = auth_client.get(f"/api/runs/{run_id}/steps/n_gen/trace")
     assert response.status_code == 200, response.text
@@ -211,8 +210,8 @@ def test_trace_uses_declared_artifact_catalog(auth_client, enable_claude_agent):
     assert artifacts[0]["download_url"].startswith(f"/api/runs/{run_id}/artifacts/artifacts/n_gen/")
 
 
-def test_failed_artifact_contract_step_is_not_listed(auth_client, enable_claude_agent):
-    _app_id, run_id, _final = _run_artifact_app(auth_client, enable_claude_agent)
+def test_failed_artifact_contract_step_is_not_listed(auth_client, configure_codex):
+    _app_id, run_id, _final = _run_artifact_app(auth_client, configure_codex)
 
     async def mark_step_failed() -> None:
         async with SessionLocal() as db:
@@ -230,15 +229,15 @@ def test_failed_artifact_contract_step_is_not_listed(auth_client, enable_claude_
     assert response.json()["artifacts"] == []
 
 
-def test_undeclared_workspace_file_cannot_be_downloaded(auth_client, enable_claude_agent):
-    _app_id, run_id, _final = _run_artifact_app(auth_client, enable_claude_agent)
+def test_undeclared_workspace_file_cannot_be_downloaded(auth_client, configure_codex):
+    _app_id, run_id, _final = _run_artifact_app(auth_client, configure_codex)
 
     response = auth_client.get(f"/api/runs/{run_id}/artifacts/undeclared.tmp")
     assert response.status_code == 404
 
 
-def test_modified_manifest_artifact_cannot_be_downloaded(auth_client, enable_claude_agent):
-    app_id, run_id, _final = _run_artifact_app(auth_client, enable_claude_agent)
+def test_modified_manifest_artifact_cannot_be_downloaded(auth_client, configure_codex):
+    app_id, run_id, _final = _run_artifact_app(auth_client, configure_codex)
     artifact = auth_client.get(f"/api/runs/{run_id}/artifacts").json()["artifacts"][0]
     relative_path = urlparse(artifact["download_url"]).path.removeprefix(
         f"/api/runs/{run_id}/artifacts/"
@@ -261,10 +260,10 @@ def test_modified_manifest_artifact_cannot_be_downloaded(auth_client, enable_cla
     assert response.json()["detail"] == "文件完整性校验失败"
 
 
-def test_run_fails_when_declared_artifact_is_missing_before_success(auth_client, enable_claude_agent):
+def test_run_fails_when_declared_artifact_is_missing_before_success(auth_client, configure_codex):
     _app_id, _run_id, final = _run_artifact_app(
         auth_client,
-        enable_claude_agent,
+        configure_codex,
         runtime=FinalizeMutatingArtifactRuntime("delete"),
         expected_status="failed",
     )
@@ -275,10 +274,10 @@ def test_run_fails_when_declared_artifact_is_missing_before_success(auth_client,
     assert "declared.txt" in final["error"]
 
 
-def test_run_fails_when_declared_artifact_is_modified_before_success(auth_client, enable_claude_agent):
+def test_run_fails_when_declared_artifact_is_modified_before_success(auth_client, configure_codex):
     _app_id, _run_id, final = _run_artifact_app(
         auth_client,
-        enable_claude_agent,
+        configure_codex,
         runtime=FinalizeMutatingArtifactRuntime("modify"),
         expected_status="failed",
     )
@@ -291,7 +290,7 @@ def test_run_fails_when_declared_artifact_is_modified_before_success(auth_client
 
 def test_cancel_during_final_artifact_validation_stays_cancelled(
     auth_client,
-    enable_claude_agent,
+    configure_codex,
     monkeypatch,
 ):
     entered_validation = threading.Event()
@@ -305,7 +304,7 @@ def test_cancel_during_final_artifact_validation_stays_cancelled(
         return await original_validate(db, run)
 
     monkeypatch.setattr(run_orchestrator, "validate_run_artifact_integrity", pause_final_validation)
-    enable_claude_agent()
+    configure_codex()
     app_id = _build_app(auth_client)
     set_runtime_override(ArtifactCatalogRuntime())
     try:
@@ -330,8 +329,8 @@ def test_cancel_during_final_artifact_validation_stays_cancelled(
     assert final["status"] == "cancelled"
 
 
-def test_versioned_artifact_rejects_legacy_download_token(auth_client, enable_claude_agent):
-    app_id, run_id, _final = _run_artifact_app(auth_client, enable_claude_agent)
+def test_versioned_artifact_rejects_legacy_download_token(auth_client, configure_codex):
+    app_id, run_id, _final = _run_artifact_app(auth_client, configure_codex)
     artifact = auth_client.get(f"/api/runs/{run_id}/artifacts").json()["artifacts"][0]
     run = Run(id=run_id, app_id=app_id, owner_id="user_admin")
     relative_path = urlparse(artifact["download_url"]).path.removeprefix(
@@ -350,8 +349,8 @@ def test_versioned_artifact_rejects_legacy_download_token(auth_client, enable_cl
     assert response.json()["detail"] == "下载链接已失效"
 
 
-def test_hash_bound_token_requires_matching_sha256(auth_client, enable_claude_agent):
-    app_id, run_id, _final = _run_artifact_app(auth_client, enable_claude_agent)
+def test_hash_bound_token_requires_matching_sha256(auth_client, configure_codex):
+    app_id, run_id, _final = _run_artifact_app(auth_client, configure_codex)
     artifact = auth_client.get(f"/api/runs/{run_id}/artifacts").json()["artifacts"][0]
     run = Run(id=run_id, app_id=app_id, owner_id="user_admin")
     relative_path = urlparse(artifact["download_url"]).path.removeprefix(
@@ -371,8 +370,8 @@ def test_hash_bound_token_requires_matching_sha256(auth_client, enable_claude_ag
     assert exc_info.value.status_code == 401
 
 
-def test_artifact_remains_in_shared_workspace_without_ancestor_results_view(auth_client, enable_claude_agent):
-    app_id, run_id, final = _run_artifact_app(auth_client, enable_claude_agent)
+def test_artifact_remains_in_shared_workspace_without_ancestor_results_view(auth_client, configure_codex):
+    app_id, run_id, final = _run_artifact_app(auth_client, configure_codex)
     output_step = next(step for step in final["steps"] if step["node_id"] == "n_out")
     prompt = output_step["input"]["prompt"]
     assert DECLARED_SHA256 not in prompt

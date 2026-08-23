@@ -19,11 +19,11 @@ from app.services import node_handlers, output_contracts, run_orchestrator
 from app.services.office_documents import OfficeValidationUnavailable
 from app.services.run_orchestrator import start_run
 from app.services.runtime_paths import run_workspace, uploads_dir
-from app.runtime.base import AgentChunk, AgentExecutionResult, AgentProviderStatus, AskUserRequest
+from app.runtime.base import AgentChunk, AgentExecutionResult, AgentRuntimeStatus, AskUserRequest
 from app.runtime.factory import set_runtime_override
 from app.schemas.decision import DecisionGroup
 from app.services.admin import ADMIN_USER_ID
-from app.services.node_handlers import NodeResult, _ASK_USER_PREFLIGHT_OUTPUT_SCHEMA
+from app.services.node_handlers import NodeResult
 from app.services.workflow_data import WorkflowDataIntegrityError
 from app.utils import dumps, loads, now_utc
 from tests.runtime_mock import MockRuntime, _merge_workspace
@@ -33,8 +33,8 @@ class ReasoningCaptureRuntime:
     def __init__(self) -> None:
         self.calls: list[dict[str, str | list[str] | None]] = []
 
-    async def detect_status(self) -> AgentProviderStatus:
-        return AgentProviderStatus(
+    async def detect_status(self) -> AgentRuntimeStatus:
+        return AgentRuntimeStatus(
             installed=True,
             runnable=True,
             identity="reasoning-capture",
@@ -96,8 +96,8 @@ class LateSuccessAfterCancelRuntime:
         self.cancel_seen = threading.Event()
         self.returned = threading.Event()
 
-    async def detect_status(self) -> AgentProviderStatus:
-        return AgentProviderStatus(
+    async def detect_status(self) -> AgentRuntimeStatus:
+        return AgentRuntimeStatus(
             installed=True,
             runnable=True,
             identity="late-success-after-cancel",
@@ -152,8 +152,8 @@ class LateSuccessAfterCancelRuntime:
 
 
 class WorkspacePathRuntime:
-    async def detect_status(self) -> AgentProviderStatus:
-        return AgentProviderStatus(
+    async def detect_status(self) -> AgentRuntimeStatus:
+        return AgentRuntimeStatus(
             installed=True,
             runnable=True,
             identity="workspace-path",
@@ -196,8 +196,8 @@ class WorkspacePathRuntime:
 
 
 class GeneratedImageRuntime:
-    async def detect_status(self) -> AgentProviderStatus:
-        return AgentProviderStatus(
+    async def detect_status(self) -> AgentRuntimeStatus:
+        return AgentRuntimeStatus(
             installed=True,
             runnable=True,
             identity="generated-image",
@@ -256,8 +256,8 @@ class ToolResultOnlyHtmlRuntime:
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
 
-    async def detect_status(self) -> AgentProviderStatus:
-        return AgentProviderStatus(
+    async def detect_status(self) -> AgentRuntimeStatus:
+        return AgentRuntimeStatus(
             installed=True,
             runnable=True,
             identity="tool-result-html",
@@ -313,8 +313,8 @@ class ToolResultOnlyHtmlRuntime:
 
 
 class ArtifactContractRuntime:
-    async def detect_status(self) -> AgentProviderStatus:
-        return AgentProviderStatus(
+    async def detect_status(self) -> AgentRuntimeStatus:
+        return AgentRuntimeStatus(
             installed=True,
             runnable=True,
             identity="artifact-contract",
@@ -387,8 +387,8 @@ class OfficeArtifactRepairRuntime:
     def __init__(self) -> None:
         self.prompts: list[str] = []
 
-    async def detect_status(self) -> AgentProviderStatus:
-        return AgentProviderStatus(
+    async def detect_status(self) -> AgentRuntimeStatus:
+        return AgentRuntimeStatus(
             installed=True,
             runnable=True,
             identity="office-artifact-repair",
@@ -449,8 +449,8 @@ class SequenceRuntime:
         self.prompts: list[str] = []
         self.session_ids: list[str | None] = []
 
-    async def detect_status(self) -> AgentProviderStatus:
-        return AgentProviderStatus(
+    async def detect_status(self) -> AgentRuntimeStatus:
+        return AgentRuntimeStatus(
             installed=True,
             runnable=True,
             identity="sequence",
@@ -503,8 +503,8 @@ class OutputContractRepairRuntime:
     def __init__(self) -> None:
         self.execute_calls: list[dict[str, Any]] = []
 
-    async def detect_status(self) -> AgentProviderStatus:
-        return AgentProviderStatus(
+    async def detect_status(self) -> AgentRuntimeStatus:
+        return AgentRuntimeStatus(
             installed=True,
             runnable=True,
             identity="output-contract-repair",
@@ -551,8 +551,8 @@ class ParallelProbeRuntime:
         self._lock = asyncio.Lock()
         self._next_session = 0
 
-    async def detect_status(self) -> AgentProviderStatus:
-        return AgentProviderStatus(
+    async def detect_status(self) -> AgentRuntimeStatus:
+        return AgentRuntimeStatus(
             installed=True,
             runnable=True,
             identity="parallel-probe",
@@ -636,8 +636,8 @@ class ParallelProbeRuntime:
 
 
 class SharedWorkspaceRuntime:
-    async def detect_status(self) -> AgentProviderStatus:
-        return AgentProviderStatus(
+    async def detect_status(self) -> AgentRuntimeStatus:
+        return AgentRuntimeStatus(
             installed=True,
             runnable=True,
             identity="shared-workspace",
@@ -672,8 +672,8 @@ class CheckpointRerunWorkspaceRuntime:
     def __init__(self) -> None:
         self.rerun_cut_initial_state: str | None = None
 
-    async def detect_status(self) -> AgentProviderStatus:
-        return AgentProviderStatus(
+    async def detect_status(self) -> AgentRuntimeStatus:
+        return AgentRuntimeStatus(
             installed=True,
             runnable=True,
             identity="checkpoint-rerun-workspace",
@@ -757,11 +757,11 @@ def _read_workspace_context(cwd: Path) -> str:
 class AskUserJudgmentRuntime:
     def __init__(self) -> None:
         self.calls: list[str] = []
-        self.preflight_prompts: list[str] = []
+        self.plan_prompts: list[str] = []
         self.ask_calls = 0
 
-    async def detect_status(self) -> AgentProviderStatus:
-        return AgentProviderStatus(
+    async def detect_status(self) -> AgentRuntimeStatus:
+        return AgentRuntimeStatus(
             installed=True,
             runnable=True,
             identity="ask-user-judgment",
@@ -789,80 +789,55 @@ class AskUserJudgmentRuntime:
     ) -> AgentExecutionResult:
         self.calls.append(runtime_policy)
         if runtime_policy == "ask_user_plan":
-            self.preflight_prompts.append(prompt)
-            if _is_output_prompt(prompt):
-                text = json.dumps(
-                    {
-                        "action": "complete",
-                        "decision_summary": "无需额外提问。",
-                        "reason": "output 渲染不需要补充用户决策。",
-                    },
-                    ensure_ascii=False,
-                )
-                await on_chunk(AgentChunk(type="text", text=text))
-                return AgentExecutionResult(session_id=session_id, total_text=text, finished_with="done")
-            assert "推荐、选择、个性化、需求澄清、方案收敛类任务" in prompt
+            self.plan_prompts.append(prompt)
             context = prompt + "\n" + _read_workspace_context(cwd)
             should_ask = "我不知道看啥" in context and "直接推荐" not in context
-            if should_ask:
-                if "轻松入门" in prompt and "# 已有提问历史 JSON" in prompt:
-                    text = json.dumps(
-                        {
-                            "action": "complete",
-                            "decision_summary": "已根据用户回答收敛阅读偏好。",
-                            "reason": "用户已回答阅读偏好问题。",
-                        },
-                        ensure_ascii=False,
-                    )
-                else:
-                    self.ask_calls += 1
-                    request = AskUserRequest(
-                        context={"title": "确认阅读偏好", "summary": "推荐书籍前需要确认用户希望优先考虑的阅读方向。"},
-                        tool_use_id="toolu_judgment",
-                        groups=[
-                            DecisionGroup.model_validate(
-                                {
-                                    "id": "reading_taste",
-                                    "label": "你更想读哪类书？",
-                                    "type": "single",
-                                    "options": [
-                                        {
-                                            "label": "轻松入门",
-                                            "description": "推荐门槛低、节奏顺、适合重新开始阅读的书。",
-                                            "recommended": True,
-                                        },
-                                        {
-                                            "label": "文学深度",
-                                            "description": "推荐主题更厚重、表达更有文学性的作品。",
-                                            "recommended": False,
-                                        },
-                                        {
-                                            "label": "类型娱乐",
-                                            "description": "推荐剧情驱动、阅读快感更强的类型小说。",
-                                            "recommended": False,
-                                        },
-                                    ],
-                                }
-                            )
-                        ],
-                    )
-                    text = json.dumps(
-                        {
-                            "action": "ask",
-                            "rationale": "用户输入没有给出阅读偏好。",
-                            "request": request.model_dump(exclude_none=True),
-                        },
-                        ensure_ascii=False,
-                    )
-            else:
-                text = json.dumps(
-                    {
-                        "action": "complete",
-                        "decision_summary": "无需额外提问。",
-                        "reason": "用户偏好已足够具体或明确要求直接推荐。",
-                    },
-                    ensure_ascii=False,
+            summary = "无需额外提问。"
+            if should_ask and on_ask_user is not None:
+                self.ask_calls += 1
+                request = AskUserRequest(
+                    context={"title": "确认阅读偏好", "summary": "推荐书籍前需要确认用户希望优先考虑的阅读方向。"},
+                    tool_use_id="toolu_judgment",
+                    groups=[
+                        DecisionGroup.model_validate(
+                            {
+                                "id": "reading_taste",
+                                "label": "你更想读哪类书？",
+                                "type": "single",
+                                "options": [
+                                    {
+                                        "label": "轻松入门",
+                                        "description": "推荐门槛低、节奏顺、适合重新开始阅读的书。",
+                                        "recommended": True,
+                                    },
+                                    {
+                                        "label": "文学深度",
+                                        "description": "推荐主题更厚重、表达更有文学性的作品。",
+                                        "recommended": False,
+                                    },
+                                    {
+                                        "label": "类型娱乐",
+                                        "description": "推荐剧情驱动、阅读快感更强的类型小说。",
+                                        "recommended": False,
+                                    },
+                                ],
+                            }
+                        )
+                    ],
                 )
+                result = await on_ask_user(request)
+                if not result.ok:
+                    return AgentExecutionResult(
+                        session_id=session_id,
+                        total_text="",
+                        finished_with="error",
+                        error=result.error,
+                    )
+                summary = "已根据用户回答收敛阅读偏好。"
+            text = json.dumps(
+                {"decision_summary": summary, "reason": "测试 planning turn 已完成决策判断。"},
+                ensure_ascii=False,
+            )
             await on_chunk(AgentChunk(type="text", text=text))
             return AgentExecutionResult(session_id=session_id, total_text=text, finished_with="done")
 
@@ -878,18 +853,15 @@ class AskUserJudgmentRuntime:
         )
 
 
-class PreflightScriptRuntime:
-    def __init__(self, preflight_outputs: list[dict[str, Any] | str]) -> None:
-        self.preflight_outputs = list(preflight_outputs)
-        self.preflight_prompts: list[str] = []
-        self.preflight_output_schemas: list[dict[str, Any] | None] = []
-        self.execute_calls = 0
+class PlanningCaptureRuntime:
+    def __init__(self) -> None:
+        self.plan_prompts: list[str] = []
 
-    async def detect_status(self) -> AgentProviderStatus:
-        return AgentProviderStatus(
+    async def detect_status(self) -> AgentRuntimeStatus:
+        return AgentRuntimeStatus(
             installed=True,
             runnable=True,
-            identity="preflight-script",
+            identity="planning-capture",
             method="test",
             checked_at=now_utc(),
         )
@@ -913,25 +885,18 @@ class PreflightScriptRuntime:
         fork_session=False,
     ) -> AgentExecutionResult:
         if runtime_policy == "ask_user_plan":
-            self.preflight_prompts.append(prompt)
-            self.preflight_output_schemas.append(output_schema)
-            payload = self.preflight_outputs.pop(0) if self.preflight_outputs else _complete_action()
-            text = payload if isinstance(payload, str) else json.dumps(payload, ensure_ascii=False)
-            await on_chunk(AgentChunk(type="text", text=text))
-            return AgentExecutionResult(session_id=session_id, total_text=text, finished_with="done")
-        if _is_output_prompt(prompt):
-            text = _structured_text("<section>OK</section>", output_schema)
-            await on_chunk(AgentChunk(type="text", text=text))
-            return AgentExecutionResult(
-                session_id=session_id or "preflight_script_session",
-                total_text=text,
-                finished_with="done",
+            self.plan_prompts.append(prompt)
+            text = json.dumps(
+                {"decision_summary": "无需额外提问。", "reason": "测试输入信息充分。"},
+                ensure_ascii=False,
             )
-        self.execute_calls += 1
-        text = json.dumps({"result": "SCRIPT_RESULT"}, ensure_ascii=False) if output_schema is not None else "SCRIPT_RESULT"
+        elif _is_output_prompt(prompt):
+            text = _structured_text("<section>OK</section>", output_schema)
+        else:
+            text = json.dumps({"result": "SCRIPT_RESULT"}) if output_schema is not None else "SCRIPT_RESULT"
         await on_chunk(AgentChunk(type="text", text=text))
         return AgentExecutionResult(
-            session_id=session_id or "preflight_script_session",
+            session_id=session_id or "planning_capture_session",
             total_text=text,
             finished_with="done",
         )
@@ -939,11 +904,11 @@ class PreflightScriptRuntime:
 
 class ParallelTemplateRuntime:
     def __init__(self) -> None:
-        self.preflight_prompts: list[str] = []
+        self.plan_prompts: list[str] = []
         self.execute_prompts: list[str] = []
 
-    async def detect_status(self) -> AgentProviderStatus:
-        return AgentProviderStatus(
+    async def detect_status(self) -> AgentRuntimeStatus:
+        return AgentRuntimeStatus(
             installed=True,
             runnable=True,
             identity="parallel-template",
@@ -979,8 +944,9 @@ class ParallelTemplateRuntime:
             )
         context = prompt + "\n" + _read_workspace_context(cwd)
         if runtime_policy == "ask_user_plan":
-            self.preflight_prompts.append(prompt)
-            if "并行示例：必须先调用 ask_user" in context and "创始团队" not in context:
+            self.plan_prompts.append(prompt)
+            summary = "当前节点不需要额外提问。"
+            if "并行示例：必须先调用 ask_user" in context and on_ask_user is not None:
                 request = AskUserRequest(
                     context={"title": "确认并行示例方向", "summary": "继续执行前需要确认并行示例的目标受众。"},
                     tool_use_id="toolu_parallel_template",
@@ -1025,32 +991,19 @@ class ParallelTemplateRuntime:
                         ),
                     ],
                 )
-                text = json.dumps(
-                    {
-                        "action": "ask",
-                        "rationale": "示例模板要求先确认关键偏好。",
-                        "request": request.model_dump(exclude_none=True),
-                    },
-                    ensure_ascii=False,
-                )
-            elif "并行示例：必须先调用 ask_user" in context:
-                text = json.dumps(
-                    {
-                        "action": "complete",
-                        "decision_summary": "已确认目标受众和输出风格。",
-                        "reason": "用户回答已足够驱动示例模板继续执行。",
-                    },
-                    ensure_ascii=False,
-                )
-            else:
-                text = json.dumps(
-                    {
-                        "action": "complete",
-                        "decision_summary": "当前节点不需要额外提问。",
-                        "reason": "该并行分支可以直接根据已有主题执行。",
-                    },
-                    ensure_ascii=False,
-                )
+                result = await on_ask_user(request)
+                if not result.ok:
+                    return AgentExecutionResult(
+                        session_id=session_id,
+                        total_text="",
+                        finished_with="error",
+                        error=result.error,
+                    )
+                summary = "已确认目标受众和输出风格。"
+            text = json.dumps(
+                {"decision_summary": summary, "reason": "测试 planning turn 已完成决策判断。"},
+                ensure_ascii=False,
+            )
             await on_chunk(AgentChunk(type="text", text=text))
             return AgentExecutionResult(session_id=session_id, total_text=text, finished_with="done")
 
@@ -1093,29 +1046,6 @@ def _ask_action(group_id: str, label: str, options: list[str]) -> dict[str, Any]
         },
     }
 
-
-def _complete_action(summary: str = "无需额外提问。", reason: str = "信息已足够。") -> dict[str, Any]:
-    return {"action": "complete", "decision_summary": summary, "reason": reason}
-
-
-def _assert_strict_object_schema(schema: dict[str, Any], path: str = "$") -> None:
-    schema_type = schema.get("type")
-    is_object = schema_type == "object" or (isinstance(schema_type, list) and "object" in schema_type)
-    if is_object:
-        assert schema.get("additionalProperties") is False, path
-        properties = schema.get("properties")
-        if isinstance(properties, dict):
-            assert set(schema.get("required", [])) == set(properties), path
-            for key, value in properties.items():
-                if isinstance(value, dict):
-                    _assert_strict_object_schema(value, f"{path}.properties.{key}")
-    items = schema.get("items")
-    if isinstance(items, dict):
-        _assert_strict_object_schema(items, f"{path}.items")
-
-
-def test_ask_user_preflight_output_schema_is_codex_strict():
-    _assert_strict_object_schema(_ASK_USER_PREFLIGHT_OUTPUT_SCHEMA)
 
 
 def _execute_calls(runtime: ReasoningCaptureRuntime) -> list[dict[str, Any]]:
@@ -1245,10 +1175,9 @@ def _wait_for_status(auth_client, run_id: str, expected: set[str], *, timeout: f
     raise AssertionError(f"run did not enter {expected}: last={last}")
 
 
-def test_executor_runs_input_generate_output(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_executor_runs_input_generate_output(auth_client, configure_codex):
+    configure_codex()
     graph = {
-        "agent": "claude",
         "nodes": [
             USER_INPUT_NODE,
             _generate_node("n_gen", prompt="请生成 [[respond:GENERATED-TEXT]]"),
@@ -1276,10 +1205,9 @@ def test_executor_runs_input_generate_output(auth_client, enable_claude_agent):
     assert "agent_session_id" not in by_id["n_out"]
 
 
-def test_run_cannot_succeed_when_output_step_is_skipped(auth_client, enable_claude_agent, monkeypatch):
-    enable_claude_agent()
+def test_run_cannot_succeed_when_output_step_is_skipped(auth_client, configure_codex, monkeypatch):
+    configure_codex()
     graph = {
-        "agent": "claude",
         "nodes": [
             _generate_node("n_gen", prompt="生成 [[respond:READY]]"),
             _output_node("n_out", source="n_gen", prompt="展示 [[respond:<section>OK</section>]]"),
@@ -1304,12 +1232,11 @@ def test_run_cannot_succeed_when_output_step_is_skipped(auth_client, enable_clau
     assert next(step for step in final["steps"] if step["node_id"] == "n_out")["status"] == "skipped"
 
 
-def test_executor_runs_independent_generate_nodes_concurrently(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_executor_runs_independent_generate_nodes_concurrently(auth_client, configure_codex):
+    configure_codex()
     runtime = ParallelProbeRuntime(delay=0.25)
     set_runtime_override(runtime)
     graph = {
-        "agent": "claude",
         "nodes": [
             _generate_node("n_gen_a", prompt="A [[respond:A]]"),
             _generate_node("n_gen_b", prompt="B [[respond:B]]"),
@@ -1333,10 +1260,9 @@ def test_executor_runs_independent_generate_nodes_concurrently(auth_client, enab
         set_runtime_override(MockRuntime())
 
 
-def test_executor_waits_for_parallel_upstreams_before_merge(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_executor_waits_for_parallel_upstreams_before_merge(auth_client, configure_codex):
+    configure_codex()
     graph = {
-        "agent": "claude",
         "nodes": [
             _generate_node("n_gen_a", prompt="A [[delay:0.2]] [[respond:A_OUT]]"),
             _generate_node("n_gen_b", prompt="B [[delay:0.2]] [[respond:B_OUT]]"),
@@ -1362,10 +1288,9 @@ def test_executor_waits_for_parallel_upstreams_before_merge(auth_client, enable_
     assert by_id["n_out"]["started_at"] >= by_id["n_gen_b"]["finished_at"]
 
 
-def test_executor_does_not_start_new_downstream_after_parallel_failure(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_executor_does_not_start_new_downstream_after_parallel_failure(auth_client, configure_codex):
+    configure_codex()
     graph = {
-        "agent": "claude",
         "nodes": [
             _generate_node("n_gen_fail", prompt="please fail-now"),
             _generate_node("n_gen_slow", prompt="please [[delay:0.2]] [[respond:SLOW_OK]]"),
@@ -1382,14 +1307,13 @@ def test_executor_does_not_start_new_downstream_after_parallel_failure(auth_clie
     by_id = {step["node_id"]: step for step in final["steps"]}
     assert final["status"] == "failed"
     assert by_id["n_gen_fail"]["status"] == "failed"
-    assert by_id["n_gen_slow"]["status"] == "success"
+    assert by_id["n_gen_slow"]["status"] == "cancelled"
     assert by_id["n_out"]["status"] == "pending"
 
 
-def test_rerun_from_parallel_failure_reuses_only_ancestors(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_rerun_from_parallel_failure_reuses_only_ancestors(auth_client, configure_codex):
+    configure_codex()
     graph = {
-        "agent": "claude",
         "nodes": [
             USER_INPUT_NODE,
             _generate_node("n_gen_fail", prompt="please fail-now"),
@@ -1412,8 +1336,8 @@ def test_rerun_from_parallel_failure_reuses_only_ancestors(auth_client, enable_c
     assert source_final["status"] == "failed"
     assert source_final["recovery"] is None
     assert source_by_id["n_gen_fail"]["status"] == "failed"
-    assert source_by_id["n_gen_sibling"]["status"] == "success"
-    assert source_by_id["n_gen_sibling"]["output"] == "OLD_SIBLING"
+    assert source_by_id["n_gen_sibling"]["status"] == "cancelled"
+    assert source_by_id["n_gen_sibling"]["output"] is None
     assert source_by_id["n_out"]["status"] == "pending"
 
     continued = auth_client.post(f"/api/runs/{source['run_id']}/continue")
@@ -1443,24 +1367,23 @@ def test_rerun_from_parallel_failure_reuses_only_ancestors(auth_client, enable_c
     by_id = {step["node_id"]: step for step in final["steps"]}
     assert by_id["n_input"]["output"]["value"] == "parallel input"
     assert by_id["n_gen_fail"]["output"] == "REPAIRED_FAIL"
-    assert by_id["n_gen_sibling"]["status"] == "success"
-    assert by_id["n_gen_sibling"]["output"] == "OLD_SIBLING"
-    assert by_id["n_gen_sibling"]["reused_from_run_id"] == source["run_id"]
+    assert by_id["n_gen_sibling"]["status"] == "checkpoint_reused"
+    assert by_id["n_gen_sibling"]["output"] is None
+    assert by_id["n_gen_sibling"]["reused_from_run_id"] is None
     assert by_id["n_out"]["output"] == "<section>MERGED</section>"
 
     source_after = auth_client.get(f"/api/runs/{source['run_id']}").json()
     source_after_by_id = {step["node_id"]: step for step in source_after["steps"]}
     assert source_after["status"] == "failed"
     assert source_after_by_id["n_gen_fail"]["status"] == "failed"
-    assert source_after_by_id["n_gen_sibling"]["output"] == "OLD_SIBLING"
+    assert source_after_by_id["n_gen_sibling"]["output"] is None
 
 
-def test_executor_forks_sessions_only_for_real_fanout(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_executor_forks_sessions_only_for_real_fanout(auth_client, configure_codex):
+    configure_codex()
     runtime = ParallelProbeRuntime(delay=0.05)
     set_runtime_override(runtime)
     graph = {
-        "agent": "claude",
         "nodes": [
             _generate_node("n_root", prompt="root [[respond:ROOT]]"),
             _generate_node("n_child_a", prompt="child a [[respond:A]]"),
@@ -1511,12 +1434,11 @@ def test_executor_forks_sessions_only_for_real_fanout(auth_client, enable_claude
         set_runtime_override(MockRuntime())
 
 
-def test_executor_reuses_one_session_and_workspace_for_linear_nodes(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_executor_reuses_one_session_and_workspace_for_linear_nodes(auth_client, configure_codex):
+    configure_codex()
     runtime = ParallelProbeRuntime(delay=0.01)
     set_runtime_override(runtime)
     graph = {
-        "agent": "claude",
         "nodes": [
             _generate_node("n_a", prompt="linear a [[respond:A]]"),
             _generate_node("n_b", prompt="linear b [[respond:B]]"),
@@ -1549,11 +1471,10 @@ def test_executor_reuses_one_session_and_workspace_for_linear_nodes(auth_client,
         set_runtime_override(MockRuntime())
 
 
-def test_linear_downstream_reads_undeclared_upstream_workspace_file(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_linear_downstream_reads_undeclared_upstream_workspace_file(auth_client, configure_codex):
+    configure_codex()
     set_runtime_override(SharedWorkspaceRuntime())
     graph = {
-        "agent": "claude",
         "nodes": [
             _generate_node("n_a", prompt="write-private-file"),
             _generate_node("n_b", prompt="read-private-file"),
@@ -1576,12 +1497,11 @@ def test_linear_downstream_reads_undeclared_upstream_workspace_file(auth_client,
         set_runtime_override(MockRuntime())
 
 
-def test_executor_hides_sessions_on_diamond_fan_in(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_executor_hides_sessions_on_diamond_fan_in(auth_client, configure_codex):
+    configure_codex()
     runtime = ParallelProbeRuntime(delay=0.05)
     set_runtime_override(runtime)
     graph = {
-        "agent": "claude",
         "nodes": [
             _generate_node("n_root", prompt="root [[respond:ROOT]]"),
             _generate_node("n_child", prompt="child [[respond:CHILD]]"),
@@ -1604,11 +1524,10 @@ def test_executor_hides_sessions_on_diamond_fan_in(auth_client, enable_claude_ag
         set_runtime_override(MockRuntime())
 
 
-def test_parallel_ask_user_is_visible_before_sibling_finishes(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_parallel_ask_user_is_visible_before_sibling_finishes(auth_client, configure_codex):
+    configure_codex()
     ask = json.dumps(_ask_action("choice", "选择方向？", ["A", "B"])["request"], ensure_ascii=False)
     graph = {
-        "agent": "claude",
         "nodes": [
             _generate_node("n_ask", prompt=f"ask now [[ask_user:{ask}]] [[respond:ASK_DONE]]"),
             _generate_node("n_delay", prompt="delayed sibling [[delay:0.8]] [[respond:SLOW_DONE]]"),
@@ -1646,11 +1565,10 @@ def test_parallel_ask_user_is_visible_before_sibling_finishes(auth_client, enabl
     assert by_id["n_out"]["output"] == "<section>DONE</section>"
 
 
-def test_parallel_sibling_failure_overrides_visible_ask_user(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_parallel_sibling_failure_overrides_visible_ask_user(auth_client, configure_codex):
+    configure_codex()
     ask = json.dumps(_ask_action("choice", "选择方向？", ["A", "B"])["request"], ensure_ascii=False)
     graph = {
-        "agent": "claude",
         "nodes": [
             _generate_node("n_ask", prompt=f"ask now [[ask_user:{ask}]] [[respond:ASK_DONE]]"),
             _generate_node("n_fail", prompt="delayed failure [[delay:0.4]] fail-now"),
@@ -1673,17 +1591,16 @@ def test_parallel_sibling_failure_overrides_visible_ask_user(auth_client, enable
     by_id = {step["node_id"]: step for step in final["steps"]}
     assert final["status"] == "failed"
     assert final["recovery"] is None
-    assert by_id["n_ask"]["status"] == "waiting_for_user"
+    assert by_id["n_ask"]["status"] == "cancelled"
     assert by_id["n_fail"]["status"] == "failed"
     assert by_id["n_out"]["status"] == "pending"
 
 
-def test_parallel_ask_user_requests_are_queued(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_parallel_ask_user_requests_are_queued(auth_client, configure_codex):
+    configure_codex()
     ask_a = json.dumps(_ask_action("choice_a", "选择 A？", ["A1", "A2"])["request"], ensure_ascii=False)
     ask_b = json.dumps(_ask_action("choice_b", "选择 B？", ["B1", "B2"])["request"], ensure_ascii=False)
     graph = {
-        "agent": "claude",
         "nodes": [
             _generate_node("n_gen_a", prompt=f"ask a [[ask_user:{ask_a}]] [[respond:A_DONE]]"),
             _generate_node("n_gen_b", prompt=f"ask b [[ask_user:{ask_b}]] [[respond:B_DONE]]"),
@@ -1743,12 +1660,11 @@ def test_parallel_ask_user_requests_are_queued(auth_client, enable_claude_agent)
         set_runtime_override(MockRuntime())
 
 
-def test_parallel_second_ask_after_resume_keeps_run_waiting(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_parallel_second_ask_after_resume_keeps_run_waiting(auth_client, configure_codex):
+    configure_codex()
     ask_first = json.dumps(_ask_action("choice_first", "选择第一步？", ["A1", "A2"])["request"], ensure_ascii=False)
     ask_second = json.dumps(_ask_action("choice_second", "选择第二步？", ["B1", "B2"])["request"], ensure_ascii=False)
     graph = {
-        "agent": "claude",
         "nodes": [
             _generate_node("n_first", prompt=f"first ask [[ask_user:{ask_first}]] [[respond:FIRST_DONE]]"),
             _generate_node("n_short", prompt="short sibling [[delay:0.3]] [[respond:SHORT_DONE]]"),
@@ -1808,8 +1724,8 @@ def test_parallel_second_ask_after_resume_keeps_run_waiting(auth_client, enable_
         set_runtime_override(MockRuntime())
 
 
-def test_parallel_ask_gallery_template_runs_and_waits_for_user(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_parallel_ask_gallery_template_runs_and_waits_for_user(auth_client, configure_codex):
+    configure_codex()
     runtime = ParallelTemplateRuntime()
     set_runtime_override(runtime)
     try:
@@ -1835,7 +1751,7 @@ def test_parallel_ask_gallery_template_runs_and_waits_for_user(auth_client, enab
         by_id = {step["node_id"]: step for step in waiting["steps"]}
         ask = by_id["n_parallel_strategy"]["input"]["ask_user"]
         assert by_id["n_parallel_strategy"]["status"] == "waiting_for_user"
-        assert by_id["n_parallel_research"]["status"] == "success", by_id["n_parallel_research"]
+        assert by_id["n_parallel_research"]["status"] in {"running", "success"}, by_id["n_parallel_research"]
         assert [group["id"] for group in ask["groups"]] == ["target_audience", "output_style"]
         assert ask["groups"][0]["options"][-1]["label"] == "以上都不是"
 
@@ -1865,13 +1781,12 @@ def test_parallel_ask_gallery_template_runs_and_waits_for_user(auth_client, enab
         set_runtime_override(MockRuntime())
 
 
-def test_vague_recommendation_input_enters_ask_user_waiting(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_vague_recommendation_input_enters_ask_user_waiting(auth_client, configure_codex):
+    configure_codex()
     runtime = AskUserJudgmentRuntime()
     set_runtime_override(runtime)
     run_id: str | None = None
     graph = {
-        "agent": "claude",
         "nodes": [
             USER_INPUT_NODE,
             _generate_node("n_gen", prompt="你是一名专业文学助手。请根据用户的读书偏好推荐 5 本书。"),
@@ -1922,12 +1837,11 @@ def test_vague_recommendation_input_enters_ask_user_waiting(auth_client, enable_
         set_runtime_override(MockRuntime())
 
 
-def test_specific_recommendation_input_can_skip_ask_user(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_specific_recommendation_input_can_skip_ask_user(auth_client, configure_codex):
+    configure_codex()
     runtime = AskUserJudgmentRuntime()
     set_runtime_override(runtime)
     graph = {
-        "agent": "claude",
         "nodes": [
             USER_INPUT_NODE,
             _generate_node("n_gen", prompt="你是一名专业文学助手。请根据用户的读书偏好推荐 5 本书。"),
@@ -1956,263 +1870,9 @@ def test_specific_recommendation_input_can_skip_ask_user(auth_client, enable_cla
         set_runtime_override(MockRuntime())
 
 
-def test_explicit_question_request_retries_invalid_preflight_complete(auth_client, enable_claude_agent):
-    enable_claude_agent()
-    runtime = PreflightScriptRuntime(
-        [
-            _complete_action("无需额外提问。", "按常见阅读偏好先推荐。"),
-            _ask_action("reading_taste", "你想先按哪种阅读偏好筛选？", ["轻松", "文学", "悬疑"]),
-        ]
-    )
-    set_runtime_override(runtime)
-    run_id: str | None = None
-    graph = {
-        "agent": "claude",
-        "nodes": [
-            USER_INPUT_NODE,
-            _generate_node("n_gen", prompt="请根据用户偏好推荐书。"),
-        ],
-        "execution_edges": [{"id": "e1", "source": "n_input", "target": "n_gen"}],
-    }
 
-    try:
-        app_id = _build_app(auth_client, graph=graph)
-        run = auth_client.post(
-            "/api/runs",
-            json={"app_id": app_id, "inputs": {"n_input": "问我几个问题在确定找什么书"}},
-        ).json()
-        run_id = run["run_id"]
-        waiting = _wait_for_status(auth_client, run_id, {"waiting_for_user"})
-        by_id = {step["node_id"]: step for step in waiting["steps"]}
-        ask = by_id["n_gen"]["input"]["ask_user"]
-        assert len(runtime.preflight_prompts) == 2
-        assert ask["groups"][0]["id"] == "reading_taste"
-        assert runtime.execute_calls == 0
-    finally:
-        if run_id:
-            auth_client.post(f"/api/runs/{run_id}/cancel")
-        set_runtime_override(MockRuntime())
-
-
-def test_preflight_ignores_extra_json_after_valid_action(auth_client, enable_claude_agent):
-    enable_claude_agent()
-    action = json.dumps(
-        _complete_action(
-            "已获取足够信息：行业为农业，需生成 3-5 个软著选题。",
-            "用户已明确提供行业领域和输出要求，无需额外澄清。",
-        ),
-        ensure_ascii=False,
-    )
-    runtime = PreflightScriptRuntime(
-        [
-            "\n\n".join(
-                [
-                    action,
-                    "```json",
-                    json.dumps(
-                        {
-                            "topics": [
-                                {
-                                    "name": "农田智能灌溉决策系统",
-                                    "description": "根据土壤墒情和气象数据生成灌溉策略。",
-                                }
-                            ]
-                        },
-                        ensure_ascii=False,
-                    ),
-                    "```",
-                ]
-            )
-        ]
-    )
-    set_runtime_override(runtime)
-    graph = {
-        "agent": "claude",
-        "nodes": [
-            _generate_node("n_gen", prompt="请基于农业行业生成 3-5 个软著选题。"),
-        ],
-        "execution_edges": [],
-    }
-
-    try:
-        app_id = _build_app(auth_client, graph=graph)
-        run = auth_client.post("/api/runs", json={"app_id": app_id, "inputs": {}}).json()
-
-        final = _wait_for_terminal(auth_client, run["run_id"])
-        by_id = {step["node_id"]: step for step in final["steps"]}
-        assert final["status"] == "success", final
-        assert by_id["n_gen"]["status"] == "success"
-        assert by_id["n_gen"]["output"] == "SCRIPT_RESULT"
-        assert runtime.execute_calls == 1
-        assert runtime.preflight_output_schemas[0]["properties"]["action"]["enum"] == ["ask", "complete"]
-        assert "输出该 JSON 对象后必须立即停止" in runtime.preflight_prompts[0]
-    finally:
-        set_runtime_override(MockRuntime())
-
-
-def test_preflight_can_ask_multiple_rounds_before_execute(auth_client, enable_claude_agent):
-    enable_claude_agent()
-    runtime = PreflightScriptRuntime(
-        [
-            _ask_action("reading_taste", "你更想读哪类书？", ["轻松", "文学", "悬疑"]),
-            _ask_action("reading_length", "你能接受多长篇幅？", ["短篇", "中篇", "长篇"]),
-            _complete_action("已根据两轮回答收敛书单偏好。", "用户已回答类型和篇幅。"),
-        ]
-    )
-    set_runtime_override(runtime)
-    graph = {
-        "agent": "claude",
-        "nodes": [
-            USER_INPUT_NODE,
-            _generate_node("n_gen", prompt="请根据用户偏好推荐书。"),
-        ],
-        "execution_edges": [{"id": "e1", "source": "n_input", "target": "n_gen"}],
-    }
-
-    try:
-        app_id = _build_app(auth_client, graph=graph)
-        run = auth_client.post(
-            "/api/runs",
-            json={"app_id": app_id, "inputs": {"n_input": "我不知道看啥，先问我几个问题"}},
-        ).json()
-        run_id = run["run_id"]
-
-        first = _wait_for_status(auth_client, run_id, {"waiting_for_user"})
-        first_ask = {step["node_id"]: step for step in first["steps"]}["n_gen"]["input"]["ask_user"]
-        response = auth_client.post(
-            f"/api/runs/{run_id}/resume",
-            json={
-                "node_id": "n_gen",
-                "tool_use_id": first_ask["tool_use_id"],
-                "answers": [{"group_id": "reading_taste", "selected": ["轻松"]}],
-            },
-        )
-        assert response.status_code == 204, response.text
-
-        second = _wait_for_status(auth_client, run_id, {"waiting_for_user"})
-        second_step = {step["node_id"]: step for step in second["steps"]}["n_gen"]
-        second_ask = second_step["input"]["ask_user"]
-        assert second_ask["groups"][0]["id"] == "reading_length"
-        response = auth_client.post(
-            f"/api/runs/{run_id}/resume",
-            json={
-                "node_id": "n_gen",
-                "tool_use_id": second_ask["tool_use_id"],
-                "answers": [{"group_id": "reading_length", "selected": ["短篇"]}],
-            },
-        )
-        assert response.status_code == 204, response.text
-
-        final = _wait_for_terminal(auth_client, run_id)
-        final_step = {step["node_id"]: step for step in final["steps"]}["n_gen"]
-        assert final["status"] == "success", final
-        assert final_step["output"] == "SCRIPT_RESULT"
-        assert len(final_step["input"]["ask_user_preflight"]["history"]) == 2
-        assert runtime.execute_calls == 1
-    finally:
-        set_runtime_override(MockRuntime())
-
-
-def test_preflight_has_no_fixed_ask_user_round_limit(auth_client, enable_claude_agent):
-    enable_claude_agent()
-    rounds = [
-        ("reading_taste", "你更想读哪类书？", "轻松"),
-        ("reading_length", "你能接受多长篇幅？", "短篇"),
-        ("reading_tone", "你偏好什么叙事风格？", "温和"),
-        ("reading_region", "你更想看哪个地区作品？", "不限"),
-    ]
-    runtime = PreflightScriptRuntime(
-        [
-            *[
-                _ask_action(group_id, label, [selected, f"{selected}备选"])
-                for group_id, label, selected in rounds
-            ],
-            _complete_action("已根据四轮回答收敛书单偏好。", "用户已回答类型、篇幅、风格和地区。"),
-        ]
-    )
-    set_runtime_override(runtime)
-    graph = {
-        "agent": "claude",
-        "nodes": [
-            USER_INPUT_NODE,
-            _generate_node("n_gen", prompt="请根据用户偏好推荐书。"),
-        ],
-        "execution_edges": [{"id": "e1", "source": "n_input", "target": "n_gen"}],
-    }
-
-    try:
-        app_id = _build_app(auth_client, graph=graph)
-        run = auth_client.post(
-            "/api/runs",
-            json={"app_id": app_id, "inputs": {"n_input": "我不知道看啥，先问我几个问题"}},
-        ).json()
-        run_id = run["run_id"]
-
-        for group_id, _label, selected in rounds:
-            waiting = _wait_for_status(auth_client, run_id, {"waiting_for_user"})
-            ask = {step["node_id"]: step for step in waiting["steps"]}["n_gen"]["input"]["ask_user"]
-            assert ask["groups"][0]["id"] == group_id
-            response = auth_client.post(
-                f"/api/runs/{run_id}/resume",
-                json={
-                    "node_id": "n_gen",
-                    "tool_use_id": ask["tool_use_id"],
-                    "answers": [{"group_id": group_id, "selected": [selected]}],
-                },
-            )
-            assert response.status_code == 204, response.text
-
-        final = _wait_for_terminal(auth_client, run_id)
-        final_step = {step["node_id"]: step for step in final["steps"]}["n_gen"]
-        assert final["status"] == "success", final
-        assert final_step["output"] == "SCRIPT_RESULT"
-        assert len(final_step["input"]["ask_user_preflight"]["history"]) == 4
-        assert runtime.execute_calls == 1
-    finally:
-        set_runtime_override(MockRuntime())
-
-
-def test_preflight_rejects_fabricated_user_cancellation(auth_client, enable_claude_agent):
-    enable_claude_agent()
-    runtime = PreflightScriptRuntime(
-        [
-            _complete_action(
-                "用户取消了偏好提问；后续基于原始输入推荐。",
-                "当前无法继续获取更多决策信息。",
-            ),
-            _complete_action(
-                "用户取消了偏好提问；后续基于原始输入推荐。",
-                "当前无法继续获取更多决策信息。",
-            ),
-        ]
-    )
-    set_runtime_override(runtime)
-    graph = {
-        "agent": "claude",
-        "nodes": [
-            USER_INPUT_NODE,
-            _generate_node("n_gen", prompt="请根据用户偏好推荐书。"),
-        ],
-        "execution_edges": [{"id": "e1", "source": "n_input", "target": "n_gen"}],
-    }
-
-    try:
-        app_id = _build_app(auth_client, graph=graph)
-        run = auth_client.post(
-            "/api/runs",
-            json={"app_id": app_id, "inputs": {"n_input": "我不知道看啥，最近想找本书"}},
-        ).json()
-        final = _wait_for_terminal(auth_client, run["run_id"])
-        by_id = {step["node_id"]: step for step in final["steps"]}
-        assert final["status"] == "failed"
-        assert "没有历史回答" in (by_id["n_gen"]["error"] or "")
-        assert runtime.execute_calls == 0
-    finally:
-        set_runtime_override(MockRuntime())
-
-
-def test_executor_uses_run_graph_snapshot_after_app_changes(auth_client, enable_claude_agent, monkeypatch):
-    enable_claude_agent()
+def test_executor_uses_run_graph_snapshot_after_app_changes(auth_client, configure_codex, monkeypatch):
+    configure_codex()
 
     from app.api import runs as runs_api
 
@@ -2221,7 +1881,6 @@ def test_executor_uses_run_graph_snapshot_after_app_changes(auth_client, enable_
 
     monkeypatch.setattr(runs_api, "schedule_run", _no_schedule)
     graph = {
-        "agent": "claude",
         "nodes": [
             USER_INPUT_NODE,
             _generate_node("n_gen", prompt="请生成 [[respond:SNAPSHOT]]"),
@@ -2238,7 +1897,6 @@ def test_executor_uses_run_graph_snapshot_after_app_changes(auth_client, enable_
     ).json()
 
     changed_graph = {
-        "agent": "claude",
         "nodes": [USER_INPUT_NODE],
         "execution_edges": [],
     }
@@ -2256,10 +1914,9 @@ def test_executor_uses_run_graph_snapshot_after_app_changes(auth_client, enable_
     assert by_id["n_out"]["status"] == "success"
 
 
-def test_rerun_from_reuses_ancestor_outputs_and_uses_current_graph(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_rerun_from_reuses_ancestor_outputs_and_uses_current_graph(auth_client, configure_codex):
+    configure_codex()
     graph = {
-        "agent": "claude",
         "nodes": [
             USER_INPUT_NODE,
             _generate_node("n_gen_a", prompt="第一步 [[respond:OLD_A]]"),
@@ -2280,7 +1937,6 @@ def test_rerun_from_reuses_ancestor_outputs_and_uses_current_graph(auth_client, 
     assert source_final["status"] == "success"
 
     current_graph = {
-        "agent": "claude",
         "nodes": [
             USER_INPUT_NODE,
             _generate_node("n_gen_a", prompt="第一步 [[respond:NEW_A_SHOULD_NOT_RUN]]"),
@@ -2322,13 +1978,12 @@ def test_rerun_from_reuses_ancestor_outputs_and_uses_current_graph(auth_client, 
     assert {step["node_id"]: step for step in source_after["steps"]}["n_gen_a"]["output"] == "OLD_A"
 
 
-def test_rerun_from_forks_frozen_checkpoint_session_without_exposing_it(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_rerun_from_forks_frozen_checkpoint_session_without_exposing_it(auth_client, configure_codex):
+    configure_codex()
     runtime = ParallelProbeRuntime(delay=0.01)
     set_runtime_override(runtime)
     try:
         graph = {
-            "agent": "claude",
             "nodes": [
                 USER_INPUT_NODE,
                 _generate_node("n_gen_a", prompt="第一步 [[respond:OLD_A]]"),
@@ -2350,7 +2005,6 @@ def test_rerun_from_forks_frozen_checkpoint_session_without_exposing_it(auth_cli
         assert "agent_session_id" not in source_by_id["n_gen_a"]
 
         current_graph = {
-            "agent": "claude",
             "nodes": [
                 USER_INPUT_NODE,
                 _generate_node("n_gen_a", prompt="第一步 [[respond:NEW_A_SHOULD_NOT_RUN]]"),
@@ -2389,13 +2043,12 @@ def test_rerun_from_forks_frozen_checkpoint_session_without_exposing_it(auth_cli
 
 def test_rerun_from_restores_cut_checkpoint_when_same_branch_has_later_frozen_checkpoint(
     auth_client,
-    enable_claude_agent,
+    configure_codex,
 ):
-    enable_claude_agent()
+    configure_codex()
     runtime = CheckpointRerunWorkspaceRuntime()
     set_runtime_override(runtime)
     source_graph = {
-        "agent": "claude",
         "nodes": [
             _generate_node("n_before", prompt="checkpoint-before"),
             _generate_node("n_cut", prompt="source-cut"),
@@ -2415,7 +2068,6 @@ def test_rerun_from_restores_cut_checkpoint_when_same_branch_has_later_frozen_ch
         assert source_final["status"] == "success", source_final
 
         current_graph = {
-            "agent": "claude",
             "nodes": [
                 _generate_node("n_before", prompt="frozen-before"),
                 _generate_node("n_cut", prompt="rerun-cut"),
@@ -2449,10 +2101,9 @@ def test_rerun_from_restores_cut_checkpoint_when_same_branch_has_later_frozen_ch
         set_runtime_override(MockRuntime())
 
 
-def test_rerun_cut_bypasses_new_upstream_and_ignores_upstream_input_override(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_rerun_cut_bypasses_new_upstream_and_ignores_upstream_input_override(auth_client, configure_codex):
+    configure_codex()
     source_graph = {
-        "agent": "claude",
         "nodes": [
             USER_INPUT_NODE,
             _generate_node("n_a", prompt="source a [[respond:OLD_A]]"),
@@ -2472,7 +2123,6 @@ def test_rerun_cut_bypasses_new_upstream_and_ignores_upstream_input_override(aut
     assert _wait_for_terminal(auth_client, source["run_id"])["status"] == "success"
 
     latest_graph = {
-        "agent": "claude",
         "nodes": [
             USER_INPUT_NODE,
             _generate_node("n_new", prompt="must not run [[respond:NEW_UPSTREAM]]"),
@@ -2509,10 +2159,9 @@ def test_rerun_cut_bypasses_new_upstream_and_ignores_upstream_input_override(aut
     assert by_id["n_out"]["output"] == "<section>NEW</section>"
 
 
-def test_rerun_from_rejects_cut_without_pre_checkpoint(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_rerun_from_rejects_cut_without_pre_checkpoint(auth_client, configure_codex):
+    configure_codex()
     graph = {
-        "agent": "claude",
         "nodes": [
             _generate_node("n_gen_fail", prompt="please fail-now"),
             _output_node("n_out", source="n_gen_fail"),
@@ -2532,10 +2181,9 @@ def test_rerun_from_rejects_cut_without_pre_checkpoint(auth_client, enable_claud
     assert "workspace checkpoint" in response.json()["detail"]
 
 
-def test_rerun_from_condition_branch_override_forces_branch(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_rerun_from_condition_branch_override_forces_branch(auth_client, configure_codex):
+    configure_codex()
     graph = {
-        "agent": "claude",
         "nodes": [
             USER_INPUT_NODE,
             _condition_node(
@@ -2615,10 +2263,9 @@ def test_rerun_from_condition_branch_override_forces_branch(auth_client, enable_
     assert by_id["n_no"]["output"] == "NO_NEW"
 
 
-def test_rerun_replays_reused_condition_branch_on_current_graph(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_rerun_replays_reused_condition_branch_on_current_graph(auth_client, configure_codex):
+    configure_codex()
     graph = {
-        "agent": "claude",
         "nodes": [
             _condition_node(
                 "n_cond",
@@ -2659,10 +2306,9 @@ def test_rerun_replays_reused_condition_branch_on_current_graph(auth_client, ena
     assert by_id["n_no"]["status"] == "skipped"
 
 
-def test_rerun_rejects_skipped_condition_branch_without_checkpoint(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_rerun_rejects_skipped_condition_branch_without_checkpoint(auth_client, configure_codex):
+    configure_codex()
     graph = {
-        "agent": "claude",
         "nodes": [
             _condition_node(
                 "n_cond",
@@ -2696,10 +2342,9 @@ def test_rerun_rejects_skipped_condition_branch_without_checkpoint(auth_client, 
     assert "workspace checkpoint" in response.json()["detail"]
 
 
-def test_rerun_from_condition_branch_override_rejects_invalid_branch(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_rerun_from_condition_branch_override_rejects_invalid_branch(auth_client, configure_codex):
+    configure_codex()
     graph = {
-        "agent": "claude",
         "nodes": [
             _condition_node(
                 "n_cond",
@@ -2734,10 +2379,9 @@ def test_rerun_from_condition_branch_override_rejects_invalid_branch(auth_client
     assert "condition 分支不存在" in invalid.json()["detail"]
 
 
-def test_rerun_from_failed_node_uses_current_fixed_prompt(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_rerun_from_failed_node_uses_current_fixed_prompt(auth_client, configure_codex):
+    configure_codex()
     graph = {
-        "agent": "claude",
         "nodes": [
             USER_INPUT_NODE,
             _generate_node("n_gen", prompt="please fail-now"),
@@ -2783,10 +2427,9 @@ def test_rerun_from_failed_node_uses_current_fixed_prompt(auth_client, enable_cl
     assert {step["node_id"]: step for step in source_after["steps"]}["n_gen"]["status"] == "failed"
 
 
-def test_rerun_from_failed_node_ignores_changed_input_before_checkpoint(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_rerun_from_failed_node_ignores_changed_input_before_checkpoint(auth_client, configure_codex):
+    configure_codex()
     graph = {
-        "agent": "claude",
         "nodes": [
             USER_INPUT_NODE,
             _generate_node("n_gen", prompt="please fail-now"),
@@ -2835,10 +2478,9 @@ def test_rerun_from_failed_node_ignores_changed_input_before_checkpoint(auth_cli
     assert by_id["n_gen"]["output"] == "REPAIRED"
 
 
-def test_rerun_from_allows_deleted_old_input_when_inputs_omitted(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_rerun_from_allows_deleted_old_input_when_inputs_omitted(auth_client, configure_codex):
+    configure_codex()
     graph = {
-        "agent": "claude",
         "nodes": [
             USER_INPUT_NODE,
             _generate_node("n_gen", prompt="生成 [[respond:OLD]]"),
@@ -2852,7 +2494,6 @@ def test_rerun_from_allows_deleted_old_input_when_inputs_omitted(auth_client, en
     assert _wait_for_terminal(auth_client, source["run_id"])["status"] == "success"
 
     current_graph = {
-        "agent": "claude",
         "nodes": [_generate_node("n_gen", prompt="生成 [[respond:NEW]]")],
         "execution_edges": [],
     }
@@ -2870,13 +2511,12 @@ def test_rerun_from_allows_deleted_old_input_when_inputs_omitted(auth_client, en
     assert final["steps"][0]["output"] == "NEW"
 
 
-def test_executor_passes_node_reasoning_effort_with_low_default(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_executor_passes_node_reasoning_effort_with_low_default(auth_client, configure_codex):
+    configure_codex()
     runtime = ReasoningCaptureRuntime()
     set_runtime_override(runtime)
     try:
         graph = {
-            "agent": "claude",
             "nodes": [
                 _generate_node("n_gen", prompt="生成"),
                 {
@@ -2897,13 +2537,12 @@ def test_executor_passes_node_reasoning_effort_with_low_default(auth_client, ena
     assert [call["reasoning_effort"] for call in execute_calls] == ["low", "high"]
 
 
-def test_executor_ignores_legacy_node_allowed_tools(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_executor_ignores_legacy_node_allowed_tools(auth_client, configure_codex):
+    configure_codex()
     runtime = ReasoningCaptureRuntime()
     set_runtime_override(runtime)
     try:
         graph = {
-            "agent": "claude",
             "nodes": [
                 {
                     **_generate_node("n_gen", prompt="生成"),
@@ -2923,8 +2562,8 @@ def test_executor_ignores_legacy_node_allowed_tools(auth_client, enable_claude_a
     assert all(call["allowed_tools"] is None for call in execute_calls)
 
 
-def test_executor_passes_app_scoped_tools(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_executor_passes_app_scoped_tools(auth_client, configure_codex):
+    configure_codex()
     allowed_skill = _upload_skill(auth_client, "allowed-skill")
     blocked_skill = _upload_skill(auth_client, "blocked-skill")
     assert auth_client.post(
@@ -2933,7 +2572,6 @@ def test_executor_passes_app_scoped_tools(auth_client, enable_claude_agent):
             "id": "mcp_allowed",
             "name": "allowed-mcp",
             "enabled": True,
-            "provider_ids": ["claude-code", "codex"],
             "url": "http://localhost:9999/allowed",
             "headers": [{"name": "X-Test", "value": "1"}],
             "env_var_names": [],
@@ -2945,7 +2583,6 @@ def test_executor_passes_app_scoped_tools(auth_client, enable_claude_agent):
             "id": "mcp_blocked",
             "name": "blocked-mcp",
             "enabled": True,
-            "provider_ids": ["claude-code", "codex"],
             "url": "http://localhost:9999/blocked",
             "headers": [],
             "env_var_names": [],
@@ -2956,7 +2593,6 @@ def test_executor_passes_app_scoped_tools(auth_client, enable_claude_agent):
     set_runtime_override(runtime)
     try:
         graph = {
-            "agent": "claude",
             "tools": {
                 "disabled_tool_ids": [
                     "mcp:mcp_blocked",
@@ -2979,8 +2615,8 @@ def test_executor_passes_app_scoped_tools(auth_client, enable_claude_agent):
     assert [skill.id for skill in runtime_tools.skills] == [allowed_skill["id"]]
 
 
-def test_executor_trusts_run_tools_snapshot(auth_client, enable_claude_agent, monkeypatch):
-    enable_claude_agent()
+def test_executor_trusts_run_tools_snapshot(auth_client, configure_codex, monkeypatch):
+    configure_codex()
     from app.api import runs as runs_api
 
     def _no_schedule(_run_id: str):
@@ -2993,7 +2629,6 @@ def test_executor_trusts_run_tools_snapshot(auth_client, enable_claude_agent, mo
             "id": "mcp_snapshot",
             "name": "snapshot-mcp",
             "enabled": True,
-            "provider_ids": ["claude-code", "codex"],
             "url": "http://localhost:9999/snapshot",
             "headers": [],
             "env_var_names": [],
@@ -3001,7 +2636,6 @@ def test_executor_trusts_run_tools_snapshot(auth_client, enable_claude_agent, mo
     ).status_code == 200
 
     graph = {
-        "agent": "claude",
         "nodes": [_generate_node("n_gen", prompt="生成")],
         "execution_edges": [],
     }
@@ -3032,8 +2666,8 @@ def test_executor_trusts_run_tools_snapshot(auth_client, enable_claude_agent, mo
     assert runtime_tools.mcp_servers == []
 
 
-def test_executor_preflight_passes_only_planning_safe_tools(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_executor_decision_plan_passes_only_planning_safe_tools(auth_client, configure_codex):
+    configure_codex()
     planning_skill = _upload_skill(auth_client, "planning-skill")
     execute_skill = _upload_skill(auth_client, "execute-skill")
     assert auth_client.patch(
@@ -3047,7 +2681,6 @@ def test_executor_preflight_passes_only_planning_safe_tools(auth_client, enable_
             "name": "planning-mcp",
             "enabled": True,
             "planning_enabled": True,
-            "provider_ids": ["claude-code", "codex"],
             "url": "http://localhost:9999/planning",
             "headers": [{"name": "X-Mode", "value": "planning"}],
             "env_var_names": [],
@@ -3060,7 +2693,6 @@ def test_executor_preflight_passes_only_planning_safe_tools(auth_client, enable_
             "name": "execute-mcp",
             "enabled": True,
             "planning_enabled": False,
-            "provider_ids": ["claude-code", "codex"],
             "url": "http://localhost:9999/execute",
             "headers": [],
             "env_var_names": [],
@@ -3071,7 +2703,6 @@ def test_executor_preflight_passes_only_planning_safe_tools(auth_client, enable_
     set_runtime_override(runtime)
     try:
         graph = {
-            "agent": "claude",
             "nodes": [_generate_node("n_gen", prompt="生成")],
             "execution_edges": [],
         }
@@ -3092,13 +2723,12 @@ def test_executor_preflight_passes_only_planning_safe_tools(auth_client, enable_
     assert sorted(skill.id for skill in execute_tools.skills) == sorted([planning_skill["id"], execute_skill["id"]])
 
 
-def test_executor_validates_generate_json_output_contract(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_executor_validates_generate_json_output_contract(auth_client, configure_codex):
+    configure_codex()
     runtime = SequenceRuntime(['{"summary":"done"}'])
     set_runtime_override(runtime)
     try:
         graph = {
-            "agent": "claude",
             "nodes": [
                 _contract_node(
                     "n_gen",
@@ -3120,13 +2750,12 @@ def test_executor_validates_generate_json_output_contract(auth_client, enable_cl
     assert "输出契约" in step["input"]["prompt"]
 
 
-def test_executor_keeps_output_contract_out_of_ask_user_preflight(auth_client, enable_claude_agent):
-    enable_claude_agent()
-    runtime = PreflightScriptRuntime([_complete_action()])
+def test_executor_keeps_output_contract_out_of_decision_plan(auth_client, configure_codex):
+    configure_codex()
+    runtime = PlanningCaptureRuntime()
     set_runtime_override(runtime)
     try:
         graph = {
-            "agent": "claude",
             "nodes": [
                 _contract_node(
                     "n_gen",
@@ -3143,24 +2772,23 @@ def test_executor_keeps_output_contract_out_of_ask_user_preflight(auth_client, e
         set_runtime_override(MockRuntime())
 
     assert final["status"] == "success", final
-    generate_preflight_prompts = [
-        prompt for prompt in runtime.preflight_prompts if "生成纯文本结果" in prompt
+    generate_plan_prompts = [
+        prompt for prompt in runtime.plan_prompts if "生成纯文本结果" in prompt
     ]
-    assert len(generate_preflight_prompts) == 1
-    assert "# 输出契约" not in generate_preflight_prompts[0]
-    assert "最终回复必须是严格符合后端 JSON Schema" not in generate_preflight_prompts[0]
+    assert len(generate_plan_prompts) == 1
+    assert "# 输出契约" not in generate_plan_prompts[0]
+    assert "最终回复必须是严格符合后端 JSON Schema" not in generate_plan_prompts[0]
     step = final["steps"][0]
     assert "# 输出契约" in step["input"]["prompt"]
     assert "最终回复必须是严格符合后端 JSON Schema" in step["input"]["prompt"]
 
 
-def test_executor_skips_ask_user_preflight_for_output_node(auth_client, enable_claude_agent):
-    enable_claude_agent()
-    runtime = PreflightScriptRuntime([_complete_action()])
+def test_executor_skips_decision_plan_for_output_node(auth_client, configure_codex):
+    configure_codex()
+    runtime = PlanningCaptureRuntime()
     set_runtime_override(runtime)
     try:
         graph = {
-            "agent": "claude",
             "nodes": [
                 _generate_node("n_gen", prompt="生成中间内容"),
                 _output_node("n_out", source="n_gen", prompt="展示最终 HTML"),
@@ -3174,22 +2802,21 @@ def test_executor_skips_ask_user_preflight_for_output_node(auth_client, enable_c
         set_runtime_override(MockRuntime())
 
     assert final["status"] == "success", final
-    assert len(runtime.preflight_prompts) == 1
-    assert "生成中间内容" in runtime.preflight_prompts[0]
-    assert "展示最终 HTML" not in runtime.preflight_prompts[0]
+    assert len(runtime.plan_prompts) == 1
+    assert "生成中间内容" in runtime.plan_prompts[0]
+    assert "展示最终 HTML" not in runtime.plan_prompts[0]
     by_id = {step["node_id"]: step for step in final["steps"]}
     assert by_id["n_out"]["output"] == "<section>OK</section>"
 
 
-def test_executor_skips_forced_ask_user_preflight_when_disabled(auth_client, enable_claude_agent):
-    enable_claude_agent()
-    runtime = PreflightScriptRuntime([_complete_action()])
+def test_executor_skips_forced_decision_plan_when_disabled(auth_client, configure_codex):
+    configure_codex()
+    runtime = PlanningCaptureRuntime()
     set_runtime_override(runtime)
     try:
         node = _generate_node("n_gen", prompt="必须先调用 ask_user，再生成纯文本结果")
         node["ask_user_enabled"] = False
         graph = {
-            "agent": "claude",
             "nodes": [node],
             "execution_edges": [],
         }
@@ -3200,20 +2827,19 @@ def test_executor_skips_forced_ask_user_preflight_when_disabled(auth_client, ena
         set_runtime_override(MockRuntime())
 
     assert final["status"] == "success", final
-    assert runtime.preflight_prompts == []
+    assert runtime.plan_prompts == []
     by_id = {step["node_id"]: step for step in final["steps"]}
     assert by_id["n_gen"]["output"] == "SCRIPT_RESULT"
 
 
-def test_executor_keeps_ask_user_preflight_when_explicitly_enabled(auth_client, enable_claude_agent):
-    enable_claude_agent()
-    runtime = PreflightScriptRuntime([_complete_action()])
+def test_executor_keeps_decision_plan_when_explicitly_enabled(auth_client, configure_codex):
+    configure_codex()
+    runtime = PlanningCaptureRuntime()
     set_runtime_override(runtime)
     try:
         node = _generate_node("n_gen", prompt="生成纯文本结果")
         node["ask_user_enabled"] = True
         graph = {
-            "agent": "claude",
             "nodes": [node],
             "execution_edges": [],
         }
@@ -3224,17 +2850,16 @@ def test_executor_keeps_ask_user_preflight_when_explicitly_enabled(auth_client, 
         set_runtime_override(MockRuntime())
 
     assert final["status"] == "success", final
-    assert len(runtime.preflight_prompts) == 1
-    assert "生成纯文本结果" in runtime.preflight_prompts[0]
+    assert len(runtime.plan_prompts) == 1
+    assert "生成纯文本结果" in runtime.plan_prompts[0]
 
 
-def test_executor_skips_preflight_for_contract_generate_with_user_input(auth_client, enable_claude_agent):
-    enable_claude_agent()
-    runtime = PreflightScriptRuntime([_complete_action()])
+def test_executor_skips_decision_plan_for_contract_generate_with_user_input(auth_client, configure_codex):
+    configure_codex()
+    runtime = PlanningCaptureRuntime()
     set_runtime_override(runtime)
     try:
         graph = {
-            "agent": "claude",
             "nodes": [
                 USER_INPUT_NODE,
                 _contract_node(
@@ -3252,19 +2877,18 @@ def test_executor_skips_preflight_for_contract_generate_with_user_input(auth_cli
         set_runtime_override(MockRuntime())
 
     assert final["status"] == "success", final
-    assert runtime.preflight_prompts == []
+    assert runtime.plan_prompts == []
     by_id = {step["node_id"]: step for step in final["steps"]}
     assert by_id["n_gen"]["output"] == {"result": "SCRIPT_RESULT"}
 
 
-def test_executor_repairs_generate_contract_output_once(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_executor_repairs_generate_contract_output_once(auth_client, configure_codex):
+    configure_codex()
     original_output = '结果如下：{"title":"ORIGINAL_FACT_125"}\n请查收。'
     runtime = SequenceRuntime([original_output, '{"title":"ORIGINAL_FACT_125"}'])
     set_runtime_override(runtime)
     try:
         graph = {
-            "agent": "claude",
             "nodes": [
                 _contract_node(
                     "n_gen",
@@ -3296,16 +2920,15 @@ def test_executor_repairs_generate_contract_output_once(auth_client, enable_clau
 
 def test_executor_repairs_output_contract_once_in_same_session_and_workspace(
     auth_client,
-    enable_claude_agent,
+    configure_codex,
 ):
-    enable_claude_agent()
+    configure_codex()
     runtime = OutputContractRepairRuntime()
     set_runtime_override(runtime)
     try:
         generate = _generate_node("n_gen", prompt="生成中间结果")
         generate["ask_user_enabled"] = False
         graph = {
-            "agent": "claude",
             "nodes": [
                 generate,
                 _output_node("n_out", source="n_gen", prompt="展示最终 HTML"),
@@ -3332,10 +2955,10 @@ def test_executor_repairs_output_contract_once_in_same_session_and_workspace(
 
 def test_executor_repairs_office_artifact_validation_once(
     auth_client,
-    enable_claude_agent,
+    configure_codex,
     monkeypatch,
 ):
-    enable_claude_agent()
+    configure_codex()
     runtime = OfficeArtifactRepairRuntime()
     validations: list[Path] = []
 
@@ -3357,7 +2980,7 @@ def test_executor_repairs_office_artifact_validation_once(
             },
         )
         node["ask_user_enabled"] = False
-        app_id = _build_app(auth_client, graph={"agent": "claude", "nodes": [node], "execution_edges": []})
+        app_id = _build_app(auth_client, graph={"nodes": [node], "execution_edges": []})
         run = auth_client.post("/api/runs", json={"app_id": app_id, "inputs": {}}).json()
         final = _wait_for_terminal(auth_client, run["run_id"])
     finally:
@@ -3375,10 +2998,10 @@ def test_executor_repairs_office_artifact_validation_once(
 
 def test_executor_does_not_repair_when_office_validator_is_unavailable(
     auth_client,
-    enable_claude_agent,
+    configure_codex,
     monkeypatch,
 ):
-    enable_claude_agent()
+    configure_codex()
     runtime = OfficeArtifactRepairRuntime()
 
     def unavailable(_path: Path, **_kwargs) -> str | None:
@@ -3398,7 +3021,7 @@ def test_executor_does_not_repair_when_office_validator_is_unavailable(
             },
         )
         node["ask_user_enabled"] = False
-        app_id = _build_app(auth_client, graph={"agent": "claude", "nodes": [node], "execution_edges": []})
+        app_id = _build_app(auth_client, graph={"nodes": [node], "execution_edges": []})
         run = auth_client.post("/api/runs", json={"app_id": app_id, "inputs": {}}).json()
         final = _wait_for_terminal(auth_client, run["run_id"])
     finally:
@@ -3411,14 +3034,13 @@ def test_executor_does_not_repair_when_office_validator_is_unavailable(
 
 def test_executor_repairs_unicode_damaged_contract_field_in_same_session(
     auth_client,
-    enable_claude_agent,
+    configure_codex,
 ):
-    enable_claude_agent()
+    configure_codex()
     runtime = SequenceRuntime(['{"title":"设备���面"}', '{"title":"设备页面"}'])
     set_runtime_override(runtime)
     try:
         graph = {
-            "agent": "claude",
             "nodes": [
                 _contract_node(
                     "n_gen",
@@ -3448,14 +3070,13 @@ def test_executor_repairs_unicode_damaged_contract_field_in_same_session(
 
 def test_executor_marks_escaped_unicode_damage_before_contract_repair(
     auth_client,
-    enable_claude_agent,
+    configure_codex,
 ):
-    enable_claude_agent()
+    configure_codex()
     runtime = SequenceRuntime(['{"title":"设备\\ufffd面"}', '{"title":"设备页面"}'])
     set_runtime_override(runtime)
     try:
         graph = {
-            "agent": "claude",
             "nodes": [
                 _contract_node(
                     "n_gen",
@@ -3480,14 +3101,13 @@ def test_executor_marks_escaped_unicode_damage_before_contract_repair(
 
 def test_executor_rejects_unicode_damage_that_survives_contract_repair(
     auth_client,
-    enable_claude_agent,
+    configure_codex,
 ):
-    enable_claude_agent()
+    configure_codex()
     runtime = SequenceRuntime(['{"title":"设备���面"}', '{"title":"仍然���坏"}'])
     set_runtime_override(runtime)
     try:
         graph = {
-            "agent": "claude",
             "nodes": [
                 _contract_node(
                     "n_gen",
@@ -3509,13 +3129,12 @@ def test_executor_rejects_unicode_damage_that_survives_contract_repair(
     assert "U+FFFD" in (step.get("error") or "")
 
 
-def test_executor_fails_when_contract_repair_still_invalid(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_executor_fails_when_contract_repair_still_invalid(auth_client, configure_codex):
+    configure_codex()
     runtime = SequenceRuntime(["not-json", "still-not-json"])
     set_runtime_override(runtime)
     try:
         graph = {
-            "agent": "claude",
             "nodes": [
                 _contract_node(
                     "n_gen",
@@ -3537,10 +3156,9 @@ def test_executor_fails_when_contract_repair_still_invalid(auth_client, enable_c
     assert "输出契约校验失败" in (step.get("error") or "")
 
 
-def test_executor_keeps_output_node_html_only(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_executor_keeps_output_node_html_only(auth_client, configure_codex):
+    configure_codex()
     graph = {
-        "agent": "claude",
         "nodes": [
             _contract_node(
                 "n_gen",
@@ -3567,10 +3185,9 @@ def test_executor_keeps_output_node_html_only(auth_client, enable_claude_agent):
     assert "不要默认把每项内容都做成卡片" in output_prompt
 
 
-def test_executor_output_node_accepts_json_wrapped_html(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_executor_output_node_accepts_json_wrapped_html(auth_client, configure_codex):
+    configure_codex()
     graph = {
-        "agent": "claude",
         "nodes": [
             _generate_node("n_gen", prompt="生成 [[respond:UPSTREAM]]"),
             _output_node("n_out", source="n_gen", prompt='展示 [[respond:{"html":"<section>JSON_OK</section>"}]]'),
@@ -3586,15 +3203,14 @@ def test_executor_output_node_accepts_json_wrapped_html(auth_client, enable_clau
     assert by_id["n_out"]["output"] == "<section>JSON_OK</section>"
 
 
-def test_executor_output_node_returns_raw_html_without_sanitizing(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_executor_output_node_returns_raw_html_without_sanitizing(auth_client, configure_codex):
+    configure_codex()
     html = (
         "<!DOCTYPE html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\">"
         "<style>body { color: red; }</style><script>window.rawHtml = true;</script></head>"
         "<body><img src=\"javascript:alert(1)\" onerror=\"alert(2)\"><section>VISIBLE</section></body></html>"
     )
     graph = {
-        "agent": "claude",
         "nodes": [
             _generate_node("n_gen", prompt="生成 [[respond:UPSTREAM]]"),
             _output_node("n_out", source="n_gen", prompt=f"展示 [[respond:{html}]]"),
@@ -3610,12 +3226,11 @@ def test_executor_output_node_returns_raw_html_without_sanitizing(auth_client, e
     assert output == html
 
 
-def test_executor_output_node_rejects_tool_result_html_without_final_html(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_executor_output_node_rejects_tool_result_html_without_final_html(auth_client, configure_codex):
+    configure_codex()
     runtime = ToolResultOnlyHtmlRuntime()
     set_runtime_override(runtime)
     graph = {
-        "agent": "claude",
         "nodes": [
             _generate_node("n_gen", prompt="生成"),
             _output_node("n_out", source="n_gen", prompt="展示最终 HTML"),
@@ -3641,10 +3256,9 @@ def test_executor_output_node_rejects_tool_result_html_without_final_html(auth_c
     assert execute_calls[-1]["allowed_tools"] is None
 
 
-def test_executor_propagates_failure(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_executor_propagates_failure(auth_client, configure_codex):
+    configure_codex()
     graph = {
-        "agent": "claude",
         "nodes": [
             _generate_node("n_gen_fail", prompt="please fail-now"),
             _output_node("n_out", source="n_gen_fail"),
@@ -3665,10 +3279,10 @@ def test_executor_propagates_failure(auth_client, enable_claude_agent):
 
 def test_executor_classifies_unavailable_upstream_artifact_as_integrity(
     auth_client,
-    enable_claude_agent,
+    configure_codex,
     monkeypatch,
 ):
-    enable_claude_agent()
+    configure_codex()
     original_refs = node_handlers._runtime_upload_refs_for_node
 
     def unavailable_refs(ctx, node, step):
@@ -3678,7 +3292,6 @@ def test_executor_classifies_unavailable_upstream_artifact_as_integrity(
 
     monkeypatch.setattr(node_handlers, "_runtime_upload_refs_for_node", unavailable_refs)
     graph = {
-        "agent": "claude",
         "nodes": [
             _generate_node("n_gen", prompt="生成 [[respond:READY]]"),
             _output_node("n_out", source="n_gen"),
@@ -3696,10 +3309,9 @@ def test_executor_classifies_unavailable_upstream_artifact_as_integrity(
     assert "输入 artifact 完整性校验失败" in output_step["error"]
 
 
-def test_executor_cancel_during_running_step(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_executor_cancel_during_running_step(auth_client, configure_codex):
+    configure_codex()
     graph = {
-        "agent": "claude",
         "nodes": [
             _generate_node("n_gen_slow", prompt="please [[delay:1.5]] [[respond:LATE]]"),
         ],
@@ -3721,13 +3333,12 @@ def test_executor_cancel_during_running_step(auth_client, enable_claude_agent):
     assert final["steps"][0]["status"] == "cancelled"
 
 
-def test_executor_late_success_after_cancel_does_not_overwrite_cancelled_step(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_executor_late_success_after_cancel_does_not_overwrite_cancelled_step(auth_client, configure_codex):
+    configure_codex()
     runtime = LateSuccessAfterCancelRuntime()
     set_runtime_override(runtime)
     try:
         graph = {
-            "agent": "claude",
             "nodes": [
                 _generate_node("n_gen_late", prompt="ignore cancel and return late success"),
             ],
@@ -3753,12 +3364,11 @@ def test_executor_late_success_after_cancel_does_not_overwrite_cancelled_step(au
         set_runtime_override(MockRuntime())
 
 
-def test_executor_passes_upstream_output_into_generate_prompt(auth_client, enable_claude_agent):
+def test_executor_passes_upstream_output_into_generate_prompt(auth_client, configure_codex):
     """generate 节点应该能在自己的 prompt 中看到上游 asset 的 output。"""
 
-    enable_claude_agent()
+    configure_codex()
     graph = {
-        "agent": "claude",
         "nodes": [
             {
                 "id": "n_asset",
@@ -3783,18 +3393,17 @@ def test_executor_passes_upstream_output_into_generate_prompt(auth_client, enabl
     assert "UPSTREAM_MARK" in prompt
     assert "你拥有一个名为 `ask_user` 的工具" not in prompt
     assert "# 用户决策摘要" in prompt
-    assert "不要再次调用 ask_user" in prompt
+    assert "不要再次向用户提问" in prompt
 
 
-def test_executor_output_reads_all_ancestors_without_embedding_values_in_prompt(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_executor_output_reads_all_ancestors_without_embedding_values_in_prompt(auth_client, configure_codex):
+    configure_codex()
     saved = auth_client.put(
         "/api/settings/prompts/output_html_rendering",
         json={"content": "$user_prompt\n\nMIRA_DB_HTML_RULE"},
     )
     assert saved.status_code == 200, saved.text
     graph = {
-        "agent": "claude",
         "nodes": [
             {
                 "id": "n_asset",
@@ -3832,8 +3441,8 @@ def test_executor_output_reads_all_ancestors_without_embedding_values_in_prompt(
     assert json.loads(context_files[0].read_text(encoding="utf-8"))["value"] == "OTHER_MARK"
 
 
-def test_executor_file_asset_outputs_upload_meta_list(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_executor_file_asset_outputs_upload_meta_list(auth_client, configure_codex):
+    configure_codex()
     uploaded_a = auth_client.post(
         "/api/uploads",
         files={"file": ("asset-a.txt", b"asset a", "text/plain")},
@@ -3847,7 +3456,6 @@ def test_executor_file_asset_outputs_upload_meta_list(auth_client, enable_claude
     upload_a = uploaded_a.json()
     upload_b = uploaded_b.json()
     graph = {
-        "agent": "claude",
         "nodes": [
             {
                 "id": "n_asset",
@@ -3878,10 +3486,9 @@ def test_executor_file_asset_outputs_upload_meta_list(auth_client, enable_claude
     assert str(uploads_dir("user_admin") / upload_a["id"] / "blob") not in json.dumps(final)
 
 
-def test_executor_url_asset_outputs_url_list(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_executor_url_asset_outputs_url_list(auth_client, configure_codex):
+    configure_codex()
     graph = {
-        "agent": "claude",
         "nodes": [
             {
                 "id": "n_asset",
@@ -3904,8 +3511,8 @@ def test_executor_url_asset_outputs_url_list(auth_client, enable_claude_agent):
     assert step["input"] == {"asset_kind": "url", "urls": ["https://example.com/a", "https://example.com/b"]}
 
 
-def test_executor_user_input_attachment_prompt_includes_download_url(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_executor_user_input_attachment_prompt_includes_download_url(auth_client, configure_codex):
+    configure_codex()
     uploaded = auth_client.post(
         "/api/uploads",
         files={"file": ("reference.txt", b"reference content", "text/plain")},
@@ -3913,7 +3520,6 @@ def test_executor_user_input_attachment_prompt_includes_download_url(auth_client
     assert uploaded.status_code == 200, uploaded.text
     upload = uploaded.json()
     graph = {
-        "agent": "claude",
         "nodes": [
             USER_INPUT_NODE,
             _generate_node("n_gen", prompt="读取附件 [[respond:DONE]]"),
@@ -3959,11 +3565,10 @@ def test_executor_user_input_attachment_prompt_includes_download_url(auth_client
 
 def test_executor_redacts_undeclared_workspace_paths_without_download_side_channel(
     auth_client,
-    enable_claude_agent,
+    configure_codex,
 ):
-    enable_claude_agent()
+    configure_codex()
     graph = {
-        "agent": "claude",
         "nodes": [
             _generate_node("n_gen", prompt="生成文件路径 [[respond:PLACEHOLDER]]"),
             _output_node("n_out", source="n_gen", prompt="展示 [[respond:<section>FINAL</section>]]"),
@@ -3999,10 +3604,9 @@ def test_executor_redacts_undeclared_workspace_paths_without_download_side_chann
     assert artifacts_body["artifacts"] == []
 
 
-def test_executor_transfers_generated_images_only_as_declared_artifacts(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_executor_transfers_generated_images_only_as_declared_artifacts(auth_client, configure_codex):
+    configure_codex()
     graph = {
-        "agent": "claude",
         "nodes": [
             _contract_node(
                 "n_gen",
@@ -4060,10 +3664,9 @@ def test_executor_transfers_generated_images_only_as_declared_artifacts(auth_cli
     assert downloaded.content == b"png-bytes"
 
 
-def test_run_artifacts_list_uses_artifact_contract_metadata(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_run_artifacts_list_uses_artifact_contract_metadata(auth_client, configure_codex):
+    configure_codex()
     graph = {
-        "agent": "claude",
         "nodes": [
             _contract_node(
                 "n_gen",
@@ -4107,7 +3710,6 @@ def test_run_artifacts_list_uses_artifact_contract_metadata(auth_client, enable_
 
 def test_file_asset_missing_upload_is_rejected_when_saving_graph(auth_client):
     graph = {
-        "agent": "claude",
         "nodes": [
             {
                 "id": "n_asset",

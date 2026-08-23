@@ -43,7 +43,6 @@ from app.services.workflow_data import build_output_envelope
 from app.utils import iso, loads, now_utc
 
 logger = logging.getLogger(__name__)
-WAITING_SIBLING_SETTLE_SECONDS = 0.05
 
 
 @dataclass
@@ -136,9 +135,8 @@ async def _orchestrate(run_id: str, channel: RunChannel, *, continuation: bool =
 
         graph = loads(run.graph_json, {"nodes": [], "execution_edges": []})
         execution_plan = compile_execution_plan(graph)
-        agent = str(graph.get("agent") or "").strip()
-        runtime_tools = await runtime_tools_for_graph(db, graph, agent, trust_snapshot=True)
-        planning_runtime_tools = await planning_runtime_tools_for_graph(db, graph, agent, trust_snapshot=True)
+        runtime_tools = await runtime_tools_for_graph(db, graph, trust_snapshot=True)
+        planning_runtime_tools = await planning_runtime_tools_for_graph(db, graph, trust_snapshot=True)
         steps_query = await db.execute(
             select(Step)
             .where(Step.run_id == run_id)
@@ -158,7 +156,6 @@ async def _orchestrate(run_id: str, channel: RunChannel, *, continuation: bool =
             app_id=run.app_id,
             run_id=run.id,
             graph=graph,
-            agent=agent,
             workspace=run_workspace(run.owner_id, run.app_id, run.id),
             inputs=inputs,
             runtime_tools=runtime_tools,
@@ -179,7 +176,6 @@ async def _orchestrate(run_id: str, channel: RunChannel, *, continuation: bool =
             db,
             run,
             channel,
-            agent=agent,
             runtime_tools=runtime_tools,
         )
         root_branch = await run_agent.ensure_root()
@@ -200,7 +196,6 @@ async def _orchestrate(run_id: str, channel: RunChannel, *, continuation: bool =
         )
         active: dict[asyncio.Task[StepTaskResult], str] = {}
         launched: set[str] = set()
-        blocked_by_waiting = False
         run_failed = False
         run_cancelled = False
         run_error: str | None = None
@@ -210,7 +205,7 @@ async def _orchestrate(run_id: str, channel: RunChannel, *, continuation: bool =
             if channel.cancel_event.is_set():
                 run_cancelled = True
 
-            if not run_failed and not run_cancelled and not blocked_by_waiting:
+            if not run_failed and not run_cancelled:
                 ready = _ready_node_ids(states, predecessors, launched)
                 for node_id in ready:
                     node = ctx.nodes_by_id.get(node_id)
@@ -288,13 +283,6 @@ async def _orchestrate(run_id: str, channel: RunChannel, *, continuation: bool =
             if not active:
                 if run_failed or run_cancelled:
                     break
-                if blocked_by_waiting and await _sync_resumed_waiting_steps(db, channel, states, launched):
-                    blocked_by_waiting = False
-                    continue
-                queued_waiting = _queued_waiting_step(states)
-                if queued_waiting is not None:
-                    await _publish_existing_waiting_step(db, channel, run, queued_waiting)
-                    return False
                 break
 
             done, _pending = await asyncio.wait(active.keys(), return_when=asyncio.FIRST_COMPLETED)
@@ -339,16 +327,24 @@ async def _orchestrate(run_id: str, channel: RunChannel, *, continuation: bool =
                         run_failed = True
                         run_error = f"RunAgent fan-out 失败：{exc}"
                         run_failure_kind = "internal"
-                elif result.status == "waiting_for_user":
-                    blocked_by_waiting = True
-                    await _settle_active_siblings(active)
-                    await _publish_existing_waiting_step(db, channel, run, state)
                 elif result.status == "cancelled":
                     run_cancelled = True
                 elif result.status == "failed":
                     run_failed = True
                     run_error = run_error or result.error
                     run_failure_kind = run_failure_kind or result.failure_kind or "internal"
+
+            if run_failed and active:
+                channel.abort_waiting("并行节点失败，当前提问已终止")
+                cancelled_node_ids = list(active.values())
+                for task in active:
+                    task.cancel()
+                await asyncio.gather(*active, return_exceptions=True)
+                active.clear()
+                for node_id in cancelled_node_ids:
+                    state = states.get(node_id)
+                    if state is not None:
+                        state.status = "cancelled"
 
         # 收尾：未触达的 step 已经按状态在 DB 中保持 pending。run 终态决策：
         finished_at = now_utc()
@@ -658,7 +654,6 @@ async def _run_step_task(
             db,
             run,
             channel,
-            agent=str(graph.get("agent") or "").strip(),
             runtime_tools=runtime_tools,
         )
         lease = await run_agent.lease(branch_id)
@@ -673,7 +668,6 @@ async def _run_step_task(
             app_id=run_app_id,
             run_id=run_id,
             graph=graph,
-            agent=str(graph.get("agent") or "").strip(),
             workspace=lease.workspace,
             inputs=inputs,
             runtime_tools=runtime_tools,
@@ -685,19 +679,28 @@ async def _run_step_task(
         ctx.outputs.update(outputs)
         ctx.skipped_nodes.update(skipped_nodes)
         before_skipped = set(ctx.skipped_nodes)
+        step_id = step.id
 
-        result = await _execute_node(ctx, node, step)
+        try:
+            result = await _execute_node(ctx, node, step)
+        except asyncio.CancelledError:
+            await db.rollback()
+            step = await db.get(Step, step_id)
+            if step is None:
+                return StepTaskResult(
+                    node_id=state.node_id,
+                    status="cancelled",
+                    branch_id=branch_id,
+                )
+            await _finish_step(db, channel, step, status="cancelled")
+            return StepTaskResult(
+                node_id=state.node_id,
+                status="cancelled",
+                branch_id=branch_id,
+            )
         effective_session_id = result.agent_session_id or ctx.agent_session_id or lease.session_id
         await run_agent.record_session(branch_id, effective_session_id)
         skipped_delta = set(ctx.skipped_nodes) - before_skipped
-        if result.status == "waiting":
-            return StepTaskResult(
-                node_id=state.node_id,
-                status="waiting_for_user",
-                agent_session_id=effective_session_id,
-                skipped_nodes=skipped_delta,
-                branch_id=branch_id,
-            )
         if result.status == "success":
             try:
                 stored_output = await asyncio.to_thread(
@@ -832,80 +835,11 @@ async def _run_was_cancelled(db, run_id: str, channel: RunChannel) -> bool:
     return status == "cancelled"
 
 
-def _queued_waiting_step(states: dict[str, StepState]) -> StepState | None:
-    waiting = [state for state in states.values() if state.status == "waiting_for_user"]
-    if not waiting:
-        return None
-    waiting.sort(key=lambda item: (item.ordering, item.node_id))
-    return waiting[0]
-
-
 def _task_sort_key(node_id: str | None, states: dict[str, StepState]) -> tuple[int, str]:
     state = states.get(node_id or "")
     if state is None:
         return (10**9, node_id or "")
     return (state.ordering, state.node_id)
-
-
-async def _settle_active_siblings(active: dict[asyncio.Task[StepTaskResult], str]) -> None:
-    if not active:
-        return
-    await asyncio.wait(active.keys(), timeout=WAITING_SIBLING_SETTLE_SECONDS, return_when=asyncio.FIRST_COMPLETED)
-
-
-async def _sync_resumed_waiting_steps(
-    db,
-    channel: RunChannel,
-    states: dict[str, StepState],
-    launched: set[str],
-) -> bool:
-    resumed = False
-    for state in states.values():
-        if state.status != "waiting_for_user":
-            continue
-        step = await db.get(Step, state.id)
-        if step is None:
-            continue
-        await db.refresh(step)
-        if step.status != "interrupted":
-            continue
-        state.status = "interrupted"
-        state.output = None
-        state.agent_session_id = step.agent_session_id
-        launched.discard(state.node_id)
-        resumed = True
-        async with channel.waiting_lock:
-            if channel.waiting_node_id == state.node_id:
-                channel.waiting_node_id = None
-    return resumed
-
-
-async def _publish_existing_waiting_step(
-    db,
-    channel: RunChannel,
-    run: Run,
-    state: StepState,
-) -> None:
-    step = await db.get(Step, state.id)
-    if step is None:
-        return
-    await db.refresh(step)
-    payload = loads(step.input_json, {}) or {}
-    request = payload.get("ask_user") if isinstance(payload, dict) else None
-    if not isinstance(request, dict):
-        return
-    await db.refresh(run)
-    run.status = "waiting_for_user"
-    run.resume_from_node_id = step.node_id
-    await db.commit()
-    should_publish = False
-    async with channel.waiting_lock:
-        if channel.waiting_node_id is None:
-            channel.waiting_node_id = step.node_id
-            should_publish = True
-    if should_publish:
-        await channel.publish("step.waiting", {"node_id": step.node_id, "request": request})
-        await channel.publish("run.waiting_for_user", {"node_id": step.node_id})
 
 
 async def _emit_step_start(db, channel: RunChannel, step: Step) -> None:

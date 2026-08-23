@@ -4,7 +4,7 @@ import asyncio
 import json
 from pathlib import Path
 
-from app.runtime.base import AgentChunk, AgentExecutionResult, AgentProviderStatus
+from app.runtime.base import AgentChunk, AgentExecutionResult, AgentRuntimeStatus
 from app.runtime.factory import set_runtime_override
 from app.utils import now_utc
 from tests.runtime_mock import MockRuntime
@@ -16,8 +16,8 @@ class LayoutRuntime:
         self.prompts: list[str] = []
         self.on_ask_user_values: list[object] = []
 
-    async def detect_status(self) -> AgentProviderStatus:
-        return AgentProviderStatus(
+    async def detect_status(self) -> AgentRuntimeStatus:
+        return AgentRuntimeStatus(
             installed=True,
             runnable=True,
             identity="layout-runtime",
@@ -48,10 +48,10 @@ class LayoutRuntime:
         return AgentExecutionResult(session_id=session_id, total_text=text, finished_with="done")
 
 
-def _enable_agent(client) -> None:
+def _configure_codex(client) -> None:
     response = client.put(
-        "/api/settings/agents/claude-code/config",
-        json={"content": "{}\n", "enabled": True, "supported_models": ["test-model"]},
+        "/api/settings/codex/config",
+        json={"content": "\n", "auth_content": "{}\n", "supported_models": ["test-model"]},
     )
     assert response.status_code == 200, response.text
 
@@ -64,7 +64,6 @@ def _create_app(client) -> str:
 
 def _graph() -> dict:
     return {
-        "agent": "claude",
         "nodes": [
             {
                 "id": "n_input",
@@ -96,7 +95,7 @@ def _graph() -> dict:
 
 
 def test_graph_layout_beautify_updates_positions_only(auth_client):
-    _enable_agent(auth_client)
+    _configure_codex(auth_client)
     app_id = _create_app(auth_client)
     runtime = LayoutRuntime(
         [
@@ -135,7 +134,7 @@ def test_graph_layout_beautify_updates_positions_only(auth_client):
 
 
 def test_graph_layout_rejects_missing_node_position(auth_client):
-    _enable_agent(auth_client)
+    _configure_codex(auth_client)
     app_id = _create_app(auth_client)
     runtime = LayoutRuntime(
         [
@@ -157,7 +156,7 @@ def test_graph_layout_rejects_missing_node_position(auth_client):
 
 
 def test_graph_layout_rejects_unknown_node_position(auth_client):
-    _enable_agent(auth_client)
+    _configure_codex(auth_client)
     app_id = _create_app(auth_client)
     runtime = LayoutRuntime(
         [

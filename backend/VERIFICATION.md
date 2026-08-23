@@ -38,28 +38,28 @@ uv run pytest -q tests/test_prompt_templates.py tests/test_condition_node.py
 - Per-user app/run/SSE isolation.
 - App CRUD, delete cascade cleanup, gallery clone, version clone, publish/unpublish.
 - Version limit pruning while preserving published versions.
-- Settings read, admin-only writes, Agent config encryption, config validation, required supported-model validation, and secret-field cleanup.
+- Settings read, admin-only writes, Codex config/auth encryption, config validation, required supported-model validation, and secret-field cleanup.
 - Prompt template seeding, admin editing, reset behavior, and condition prompt usage.
 - Skill upload, metadata parsing, deletion through settings, invalid zip rejection, safe extraction.
 - MCP config rendering and env whitelist behavior.
-- Skill runtime sync into run-scoped Claude `.claude/skills` and Codex `.agents/skills`; shared fake HOME skills remain empty.
-- NL compile enabled-Agent guard, Agent failure path, and LLM patch application path with runtime override.
+- Skill runtime sync into run-scoped Codex `.agents/skills`; shared fake HOME skills remain empty.
+- NL compile Codex failure path, native user-question waiting/resume, and LLM patch application path with runtime override.
 - Condition nodes: binary/cases parsing, `__default__` fallback, branch skipping, source handle validation.
 - Run happy path, failure path, cancel, total timeout, stale-run recovery.
 - SSE terminal replay and valid/invalid `Last-Event-ID`.
-- Runtime JSON parsers for Claude/Codex text/tool/session events.
-- Runtime fake HOME env isolation and provider-key non-leakage.
+- Codex App Server JSON-RPC handling for thread start/resume/fork, streaming items, `turn/completed`, and native `requestUserInput`.
+- Runtime fake HOME isolation and Codex credential non-leakage.
 - 500 handler shape with `request_id`.
 
 ## Manual With Real Credentials
 
-Required before calling real-agent support complete:
+Required before calling real Codex support complete:
 
-1. Configure shared Claude/Codex runtime config files, supported model lists, and global instruction files in Settings.
-2. Click Settings refresh and confirm the CLI/config status is ready.
+1. Configure shared Codex `config.toml`, `auth.json`, supported model list, and global instructions in Settings.
+2. Click Settings refresh and confirm Codex App Server/config status is ready.
 3. Clone `tpl_book_recs` from Gallery and run it from Preview.
 4. Confirm streaming text chunks appear in Console.
-5. Run the same generate node twice and confirm session continuation.
+5. Run a linear multi-node workflow and confirm the same Codex thread/workspace continues; run a fan-out graph and confirm child `thread/fork` isolation.
 6. Configure an MCP server and confirm `tool_call` / `tool_result` chunks.
 7. Upload and enable a Skill zip and confirm real agent behavior changes.
 8. Repeat startup on a fresh Windows clone.
@@ -73,11 +73,11 @@ Required before calling real-agent support complete:
 | Auth | pytest covers login/me, disabled register endpoint, create-user script, and admin/user separation. | UI login click-through on fresh clone. |
 | Apps/Versions | pytest covers CRUD, gallery, clone, publish, unpublish, pruning. | UI editor/gallery/version history click-through. |
 | Settings/Skills | pytest covers admin-only settings, skill upload/delete, config validation, and supported-model validation. | Real Settings save with usable runtime configs and model lists. |
-| Runtime | parser, fake HOME, internal ask_user bridge, and Docker sandbox runner tests; runtime image build is managed by dev script. | Real Claude/Codex container smoke with valid credentials and Docker available. |
+| Runtime | App Server JSON-RPC, fake HOME, native `requestUserInput`, cancellation, and Docker sandbox runner tests; runtime image build is managed by dev script. | Real Codex container smoke with valid credentials and Docker available. |
 | Run/SSE | pytest covers run lifecycle, cancel, replay, stale recovery. | Real streaming run in UI. |
 | Conditions | pytest covers branching, skipped steps, source handles, prompt override. | UI run with binary and cases condition graphs. |
 | MCP/Skills | pytest covers rendering/sync. | Real MCP tool call/result and real Skill behavior change. |
-| NL Compile | pytest covers heuristic and LLM patch path. | Real LLM NL compile with configured provider. |
+| NL Compile | pytest covers plan/wait/resume and LLM patch path. | Real LLM NL compile with configured Codex. |
 
 ## Notes
 

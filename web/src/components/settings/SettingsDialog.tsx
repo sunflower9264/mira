@@ -1,17 +1,15 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { AppDialog } from '../common/AppDialog';
 import { EditIcon, PlusIcon, RefreshIcon, SettingsIcon } from '../common/Icons';
 import { useSettingsStore } from '../../stores/useSettingsStore';
-import { showCaughtError, showErrorDialog } from '../../stores/useErrorDialogStore';
+import { showCaughtError } from '../../stores/useErrorDialogStore';
 import { ModelChips } from './ModelChips';
 import { getSkillMarkdown } from '../../lib/api';
 import type {
-  AgentProviderConfig,
-  AgentProviderId,
-  AgentProviderStatus,
-  AgentConfigFile,
+  CodexConfigFile,
+  CodexStatus,
   InstructionFile,
   McpHeader,
   McpServerConfig,
@@ -21,23 +19,18 @@ import type {
   SkillMarkdown,
 } from '../../types';
 
-type SettingsCategory = 'agents' | 'instructions' | 'prompts' | 'skills' | 'mcp';
-type McpDraft = Pick<McpServerConfig, 'name' | 'url' | 'headers' | 'env_var_names' | 'provider_ids' | 'planning_enabled'>;
+type SettingsCategory = 'codex' | 'instructions' | 'prompts' | 'skills' | 'mcp';
+type McpDraft = Pick<McpServerConfig, 'name' | 'url' | 'headers' | 'env_var_names' | 'planning_enabled'>;
 type PendingMcpServer = McpServerConfig;
 type McpFormMode = 'pending' | 'editing';
 
 const categories: Array<{ id: SettingsCategory; label: string; description: string }> = [
-  { id: 'agents', label: 'Agent 设置', description: 'Claude Code / Codex' },
-  { id: 'instructions', label: '全局指令', description: 'CLAUDE.md / AGENTS.md' },
+  { id: 'codex', label: 'Codex 设置', description: 'App Server' },
+  { id: 'instructions', label: '全局指令', description: 'AGENTS.md' },
   { id: 'prompts', label: '提示词管理', description: 'Prompt Seed' },
   { id: 'skills', label: 'Skills', description: '全局技能包' },
   { id: 'mcp', label: 'MCP', description: 'HTTP Server 清单' },
 ];
-
-const providerLabels: Record<AgentProviderId, string> = {
-  'claude-code': 'Claude Code',
-  codex: 'Codex',
-};
 
 const SETTINGS_SCROLLBAR_CLASSES =
   '[scrollbar-width:thin] [scrollbar-color:rgba(0,0,0,0.18)_transparent] [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-button]:hidden [&::-webkit-scrollbar-button]:h-0 [&::-webkit-scrollbar-button]:w-0 [&::-webkit-scrollbar-corner]:bg-transparent [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-black/20 [&::-webkit-resizer]:bg-transparent';
@@ -51,16 +44,11 @@ interface SettingsDialogProps {
 
 function cloneSettings(settings: MiraSettings): MiraSettings {
   return {
-    agents: settings.agents.map((agent) => ({
-      ...agent,
-      supported_models: [...(agent.supported_models ?? [])],
-      status: agent.status ? { ...agent.status } : agent.status,
-    })),
+    supported_models: [...settings.supported_models],
     skills: settings.skills.map((skill) => ({ ...skill })),
     mcp_servers: settings.mcp_servers.map((server) => ({
       ...server,
       planning_enabled: !!server.planning_enabled,
-      provider_ids: [...server.provider_ids],
       headers: server.headers.map((header) => ({ ...header })),
       env_var_names: [...server.env_var_names],
     })),
@@ -73,7 +61,6 @@ function createMcpDraft(): McpDraft {
     name: '',
     url: '',
     planning_enabled: false,
-    provider_ids: ['claude-code', 'codex'],
     headers: [{ name: '', value: '' }],
     env_var_names: [''],
   };
@@ -95,7 +82,6 @@ function cloneMcpServer(server: McpServerConfig): McpServerConfig {
   return {
     ...server,
     planning_enabled: !!server.planning_enabled,
-    provider_ids: [...server.provider_ids],
     headers: server.headers.map((header) => ({ ...header })),
     env_var_names: [...server.env_var_names],
   };
@@ -138,32 +124,27 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   const addMcpServerAction = useSettingsStore((s) => s.addMcpServer);
   const updateMcpServerAction = useSettingsStore((s) => s.updateMcpServer);
   const deleteMcpServerAction = useSettingsStore((s) => s.deleteMcpServer);
-  const loadAgentConfig = useSettingsStore((s) => s.loadAgentConfig);
-  const saveAgentConfig = useSettingsStore((s) => s.saveAgentConfig);
+  const loadCodexConfig = useSettingsStore((s) => s.loadCodexConfig);
+  const saveCodexConfig = useSettingsStore((s) => s.saveCodexConfig);
   const loadInstructionFile = useSettingsStore((s) => s.loadInstructionFile);
   const saveInstructionFile = useSettingsStore((s) => s.saveInstructionFile);
   const loadPromptTemplates = useSettingsStore((s) => s.loadPromptTemplates);
   const savePromptTemplate = useSettingsStore((s) => s.savePromptTemplate);
   const parseSkillArchive = useSettingsStore((s) => s.parseSkillArchive);
-  const refreshAgentStatus = useSettingsStore((s) => s.refreshAgentStatus);
+  const refreshCodexStatus = useSettingsStore((s) => s.refreshCodexStatus);
   const loading = useSettingsStore((s) => s.loading);
   const saving = useSettingsStore((s) => s.saving);
 
-  const [activeCategory, setActiveCategory] = useState<SettingsCategory>('agents');
-  const [activeAgentId, setActiveAgentId] = useState<AgentProviderId>('claude-code');
+  const [activeCategory, setActiveCategory] = useState<SettingsCategory>('codex');
   const [draft, setDraft] = useState<MiraSettings | null>(null);
   const [error, setError] = useState('');
-  const [agentConfig, setAgentConfig] = useState<AgentConfigFile | null>(null);
+  const [codexConfig, setCodexConfig] = useState<CodexConfigFile | null>(null);
   const [configDraft, setConfigDraft] = useState('');
   const [isLoadingConfig, setIsLoadingConfig] = useState(false);
   const [isSavingConfig, setIsSavingConfig] = useState(false);
-  // Codex 额外多一个 auth.json，紧跟在 config.toml 之后展示；写入和
-  // config.toml + enabled 合并到同一次 saveAgentConfig('codex', ...) 调用。
-  const [codexAuthConfig, setCodexAuthConfig] = useState<AgentConfigFile | null>(null);
   const [codexAuthDraft, setCodexAuthDraft] = useState('');
-  const [isLoadingCodexAuth, setIsLoadingCodexAuth] = useState(false);
-  const [instructions, setInstructions] = useState<Partial<Record<AgentProviderId, InstructionFile>>>({});
-  const [instructionDrafts, setInstructionDrafts] = useState<Partial<Record<AgentProviderId, string>>>({});
+  const [instruction, setInstruction] = useState<InstructionFile | null>(null);
+  const [instructionDraft, setInstructionDraft] = useState('');
   const [isLoadingInstructions, setIsLoadingInstructions] = useState(false);
   const [isSavingInstructions, setIsSavingInstructions] = useState(false);
   const [prompts, setPrompts] = useState<PromptTemplate[]>([]);
@@ -178,55 +159,23 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   const [isLoadingSkillMarkdown, setIsLoadingSkillMarkdown] = useState(false);
   const [skillMarkdownError, setSkillMarkdownError] = useState('');
   const [isRefreshingStatus, setIsRefreshingStatus] = useState(false);
+  const [codexStatus, setCodexStatus] = useState<CodexStatus | null>(null);
   const [pendingMcpServers, setPendingMcpServers] = useState<PendingMcpServer[]>([]);
   const [editingMcpServers, setEditingMcpServers] = useState<Record<string, McpServerConfig>>({});
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const didAutoRefreshStatusesRef = useRef(false);
 
-  const activeAgent = useMemo(
-    () => draft?.agents.find((agent) => agent.id === activeAgentId) ?? draft?.agents[0] ?? null,
-    [activeAgentId, draft?.agents],
-  );
-  const activeSupportedModels = useMemo(
-    () => activeAgent?.supported_models ?? [],
-    [activeAgent],
-  );
-
-  const refreshStatuses = useCallback(async (agentIds: AgentProviderId[]) => {
-    if (agentIds.length === 0) return;
+  async function handleRefreshCodexStatus() {
     setIsRefreshingStatus(true);
     setError('');
     try {
-      const results = await Promise.all(
-        agentIds.map(async (agentId) => {
-          try {
-            const status = await refreshAgentStatus(agentId);
-            return { agentId, status };
-          } catch (e) {
-            return { agentId, error: getErrorMessage(e) };
-          }
-        }),
-      );
-      const statuses: Partial<Record<AgentProviderId, AgentProviderStatus>> = {};
-      const errors: string[] = [];
-      for (const result of results) {
-        if ('status' in result) {
-          statuses[result.agentId] = result.status;
-        } else {
-          errors.push(result.error);
-        }
-      }
-      setDraft((current) => current ? {
-        ...current,
-        agents: current.agents.map((agent) => (
-          statuses[agent.id] ? { ...agent, status: statuses[agent.id] } : agent
-        )),
-      } : current);
-      if (errors.length > 0) showErrorDialog(errors[0], '刷新状态失败');
+      setCodexStatus(await refreshCodexStatus());
+    } catch (e) {
+      showCaughtError(e, '刷新 Codex 状态失败', '刷新失败');
     } finally {
       setIsRefreshingStatus(false);
     }
-  }, [refreshAgentStatus]);
+  }
 
   useEffect(() => {
     if (!open) {
@@ -237,14 +186,13 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
       return;
     }
     didAutoRefreshStatusesRef.current = false;
-    setActiveCategory('agents');
+    setActiveCategory('codex');
     setError('');
     void loadSettings()
       .then((settings) => {
         setDraft(cloneSettings(settings));
-        setActiveAgentId(settings.agents[0]?.id ?? 'claude-code');
-        setInstructions({});
-        setInstructionDrafts({});
+        setInstruction(null);
+        setInstructionDraft('');
         setPrompts([]);
         setPromptDrafts({});
         setEditingPrompt(null);
@@ -256,39 +204,33 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   }, [loadSettings, open]);
 
   useEffect(() => {
-    if (!open || activeCategory !== 'agents' || !draft || didAutoRefreshStatusesRef.current) return;
+    if (!open || activeCategory !== 'codex' || !draft || didAutoRefreshStatusesRef.current) return;
     didAutoRefreshStatusesRef.current = true;
-    void refreshStatuses(draft.agents.map((agent) => agent.id));
-  }, [activeCategory, draft, open, refreshStatuses]);
+    void handleRefreshCodexStatus();
+  }, [activeCategory, draft, open]);
 
   useEffect(() => {
-    if (!open || activeCategory !== 'agents') return;
+    if (!open || activeCategory !== 'codex') return;
     setIsLoadingConfig(true);
     setError('');
-    void loadAgentConfig(activeAgentId)
+    void loadCodexConfig()
       .then((config) => {
-        setAgentConfig(config);
+        setCodexConfig(config);
         setConfigDraft(config.content);
+        setCodexAuthDraft(config.auth.content);
       })
-      .catch((e) => showCaughtError(e, '加载 Agent 配置失败', '加载失败'))
+      .catch((e) => showCaughtError(e, '加载 Codex 配置失败', '加载失败'))
       .finally(() => setIsLoadingConfig(false));
-  }, [activeAgentId, activeCategory, loadAgentConfig, open]);
+  }, [activeCategory, loadCodexConfig, open]);
 
   useEffect(() => {
     if (!open || activeCategory !== 'instructions') return;
-    const providers = Object.keys(providerLabels) as AgentProviderId[];
     setIsLoadingInstructions(true);
     setError('');
-    void Promise.all(providers.map((provider) => loadInstructionFile(provider)))
-      .then((files) => {
-        const nextInstructions: Partial<Record<AgentProviderId, InstructionFile>> = {};
-        const nextDrafts: Partial<Record<AgentProviderId, string>> = {};
-        for (const file of files) {
-          nextInstructions[file.provider] = file;
-          nextDrafts[file.provider] = file.content;
-        }
-        setInstructions(nextInstructions);
-        setInstructionDrafts(nextDrafts);
+    void loadInstructionFile()
+      .then((file) => {
+        setInstruction(file);
+        setInstructionDraft(file.content);
       })
       .catch((e) => showCaughtError(e, '加载 Instructions 失败', '加载失败'))
       .finally(() => setIsLoadingInstructions(false));
@@ -306,26 +248,6 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
       .catch((e) => showCaughtError(e, '加载 Prompt Templates 失败', '加载失败'))
       .finally(() => setIsLoadingPrompts(false));
   }, [activeCategory, loadPromptTemplates, open]);
-
-  // 切到 Codex tab 时，额外加载 auth.json。
-  useEffect(() => {
-    if (!open || activeCategory !== 'agents' || activeAgentId !== 'codex') return;
-    setIsLoadingCodexAuth(true);
-    void loadAgentConfig('codex-auth')
-      .then((config) => {
-        setCodexAuthConfig(config);
-        setCodexAuthDraft(config.content);
-      })
-      .catch((e) => showCaughtError(e, '加载 Codex auth.json 失败', '加载失败'))
-      .finally(() => setIsLoadingCodexAuth(false));
-  }, [activeAgentId, activeCategory, loadAgentConfig, open]);
-
-  function updateAgent(agentId: AgentProviderId, patch: Partial<AgentProviderConfig>) {
-    setDraft((current) => current ? {
-      ...current,
-      agents: current.agents.map((agent) => agent.id === agentId ? { ...agent, ...patch } : agent),
-    } : current);
-  }
 
   async function removeSkill(skillId: string) {
     setError('');
@@ -377,68 +299,38 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     }
   }
 
-  async function handleRefreshStatus(agentId: AgentProviderId) {
-    await refreshStatuses([agentId]);
-  }
-
-  async function handleSaveAgentConfig() {
-    if (!agentConfig) return;
-    // 这个面板只用 AgentProviderId 驱动 GET/PUT，不会出现 codex-auth；这里做一次防御性收窄。
-    if (agentConfig.agent_id === 'codex-auth') return;
-    const supportedModels = activeAgent
-      ? activeAgent.supported_models ?? []
-      : [];
-    if (supportedModels.length === 0) {
+  async function handleSaveCodexConfig() {
+    if (!codexConfig || !draft) return;
+    if (draft.supported_models.length === 0) {
       setError('请先填写至少一个支持模型。');
       return;
     }
     setIsSavingConfig(true);
     setError('');
     try {
-      const isCodex = agentConfig.agent_id === 'codex';
-      const saved = await saveAgentConfig(agentConfig.agent_id, configDraft, {
-        enabled: activeAgent?.enabled,
-        authContent: isCodex ? codexAuthDraft : undefined,
-        supportedModels,
+      const saved = await saveCodexConfig(configDraft, {
+        authContent: codexAuthDraft,
+        supportedModels: draft.supported_models,
       });
-      setAgentConfig(saved);
+      setCodexConfig(saved);
       setConfigDraft(saved.content);
-      if (isCodex && saved.auth) {
-        setCodexAuthConfig(saved.auth);
-        setCodexAuthDraft(saved.auth.content);
-      }
-      if (saved.settings) setDraft((current) => current ? { ...current, agents: cloneSettings(saved.settings!).agents } : cloneSettings(saved.settings!));
-      // 保存配置成功后主动刷新一次状态，反映最新的真实可用性。
-      void handleRefreshStatus(agentConfig.agent_id);
+      setCodexAuthDraft(saved.auth.content);
+      if (saved.settings) setDraft(cloneSettings(saved.settings));
+      void handleRefreshCodexStatus();
     } catch (e) {
-      showCaughtError(e, '保存 Agent 配置失败', '保存失败');
+      showCaughtError(e, '保存 Codex 配置失败', '保存失败');
     } finally {
       setIsSavingConfig(false);
     }
   }
 
-  function updateInstructionDraft(provider: AgentProviderId, content: string) {
-    setInstructionDrafts((current) => ({ ...current, [provider]: content }));
-  }
-
   async function handleSaveInstructions(closeAfterSave = false) {
-    const providers = Object.keys(providerLabels) as AgentProviderId[];
     setIsSavingInstructions(true);
     setError('');
     try {
-      const savedFiles = await Promise.all(
-        providers.map((provider) =>
-          saveInstructionFile(provider, instructionDrafts[provider] ?? instructions[provider]?.content ?? ''),
-        ),
-      );
-      const nextInstructions: Partial<Record<AgentProviderId, InstructionFile>> = {};
-      const nextDrafts: Partial<Record<AgentProviderId, string>> = {};
-      for (const file of savedFiles) {
-        nextInstructions[file.provider] = file;
-        nextDrafts[file.provider] = file.content;
-      }
-      setInstructions(nextInstructions);
-      setInstructionDrafts(nextDrafts);
+      const saved = await saveInstructionFile(instructionDraft);
+      setInstruction(saved);
+      setInstructionDraft(saved.content);
       if (closeAfterSave) onClose();
     } catch (e) {
       showCaughtError(e, '保存 Instructions 失败', '保存失败');
@@ -543,15 +435,6 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     }));
   }
 
-  function toggleMcpFormProvider(mode: McpFormMode, serverId: string, providerId: AgentProviderId) {
-    updateMcpFormServer(mode, serverId, (server) => {
-      const providerIds = server.provider_ids.includes(providerId)
-        ? server.provider_ids.filter((id) => id !== providerId)
-        : [...server.provider_ids, providerId];
-      return { ...server, provider_ids: providerIds };
-    });
-  }
-
   function buildMcpServerPayload(server: McpServerConfig): McpServerConfig | null {
     const name = server.name.trim();
     const url = server.url.trim();
@@ -563,15 +446,10 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
       setError('请先填写 HTTP MCP URL。');
       return null;
     }
-    if (server.provider_ids.length === 0) {
-      setError('请至少选择一个 Agent。');
-      return null;
-    }
     return {
       ...server,
       name,
       url,
-      provider_ids: [...server.provider_ids],
       headers: compactHeaders(server.headers),
       env_var_names: compactStrings(server.env_var_names),
     };
@@ -657,13 +535,12 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   }
 
   function renderInstructionSettings() {
-    const providers = Object.keys(providerLabels) as AgentProviderId[];
     return (
       <div className="space-y-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <div className="text-[11px] font-medium uppercase tracking-wider text-black/45">Global Instructions</div>
-            <h4 className="mt-1 text-xl font-semibold tracking-tight text-black">CLAUDE.md 与 AGENTS.md</h4>
+            <h4 className="mt-1 text-xl font-semibold tracking-tight text-black">AGENTS.md</h4>
           </div>
           <button
             type="button"
@@ -674,42 +551,27 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
             {isSavingInstructions ? '保存中' : '保存全局指令'}
           </button>
         </div>
-        <div className="grid gap-4">
-          {providers.map((provider) => {
-            const filename = provider === 'claude-code' ? 'CLAUDE.md' : 'AGENTS.md';
-            const file = instructions[provider];
-            return (
-              <section key={provider} className="rounded-2xl border border-black/10 bg-white p-4">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <div className="text-sm font-semibold text-black">{providerLabels[provider]}</div>
-                    <div className="mt-1 font-mono text-xs text-black/50">{filename}</div>
-                  </div>
-                  <span className="rounded-full bg-black/[0.04] px-2.5 py-1 text-[11px] text-black/55">
-                    独立指令
-                  </span>
-                </div>
-                <div className="mt-3 grid gap-1.5 text-xs font-medium text-black/60">
-                  文件路径
-                  <div className="flex h-10 min-w-0 items-center rounded-xl border border-black/10 bg-black/[0.02] px-3 font-mono text-[11px] text-black/60">
-                    <span className="truncate">{file?.path ?? (isLoadingInstructions ? '加载中...' : '')}</span>
-                  </div>
-                </div>
-                <label className="mt-3 grid gap-1.5 text-xs font-medium text-black/60">
-                  {filename}
-                  <textarea
-                    value={instructionDrafts[provider] ?? ''}
-                    onChange={(event) => updateInstructionDraft(provider, event.target.value)}
-                    disabled={isLoadingInstructions}
-                    spellCheck={false}
-                    className={`min-h-[220px] resize-y rounded-xl border border-black/10 bg-[#101113] px-3 py-3 font-mono text-xs leading-5 text-white outline-none transition placeholder:text-white/35 focus:border-black/30 disabled:cursor-wait disabled:opacity-60 ${SETTINGS_DARK_SCROLLBAR_CLASSES}`}
-                    placeholder={isLoadingInstructions ? '加载指令文件...' : `${filename} plain text`}
-                  />
-                </label>
-              </section>
-            );
-          })}
-        </div>
+        <section className="rounded-2xl border border-black/10 bg-white p-4">
+          <div className="text-sm font-semibold text-black">Codex</div>
+          <div className="mt-1 font-mono text-xs text-black/50">AGENTS.md</div>
+          <div className="mt-3 grid gap-1.5 text-xs font-medium text-black/60">
+            文件路径
+            <div className="flex h-10 min-w-0 items-center rounded-xl border border-black/10 bg-black/[0.02] px-3 font-mono text-[11px] text-black/60">
+              <span className="truncate">{instruction?.path ?? (isLoadingInstructions ? '加载中...' : '')}</span>
+            </div>
+          </div>
+          <label className="mt-3 grid gap-1.5 text-xs font-medium text-black/60">
+            AGENTS.md
+            <textarea
+              value={instructionDraft}
+              onChange={(event) => setInstructionDraft(event.target.value)}
+              disabled={isLoadingInstructions}
+              spellCheck={false}
+              className={`min-h-[220px] resize-y rounded-xl border border-black/10 bg-[#101113] px-3 py-3 font-mono text-xs leading-5 text-white outline-none transition placeholder:text-white/35 focus:border-black/30 disabled:cursor-wait disabled:opacity-60 ${SETTINGS_DARK_SCROLLBAR_CLASSES}`}
+              placeholder={isLoadingInstructions ? '加载指令文件...' : 'AGENTS.md plain text'}
+            />
+          </label>
+        </section>
       </div>
     );
   }
@@ -769,35 +631,20 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     );
   }
 
-  function renderAgentSettings() {
-    if (!draft || !activeAgent) return null;
+  function renderCodexSettings() {
+    if (!draft) return null;
     const enabledSkillCount = draft.skills.filter((skill) => skill.enabled).length;
     const enabledMcpCount = draft.mcp_servers.filter((server) => server.enabled).length;
 
     return (
       <div className="space-y-5">
         <div>
-          <div className="text-[11px] font-medium uppercase tracking-wider text-black/45">Agent 设置</div>
-          <h4 className="mt-1 text-xl font-semibold tracking-tight text-black">Claude Code 与 Codex</h4>
-        </div>
-        <div className="grid gap-3 md:grid-cols-2">
-          {draft.agents.map((agent) => (
-            <button
-              key={agent.id}
-              type="button"
-              onClick={() => setActiveAgentId(agent.id)}
-              className={`rounded-2xl border p-4 text-left transition ${agent.id === activeAgent.id ? 'border-black bg-black text-white shadow-card' : 'border-black/10 bg-white hover:border-black/25 hover:bg-black/[0.02]'}`}
-            >
-              <div className="flex items-center gap-2">
-                <span className="min-w-0 truncate text-sm font-semibold">{agent.name}</span>
-              </div>
-              <p className={`mt-2 line-clamp-2 text-xs leading-5 ${agent.id === activeAgent.id ? 'text-white/70' : 'text-black/55'}`}>{agent.description}</p>
-            </button>
-          ))}
+          <div className="text-[11px] font-medium uppercase tracking-wider text-black/45">Codex 设置</div>
+          <h4 className="mt-1 text-xl font-semibold tracking-tight text-black">Codex App Server</h4>
         </div>
         <div className="grid gap-3 sm:grid-cols-3">
           {(() => {
-            const status = activeAgent.status ?? null;
+            const status = codexStatus;
             const available = !!status && status.installed && status.runnable === true;
             const label = !status
               ? '未检测'
@@ -808,14 +655,14 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                   : status.runnable === false
                     ? '不可用'
                     : '未检测';
-            const tooltip = status?.error ?? (available ? `${activeAgent.name} 已就绪` : `${activeAgent.name} 状态`);
+            const tooltip = status?.error ?? (available ? 'Codex 已就绪' : 'Codex 状态');
             return (
               <div className="rounded-2xl border border-black/10 bg-black/[0.02] p-3" title={tooltip}>
                 <div className="flex items-center justify-between gap-2">
                   <div className="text-xs text-black/50">当前状态</div>
                   <button
                     type="button"
-                    onClick={() => void handleRefreshStatus(activeAgent.id)}
+                    onClick={() => void handleRefreshCodexStatus()}
                     disabled={isRefreshingStatus}
                     title="刷新状态"
                     aria-label="刷新状态"
@@ -844,80 +691,63 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-2 text-sm font-semibold text-black">
               <SettingsIcon className="h-4 w-4" />
-              {activeAgent.name} 配置文件
+              Codex 配置文件
             </div>
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"
-                onClick={() => void handleSaveAgentConfig()}
-                disabled={!agentConfig || isSavingConfig || isLoadingConfig || activeSupportedModels.length === 0}
+                onClick={() => void handleSaveCodexConfig()}
+                disabled={!codexConfig || isSavingConfig || isLoadingConfig || draft.supported_models.length === 0}
                 className="inline-flex h-8 items-center rounded-full bg-black px-3 text-xs font-medium text-white transition hover:bg-black/85 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {isSavingConfig ? '保存中' : '保存配置文件'}
               </button>
             </div>
           </div>
-          <div className="mt-4 grid gap-3 sm:grid-cols-[180px_minmax(0,1fr)]">
-            <label className="grid gap-1.5 text-xs font-medium text-black/60">
-              启用
-              <select
-                value={activeAgent.enabled ? 'true' : 'false'}
-                onChange={(event) => updateAgent(activeAgent.id, { enabled: event.target.value === 'true' })}
-                className="h-10 rounded-xl border border-black/10 bg-white px-3 text-sm text-black outline-none transition focus:border-black/30"
-              >
-                <option value="true">启用</option>
-                <option value="false">禁用</option>
-              </select>
-            </label>
+          <div className="mt-4 grid gap-3">
             <div className="grid gap-1.5 text-xs font-medium text-black/60">
               文件路径
               <div className="flex h-10 min-w-0 items-center rounded-xl border border-black/10 bg-black/[0.02] px-3 font-mono text-[11px] text-black/60">
-                <span className="truncate">{agentConfig?.path ?? (isLoadingConfig ? '加载中...' : '')}</span>
+                <span className="truncate">{codexConfig?.path ?? (isLoadingConfig ? '加载中...' : '')}</span>
               </div>
             </div>
           </div>
           <div className="mt-3 grid gap-1.5">
             <span className="text-xs font-medium text-black/60">支持模型</span>
             <ModelChips
-              values={activeSupportedModels}
-              onChange={(next) => updateAgent(activeAgent.id, {
-                supported_models: next,
-              })}
+              values={draft.supported_models}
+              onChange={(next) => setDraft((current) => current ? { ...current, supported_models: next } : current)}
               disabled={isLoadingConfig || isSavingConfig}
             />
           </div>
           <label className="mt-3 grid gap-1.5 text-xs font-medium text-black/60">
-            {activeAgent.id === 'claude-code' ? 'settings.json' : 'config.toml'}
+            config.toml
             <textarea
               value={configDraft}
               onChange={(event) => setConfigDraft(event.target.value)}
               disabled={isLoadingConfig}
               spellCheck={false}
               className={`min-h-[260px] resize-y rounded-xl border border-black/10 bg-[#101113] px-3 py-3 font-mono text-xs leading-5 text-white outline-none transition placeholder:text-white/35 focus:border-black/30 disabled:cursor-wait disabled:opacity-60 ${SETTINGS_DARK_SCROLLBAR_CLASSES}`}
-              placeholder={isLoadingConfig ? '加载配置文件...' : activeAgent.id === 'claude-code' ? '{\n  \"model\": \"your-model-id\"\n}' : 'model = \"your-model-id\"'}
+              placeholder={isLoadingConfig ? '加载配置文件...' : 'model = "your-model-id"'}
             />
           </label>
-          {activeAgent.id === 'codex' && (
-            <>
-              <div className="mt-4 grid gap-1.5 text-xs font-medium text-black/60">
-                auth.json 文件路径
-                <div className="flex h-10 min-w-0 items-center rounded-xl border border-black/10 bg-black/[0.02] px-3 font-mono text-[11px] text-black/60">
-                  <span className="truncate">{codexAuthConfig?.path ?? (isLoadingCodexAuth ? '加载中...' : '')}</span>
-                </div>
-              </div>
-              <label className="mt-3 grid gap-1.5 text-xs font-medium text-black/60">
-                auth.json
-                <textarea
-                  value={codexAuthDraft}
-                  onChange={(event) => setCodexAuthDraft(event.target.value)}
-                  disabled={isLoadingCodexAuth}
-                  spellCheck={false}
-                  className={`min-h-[180px] resize-y rounded-xl border border-black/10 bg-[#101113] px-3 py-3 font-mono text-xs leading-5 text-white outline-none transition placeholder:text-white/35 focus:border-black/30 disabled:cursor-wait disabled:opacity-60 ${SETTINGS_DARK_SCROLLBAR_CLASSES}`}
-                  placeholder={isLoadingCodexAuth ? '加载 auth.json...' : '{\n  \"OPENAI_API_KEY\": \"sk-...\"\n}'}
-                />
-              </label>
-            </>
-          )}
+          <div className="mt-4 grid gap-1.5 text-xs font-medium text-black/60">
+            auth.json 文件路径
+            <div className="flex h-10 min-w-0 items-center rounded-xl border border-black/10 bg-black/[0.02] px-3 font-mono text-[11px] text-black/60">
+              <span className="truncate">{codexConfig?.auth.path ?? (isLoadingConfig ? '加载中...' : '')}</span>
+            </div>
+          </div>
+          <label className="mt-3 grid gap-1.5 text-xs font-medium text-black/60">
+            auth.json
+            <textarea
+              value={codexAuthDraft}
+              onChange={(event) => setCodexAuthDraft(event.target.value)}
+              disabled={isLoadingConfig}
+              spellCheck={false}
+              className={`min-h-[180px] resize-y rounded-xl border border-black/10 bg-[#101113] px-3 py-3 font-mono text-xs leading-5 text-white outline-none transition placeholder:text-white/35 focus:border-black/30 disabled:cursor-wait disabled:opacity-60 ${SETTINGS_DARK_SCROLLBAR_CLASSES}`}
+              placeholder={isLoadingConfig ? '加载 auth.json...' : '{\n  "OPENAI_API_KEY": "sk-..."\n}'}
+            />
+          </label>
         </section>
       </div>
     );
@@ -1085,22 +915,6 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               placeholder="https://example.com/mcp"
             />
           </label>
-          <div className="grid gap-1.5 text-xs font-medium text-black/60">
-            作用 Agent
-            <div className="flex flex-wrap gap-2">
-              {(Object.keys(providerLabels) as AgentProviderId[]).map((providerId) => (
-                <label key={providerId} className="inline-flex items-center gap-2 rounded-full border border-black/10 bg-white px-3 py-2 text-xs text-black">
-                  <input
-                    type="checkbox"
-                    checked={server.provider_ids.includes(providerId)}
-                    onChange={() => toggleMcpFormProvider(mode, server.id, providerId)}
-                    className="h-3.5 w-3.5 accent-black"
-                  />
-                  {providerLabels[providerId]}
-                </label>
-              ))}
-            </div>
-          </div>
           <label className="inline-flex w-fit items-center gap-2 rounded-full border border-black/10 bg-white px-3 py-2 text-xs font-medium text-black">
             <input
               type="checkbox"
@@ -1226,7 +1040,6 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                     </div>
                     <code className="mt-2 block truncate rounded-xl border border-black/10 bg-black/[0.02] px-3 py-2 font-mono text-[11px] text-black/60">{server.url}</code>
                     <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-black/55">
-                      <span className="rounded-full border border-black/10 bg-black/[0.02] px-2 py-1">{server.provider_ids.map((id) => providerLabels[id]).join(' / ')}</span>
                       {server.headers.length > 0 && <span className="rounded-full border border-black/10 bg-black/[0.02] px-2 py-1">{server.headers.length} Headers</span>}
                       {server.env_var_names.length > 0 && <span className="rounded-full border border-black/10 bg-black/[0.02] px-2 py-1">{server.env_var_names.length} 环境变量</span>}
                     </div>
@@ -1282,7 +1095,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   function renderContent() {
     if (loading && !draft) return <div className="py-16 text-center text-sm text-black/45">加载设置中…</div>;
     if (!draft) return <div className="py-16 text-center text-sm text-black/45">暂无设置</div>;
-    if (activeCategory === 'agents') return renderAgentSettings();
+    if (activeCategory === 'codex') return renderCodexSettings();
     if (activeCategory === 'instructions') return renderInstructionSettings();
     if (activeCategory === 'prompts') return renderPromptSettings();
     if (activeCategory === 'skills') return renderSkillsSettings();

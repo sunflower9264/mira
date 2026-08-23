@@ -135,10 +135,9 @@ def _tool_use_id_for(auth_client, run_id: str, node_id: str) -> str:
 # --- spec §7 矩阵 ------------------------------------------------------------
 
 
-def test_single_ask_user_emit_step_waiting_and_resume_success(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_single_ask_user_emit_step_waiting_and_resume_success(auth_client, configure_codex):
+    configure_codex()
     graph = {
-        "agent": "claude",
         "nodes": [
             _generate_node("n_gen", prompt=_ask_user_prompt(single=True, options=["A", "B", "C"])),
         ],
@@ -174,10 +173,9 @@ def test_single_ask_user_emit_step_waiting_and_resume_success(auth_client, enabl
     assert "answers=choice=A" in step["output"]
 
 
-def test_single_ask_user_can_resume_with_none_option(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_single_ask_user_can_resume_with_none_option(auth_client, configure_codex):
+    configure_codex()
     graph = {
-        "agent": "claude",
         "nodes": [
             _generate_node("n_gen", prompt=_ask_user_prompt(single=True, options=["A", "B", "C"])),
         ],
@@ -206,8 +204,8 @@ def test_single_ask_user_can_resume_with_none_option(auth_client, enable_claude_
     assert "answers=choice=以上都不是" in step["output"]
 
 
-def test_multi_ask_user_with_text_and_attachments(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_multi_ask_user_with_text_and_attachments(auth_client, configure_codex):
+    configure_codex()
     # 准备一个 upload，用于 attachments
     upload_resp = auth_client.post(
         "/api/uploads",
@@ -217,7 +215,6 @@ def test_multi_ask_user_with_text_and_attachments(auth_client, enable_claude_age
     upload_id = upload_resp.json()["id"]
 
     graph = {
-        "agent": "claude",
         "nodes": [
             _generate_node(
                 "n_gen",
@@ -252,10 +249,9 @@ def test_multi_ask_user_with_text_and_attachments(auth_client, enable_claude_age
     assert "answers=choice=X|Z" in step["output"]
 
 
-def test_multi_group_ask_user_answers_all_groups(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_multi_group_ask_user_answers_all_groups(auth_client, configure_codex):
+    configure_codex()
     graph = {
-        "agent": "claude",
         "nodes": [
             _generate_node(
                 "n_gen",
@@ -293,10 +289,9 @@ def test_multi_group_ask_user_answers_all_groups(auth_client, enable_claude_agen
     assert "answers=intent=写作,tone=正式|简洁" in step["output"]
 
 
-def test_ask_user_can_resume_with_text_instead_of_answers(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_ask_user_can_resume_with_text_instead_of_answers(auth_client, configure_codex):
+    configure_codex()
     graph = {
-        "agent": "claude",
         "nodes": [
             _generate_node(
                 "n_gen",
@@ -328,8 +323,8 @@ def test_ask_user_can_resume_with_text_instead_of_answers(auth_client, enable_cl
     assert "text=use my own answer" in step["output"]
 
 
-def test_ask_user_can_resume_with_attachment_instead_of_answers(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_ask_user_can_resume_with_attachment_instead_of_answers(auth_client, configure_codex):
+    configure_codex()
     upload_resp = auth_client.post(
         "/api/uploads",
         files={"file": ("choice.txt", b"answer", "text/plain")},
@@ -337,7 +332,6 @@ def test_ask_user_can_resume_with_attachment_instead_of_answers(auth_client, ena
     assert upload_resp.status_code == 200, upload_resp.text
     upload_id = upload_resp.json()["id"]
     graph = {
-        "agent": "claude",
         "nodes": [
             _generate_node(
                 "n_gen",
@@ -369,10 +363,9 @@ def test_ask_user_can_resume_with_attachment_instead_of_answers(auth_client, ena
     assert "attachments=choice.txt" in step["output"]
 
 
-def test_multi_group_missing_answer_returns_400(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_multi_group_missing_answer_returns_400(auth_client, configure_codex):
+    configure_codex()
     graph = {
-        "agent": "claude",
         "nodes": [
             _generate_node(
                 "n_gen",
@@ -404,10 +397,9 @@ def test_multi_group_missing_answer_returns_400(auth_client, enable_claude_agent
     _wait_for_status(auth_client, run_id, {"cancelled"})
 
 
-def test_resume_selected_not_in_options_returns_400(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_resume_selected_not_in_options_returns_400(auth_client, configure_codex):
+    configure_codex()
     graph = {
-        "agent": "claude",
         "nodes": [
             _generate_node("n_gen", prompt=_ask_user_prompt(single=True, options=["yes", "no", "later"])),
         ],
@@ -435,10 +427,9 @@ def test_resume_selected_not_in_options_returns_400(auth_client, enable_claude_a
     _wait_for_status(auth_client, run_id, {"cancelled"})
 
 
-def test_multi_ask_user_none_option_is_mutually_exclusive(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_multi_ask_user_none_option_is_mutually_exclusive(auth_client, configure_codex):
+    configure_codex()
     graph = {
-        "agent": "claude",
         "nodes": [
             _generate_node("n_gen", prompt=_ask_user_prompt(single=False, options=["A", "B", "C"])),
         ],
@@ -462,10 +453,9 @@ def test_multi_ask_user_none_option_is_mutually_exclusive(auth_client, enable_cl
     _wait_for_status(auth_client, run_id, {"cancelled"})
 
 
-def test_resume_wrong_node_id_returns_409(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_resume_wrong_node_id_returns_409(auth_client, configure_codex):
+    configure_codex()
     graph = {
-        "agent": "claude",
         "nodes": [
             _generate_node("n_gen", prompt=_ask_user_prompt(single=True, options=["A", "B", "C"])),
         ],
@@ -488,10 +478,9 @@ def test_resume_wrong_node_id_returns_409(auth_client, enable_claude_agent):
     _wait_for_status(auth_client, run_id, {"cancelled"})
 
 
-def test_resume_wrong_tool_use_id_returns_409(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_resume_wrong_tool_use_id_returns_409(auth_client, configure_codex):
+    configure_codex()
     graph = {
-        "agent": "claude",
         "nodes": [
             _generate_node("n_gen", prompt=_ask_user_prompt(single=True, options=["A", "B", "C"])),
         ],
@@ -515,10 +504,9 @@ def test_resume_wrong_tool_use_id_returns_409(auth_client, enable_claude_agent):
     _wait_for_status(auth_client, run_id, {"cancelled"})
 
 
-def test_resume_empty_payload_returns_400(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_resume_empty_payload_returns_400(auth_client, configure_codex):
+    configure_codex()
     graph = {
-        "agent": "claude",
         "nodes": [
             _generate_node("n_gen", prompt=_ask_user_prompt(single=True, options=["A", "B", "C"])),
         ],
@@ -542,10 +530,9 @@ def test_resume_empty_payload_returns_400(auth_client, enable_claude_agent):
     _wait_for_status(auth_client, run_id, {"cancelled"})
 
 
-def test_cancel_during_waiting(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_cancel_during_waiting(auth_client, configure_codex):
+    configure_codex()
     graph = {
-        "agent": "claude",
         "nodes": [
             _generate_node("n_gen", prompt=_ask_user_prompt(single=True, options=["A", "B", "C"])),
         ],
@@ -563,16 +550,15 @@ def test_cancel_during_waiting(auth_client, enable_claude_agent):
     assert step["status"] == "cancelled"
 
 
-def test_ask_user_protocol_error_does_not_emit_waiting(auth_client, enable_claude_agent):
+def test_ask_user_protocol_error_does_not_emit_waiting(auth_client, configure_codex):
     """spec §1.2 + §7：options 数量不足时不应 emit step.waiting，run 应直接失败。"""
 
-    enable_claude_agent()
+    configure_codex()
     bad_prompt = (
         '[[ask_user:{"context":{"title":"确认运行选择","summary":"继续运行前需要你选择一个处理方向。"},"groups":[{"id":"choice","type":"single","label":"x",'
         '"options":[{"label":"only-one","description":"只给一个选项。","recommended":true}]}]}]] [[respond:LATE]]'
     )
     graph = {
-        "agent": "claude",
         "nodes": [_generate_node("n_gen", prompt=bad_prompt)],
         "execution_edges": [],
     }
@@ -587,8 +573,8 @@ def test_ask_user_protocol_error_does_not_emit_waiting(auth_client, enable_claud
     assert (step["input"] or {}).get("ask_user") is None
 
 
-def test_ask_user_protocol_error_for_too_many_options(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_ask_user_protocol_error_for_too_many_options(auth_client, configure_codex):
+    configure_codex()
     bad_prompt = (
         '[[ask_user:{"context":{"title":"确认运行选择","summary":"继续运行前需要你选择一个处理方向。"},"groups":[{"id":"choice","type":"single","label":"x",'
         '"options":['
@@ -599,7 +585,6 @@ def test_ask_user_protocol_error_for_too_many_options(auth_client, enable_claude
         ']}]}]] [[respond:LATE]]'
     )
     graph = {
-        "agent": "claude",
         "nodes": [_generate_node("n_gen", prompt=bad_prompt)],
         "execution_edges": [],
     }
@@ -613,10 +598,10 @@ def test_ask_user_protocol_error_for_too_many_options(auth_client, enable_claude
     assert (step["input"] or {}).get("ask_user") is None
 
 
-def test_resume_with_foreign_attachment_returns_404(auth_client, enable_claude_agent):
+def test_resume_with_foreign_attachment_returns_404(auth_client, configure_codex):
     """spec §7：attachments 包含他人 upload id → 404。"""
 
-    enable_claude_agent()
+    configure_codex()
     # 另一个用户上传一个文件：手动切到他的 token，再切回 admin。
     admin_token = auth_client.headers["Authorization"]
     user_token = f"Bearer {create_regular_user()['token']}"
@@ -630,7 +615,6 @@ def test_resume_with_foreign_attachment_returns_404(auth_client, enable_claude_a
     auth_client.headers["Authorization"] = admin_token
 
     graph = {
-        "agent": "claude",
         "nodes": [
             _generate_node("n_gen", prompt=_ask_user_prompt(single=True, options=["A", "B", "C"])),
         ],

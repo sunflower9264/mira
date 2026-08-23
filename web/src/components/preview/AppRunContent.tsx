@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useEditorStore } from '../../stores/useEditorStore';
 import { useRunStore } from '../../stores/useRunStore';
-import type { App, AppAgentKind } from '../../types';
+import type { App } from '../../types';
 import * as api from '../../lib/api';
 import { AppLaunchView, type LaunchInputs } from './AppLaunchView';
 import { HistoryReplayBanner } from './HistoryReplayBanner';
@@ -19,7 +19,6 @@ export interface AppRunContentProps {
   app: App;
   variant: RunContentVariant;
   failureErrorPlacement?: FailureErrorPlacement;
-  onAgentChange?(agent: AppAgentKind, supportedModels: string[]): void;
   onToolsChange?(disabledToolIds: string[]): void;
 }
 
@@ -27,7 +26,6 @@ export function AppRunContent({
   app,
   variant,
   failureErrorPlacement = 'bottom',
-  onAgentChange,
   onToolsChange,
 }: AppRunContentProps) {
   const flushSave = useEditorStore((s) => s.flushSave);
@@ -132,7 +130,6 @@ export function AppRunContent({
         <AppLaunchView
           app={app}
           onStart={onStart}
-          onAgentChange={onAgentChange}
           onToolsChange={onToolsChange}
           density={isAppView ? 'spacious' : 'compact'}
         />

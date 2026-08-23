@@ -13,7 +13,7 @@ from app.schemas.decision import DecisionAnswer, DecisionGroup, DecisionRequestC
 
 
 class AgentChunk(BaseModel):
-    type: Literal["text", "tool_call", "tool_result", "error", "done"]
+    type: Literal["text", "tool_call", "tool_result", "error", "done", "session"]
     text: str | None = None
     raw: dict | None = None
 
@@ -25,9 +25,9 @@ class AgentExecutionResult(BaseModel):
     error: str | None = None
 
 
-class AgentProviderStatus(BaseModel):
+class AgentRuntimeStatus(BaseModel):
     installed: bool
-    # runnable=None 表示尚未跑过真实 smoke；True/False 由 refresh_agent_status 填。
+    # runnable=None 表示尚未跑过真实 smoke；True/False 由 Codex status probe 填。
     runnable: bool | None = None
     identity: str | None = None
     method: str | None = None
@@ -37,13 +37,13 @@ class AgentProviderStatus(BaseModel):
 
 # --- ask_user 中段交互协议 ---------------------------------------------------
 #
-# 见 docs/plans/runtime-waiting-spec.md。Agent 通过约定的 `ask_user` tool_use
-# 向后端发起单选 / 多选问题；runtime 在 stream 解析层识别后调用 ``on_ask_user``，
-# 等待 orchestrator 拿到用户 resume，最终把结果回填给 LLM 继续生成。
+# Codex 在 Plan mode 中通过原生 requestUserInput 发起单选 / 多选问题；runtime
+# 归一化后调用 ``on_ask_user``，等待用户 resume，再按原 JSON-RPC request id
+# 把结果回填给同一 turn 继续生成。
 
 
 class AskUserRequest(BaseModel):
-    """LLM 调用 ask_user 时携带的参数。spec §1.1 中的 input_schema。"""
+    """Codex 原生 requestUserInput 归一化后的 Mira 提问请求。"""
 
     context: DecisionRequestContext
     groups: list[DecisionGroup]
@@ -62,14 +62,12 @@ class AskUserAttachment(BaseModel):
 
 
 class AskUserResult(BaseModel):
-    """用户提交回来的内容。``ok=False`` 表示协议错误，runtime 应把
-    ``tool_result.is_error=true`` 与 ``error`` 文本回填给 Agent，让其重试。
-    """
+    """用户提交回来的内容；``ok=False`` 时 runtime 返回 JSON-RPC error。"""
 
     ok: bool = True
     answers: list[DecisionAnswer] = Field(default_factory=list)
     text: str | None = None
-    attachments: list[AskUserAttachment] = []
+    attachments: list[AskUserAttachment] = Field(default_factory=list)
     error: str | None = None
 
 
@@ -97,4 +95,4 @@ class AgentRuntime(Protocol):
         fork_session: bool = False,
     ) -> AgentExecutionResult: ...
 
-    async def detect_status(self) -> AgentProviderStatus: ...
+    async def detect_status(self) -> AgentRuntimeStatus: ...

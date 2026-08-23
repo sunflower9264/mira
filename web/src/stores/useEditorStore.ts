@@ -3,10 +3,10 @@
 // via PATCH /api/apps/:id (PRD §8.3).
 
 import { create } from 'zustand';
-import type { App, AppAgentKind, Graph, GraphNodeSizeMap, RunWaitingRequest, ExecutionEdge, WorkflowNode, NodeType } from '../types';
+import type { App, Graph, GraphNodeSizeMap, RunWaitingRequest, ExecutionEdge, WorkflowNode, NodeType } from '../types';
 import { CONDITION_DEFAULT_BRANCH_KEY } from '../types';
 import * as api from '../lib/api';
-import { defaultReasoningEffortForAgent, normalizeReasoningEffortForAgent } from '../lib/agentOptions';
+import { defaultReasoningEffort } from '../lib/modelOptions';
 import { uuid } from '../lib/utils';
 
 type SaveStatus = 'idle' | 'dirty' | 'saving' | 'saved' | 'error';
@@ -43,7 +43,6 @@ interface EditorStoreState {
   flushSave(): Promise<void>;
   publish(payload?: { visibility?: App['visibility']; market_access?: App['market_access'] }): Promise<void>;
   unpublish(): Promise<void>;
-  setGraphAgent(agent: AppAgentKind, supportedModels?: string[]): void;
   setGraph(graph: Graph, opts?: GraphUpdateOptions): void;
   patchNode(id: string, patch: Partial<WorkflowNode>, opts?: GraphUpdateOptions): void;
   addNode(type: NodeType, init?: Partial<WorkflowNode>): WorkflowNode;
@@ -164,29 +163,6 @@ function pruneOrphanConditionEdges(nodes: WorkflowNode[], edges: ExecutionEdge[]
   });
 }
 
-function clearIncompatibleModels(nodes: WorkflowNode[], supportedModels: string[] | undefined): WorkflowNode[] {
-  const allowed = new Set(supportedModels ?? []);
-  return nodes.map((node) => {
-    if (
-      (node.type === 'generate' || node.type === 'output' || node.type === 'condition') &&
-      node.model &&
-      !allowed.has(node.model)
-    ) {
-      return { ...node, model: undefined } as WorkflowNode;
-    }
-    return node;
-  });
-}
-
-function normalizeNodeReasoningEfforts(nodes: WorkflowNode[], agent: AppAgentKind): WorkflowNode[] {
-  return nodes.map((node) => {
-    if (node.type !== 'generate' && node.type !== 'output' && node.type !== 'condition') return node;
-    const reasoning_effort = normalizeReasoningEffortForAgent(agent, node.reasoning_effort);
-    if (reasoning_effort === node.reasoning_effort) return node;
-    return { ...node, reasoning_effort } as WorkflowNode;
-  });
-}
-
 function isSingletonNodeType(type: NodeType): boolean {
   return type === 'user_input' || type === 'output';
 }
@@ -277,20 +253,6 @@ export const useEditorStore = create<EditorStoreState>((set, get) => ({
     set({ app: updated, saveStatus: 'saved', saveError: null });
   },
 
-  setGraphAgent(agent, supportedModels) {
-    const app = get().app;
-    if (!app) return;
-    const nodes = normalizeNodeReasoningEfforts(
-      clearIncompatibleModels(app.graph.nodes, supportedModels),
-      agent,
-    );
-    get().setGraph({
-      ...app.graph,
-      agent,
-      nodes,
-    });
-  },
-
   setGraph(graph, opts) {
     const app = get().app;
     if (!app) return;
@@ -369,7 +331,7 @@ export const useEditorStore = create<EditorStoreState>((set, get) => ({
           position: { x: baseX, y: baseY },
           title: '生成',
           prompt: '',
-          reasoning_effort: defaultReasoningEffortForAgent(app.graph.agent),
+          reasoning_effort: defaultReasoningEffort(),
         };
         break;
       case 'output':
@@ -379,7 +341,7 @@ export const useEditorStore = create<EditorStoreState>((set, get) => ({
           position: { x: baseX, y: baseY },
           title: '输出',
           prompt: '',
-          reasoning_effort: defaultReasoningEffortForAgent(app.graph.agent),
+          reasoning_effort: defaultReasoningEffort(),
         };
         break;
       case 'condition':
@@ -390,7 +352,7 @@ export const useEditorStore = create<EditorStoreState>((set, get) => ({
           title: '判断',
           mode: 'binary',
           prompt: '',
-          reasoning_effort: defaultReasoningEffortForAgent(app.graph.agent),
+          reasoning_effort: defaultReasoningEffort(),
           branches: [{ key: 'true' }, { key: 'false' }],
         };
         break;

@@ -17,7 +17,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import SettingsRow, User
 from app.services.auth import hash_password
 from app.services.prompts import seed_prompt_templates
-from app.services.settings import default_agents
 from app.utils import dumps, now_utc
 
 ADMIN_USER_ID = "user_admin"
@@ -80,7 +79,7 @@ async def upsert_admin(db: AsyncSession, username: str, password: str) -> User:
     if settings_row is None:
         settings_row = SettingsRow(
             owner_id=ADMIN_USER_ID,
-            agents_json=dumps(default_agents()),
+            supported_models_json=dumps([]),
             skills_json=dumps([]),
             mcp_servers_json=dumps([]),
             updated_at=now_utc(),

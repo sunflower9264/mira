@@ -1,14 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { PlayIcon, SendIcon } from '../common/Icons';
 import { PillInputBar, type PillAttachment } from '../common/PillInputBar';
-import { AppAgentSelect } from '../common/AppAgentSelect';
 import { AppToolsInlineSelect } from '../common/AppToolsInlineSelect';
 import { WorkflowLintNotice } from '../common/WorkflowLintNotice';
-import { isAgentEnabled } from '../../lib/agentOptions';
-import { useSettingsStore } from '../../stores/useSettingsStore';
 import { showCaughtError } from '../../stores/useErrorDialogStore';
 import * as api from '../../lib/api';
-import type { App, AppAgentKind, ConditionNode, GenerateNode, OutputNode, UserInputNode, WorkflowLintResult, WorkflowNode } from '../../types';
+import type { App, ConditionNode, GenerateNode, OutputNode, UserInputNode, WorkflowLintResult, WorkflowNode } from '../../types';
 import { useAppCoverUrl } from '../../hooks/useAppCoverUrl';
 
 type Density = 'compact' | 'spacious';
@@ -27,7 +24,6 @@ export type LaunchInputs = Record<string, string | LaunchInputValue>;
 interface AppLaunchViewProps {
   app: App;
   onStart(inputs: LaunchInputs): void | Promise<void>;
-  onAgentChange?(agent: AppAgentKind, supportedModels: string[]): void;
   onToolsChange?(disabledToolIds: string[]): void;
   density?: Density;
   error?: string | null;
@@ -78,8 +74,6 @@ function CoverPlaceholder({ classes }: { classes: string }) {
   );
 }
 
-const noEnabledAgentMessage = '无可用 Agent，请先在设置中启用 Agent';
-
 type PromptNode = GenerateNode | ConditionNode | OutputNode;
 
 function isPromptNode(node: WorkflowNode): node is PromptNode {
@@ -93,11 +87,9 @@ function getInputPlaceholder(node: UserInputNode) {
 const SCROLLBAR_CLASSES =
   '[&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-button]:hidden [&::-webkit-scrollbar-button]:h-0 [&::-webkit-scrollbar-button]:w-0 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-black/20';
 
-export function AppLaunchView({ app, onStart, onAgentChange, onToolsChange, density = 'compact', error = null }: AppLaunchViewProps) {
+export function AppLaunchView({ app, onStart, onToolsChange, density = 'compact', error = null }: AppLaunchViewProps) {
   const t = tokens[density];
   const coverUrl = useAppCoverUrl(app);
-  const settings = useSettingsStore((s) => s.settings);
-  const loadSettings = useSettingsStore((s) => s.load);
   const sourceHidden = !app.can_view_source;
   const promptNodes = useMemo(
     () => sourceHidden ? [] : app.graph.nodes.filter(isPromptNode),
@@ -125,10 +117,6 @@ export function AppLaunchView({ app, onStart, onAgentChange, onToolsChange, dens
   const [lintError, setLintError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!settings) void loadSettings().catch(() => undefined);
-  }, [settings, loadSettings]);
-
-  useEffect(() => {
     const controller = new AbortController();
     setLintLoading(true);
     setLintError(null);
@@ -146,25 +134,12 @@ export function AppLaunchView({ app, onStart, onAgentChange, onToolsChange, dens
     return () => controller.abort();
   }, [app.can_view_source, app.id, app.graph]);
 
-  const enabledAgentRuntimes = useMemo(
-    () => new Set((settings?.agents ?? []).filter((agent) => agent.enabled).map((agent) => agent.runtime)),
-    [settings?.agents],
-  );
-  const hasEnabledAgent = enabledAgentRuntimes.size > 0;
-  const settingsReady = settings !== null;
-  const appAgent = app.graph.agent ?? '';
-  const hasSelectedAgent = useMemo(() => isAgentEnabled(settings, appAgent), [settings, appAgent]);
-  const invalidAgentMessages = useMemo(() => {
+  const invalidPromptMessages = useMemo(() => {
     if (sourceHidden) return [];
-    if (!settingsReady) return [];
-    const messages = promptNodes.flatMap((node) =>
+    return promptNodes.flatMap((node) =>
       node.prompt?.trim() ? [] : [`${node.title || node.id}：未填写提示词`],
     );
-    if (promptNodes.length > 0 && !hasSelectedAgent) {
-      messages.push(appAgent ? `应用默认 Agent「${appAgent}」未启用` : '应用未选择 Agent');
-    }
-    return messages;
-  }, [appAgent, hasSelectedAgent, promptNodes, settingsReady, sourceHidden]);
+  }, [promptNodes, sourceHidden]);
 
   const setValue = (id: string, value: string) =>
     setInputValues((current) => ({ ...current, [id]: value }));
@@ -172,9 +147,8 @@ export function AppLaunchView({ app, onStart, onAgentChange, onToolsChange, dens
   const activeFilled = activeUserInput
     ? (inputValues[activeUserInput.id] ?? '').trim().length > 0
     : true;
-  const agentReady = sourceHidden || promptNodes.length === 0 || (settingsReady && hasSelectedAgent);
   const hasLintErrors = (lintResult?.summary.errors ?? 0) > 0;
-  const canStart = app.can_run && !empty && activeFilled && !submitting && agentReady && invalidAgentMessages.length === 0 && !hasLintErrors;
+  const canStart = app.can_run && !empty && activeFilled && !submitting && invalidPromptMessages.length === 0 && !hasLintErrors;
 
   const [uploadError, setUploadError] = useState<string | null>(null);
 
@@ -244,14 +218,6 @@ export function AppLaunchView({ app, onStart, onAgentChange, onToolsChange, dens
 
   const renderMeta = (
     <section className="space-y-1">
-      {onAgentChange && (
-        <AppAgentSelect
-          value={appAgent}
-          onChange={onAgentChange}
-          label="默认 Agent"
-          className="mb-2"
-        />
-      )}
       {onToolsChange && (
         <AppToolsInlineSelect
           disabledToolIds={app.graph.tools?.disabled_tool_ids ?? []}
@@ -263,12 +229,9 @@ export function AppLaunchView({ app, onStart, onAgentChange, onToolsChange, dens
       {!app.can_run && (
         <div className="text-xs text-black/55">应用已下架，只能查看历史运行记录。</div>
       )}
-      {settingsReady && !hasEnabledAgent && (
-        <div className="text-xs text-amber-700">{noEnabledAgentMessage}。</div>
-      )}
-      {settingsReady && hasEnabledAgent && invalidAgentMessages.length > 0 && (
+      {invalidPromptMessages.length > 0 && (
         <div className="space-y-0.5 text-xs text-amber-700">
-          {invalidAgentMessages.slice(0, 3).map((message) => (
+          {invalidPromptMessages.slice(0, 3).map((message) => (
             <div key={message}>{message}</div>
           ))}
         </div>

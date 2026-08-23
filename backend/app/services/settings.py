@@ -1,36 +1,15 @@
 from __future__ import annotations
 
-import json
-from pathlib import Path
-
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import SettingsRow, Skill
 from app.schemas import McpServerConfig, MiraSettings
-from app.utils import dumps, iso, loads, now_utc
+from app.utils import dumps, loads, now_utc
 
 from .serializers import skill_to_config
 from .tools import tool_inventory
-
-
-AGENTS_SEED_PATH = Path(__file__).resolve().parents[2] / "seeds" / "agents.json"
-NO_ENABLED_AGENT_DETAIL = "无可用 Agent，请先在设置中启用 Agent"
-
-
-def default_agents(seed_path: Path = AGENTS_SEED_PATH) -> list[dict]:
-    checked_at = iso(now_utc())
-    if not seed_path.exists():
-        return []
-    raw = json.loads(seed_path.read_text(encoding="utf-8"))
-    return [
-        {
-            **agent,
-            "status": {"installed": False, "runnable": None, "checked_at": checked_at},
-        }
-        for agent in raw
-    ]
 
 
 async def get_or_create_settings_row(db: AsyncSession) -> SettingsRow:
@@ -46,7 +25,7 @@ async def get_or_create_settings_row(db: AsyncSession) -> SettingsRow:
         return row
     row = SettingsRow(
         owner_id=ADMIN_USER_ID,
-        agents_json=dumps(default_agents()),
+        supported_models_json=dumps([]),
         skills_json=dumps([]),
         mcp_servers_json=dumps([]),
         updated_at=now_utc(),
@@ -55,10 +34,6 @@ async def get_or_create_settings_row(db: AsyncSession) -> SettingsRow:
     await db.commit()
     await db.refresh(row)
     return row
-
-
-def _clean_agent(agent: dict) -> dict:
-    return {key: value for key, value in agent.items() if key not in {"api_key", "permission_mode"}}
 
 
 def normalize_supported_models(values: list[str] | None) -> list[str]:
@@ -82,10 +57,9 @@ async def settings_out(db: AsyncSession, reveal_keys: bool = False) -> MiraSetti
 
     row = await get_or_create_settings_row(db)
     skills = (await db.execute(select(Skill).where(Skill.owner_id == ADMIN_USER_ID))).scalars().all()
-    agents = [_clean_agent(agent) for agent in loads(row.agents_json, default_agents())]
     mcp_servers = loads(row.mcp_servers_json, [])
     return MiraSettings(
-        agents=agents,
+        supported_models=loads(row.supported_models_json, []),
         skills=[skill_to_config(skill) for skill in skills],
         mcp_servers=mcp_servers if reveal_keys else _redact_mcp_headers(mcp_servers),
         tools=tool_inventory(skills, mcp_servers),
@@ -109,25 +83,14 @@ def _redact_mcp_headers(mcp_servers: list[dict]) -> list[dict]:
     return redacted
 
 
-async def save_agent_config_metadata(
+async def save_supported_models(
     db: AsyncSession,
-    agent_id: str,
-    *,
-    enabled: bool | None,
     supported_models: list[str],
+    *,
     commit: bool = True,
 ) -> MiraSettings:
     row = await get_or_create_settings_row(db)
-    agents = loads(row.agents_json, default_agents())
-    updated_agents = []
-    for agent in agents:
-        cleaned = _clean_agent(agent)
-        if cleaned.get("id") == agent_id:
-            cleaned = {**cleaned, "supported_models": supported_models}
-            if enabled is not None:
-                cleaned = {**cleaned, "enabled": enabled}
-        updated_agents.append(cleaned)
-    row.agents_json = dumps(updated_agents)
+    row.supported_models_json = dumps(supported_models)
     row.updated_at = now_utc()
     if commit:
         await db.commit()

@@ -83,10 +83,9 @@ async def _step(run_id: str, node_id: str) -> Step:
         ).scalar_one()
 
 
-def test_startup_scan_marks_running_run_interrupted(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_startup_scan_marks_running_run_interrupted(auth_client, configure_codex):
+    configure_codex()
     graph = {
-        "agent": "claude",
         "nodes": [USER_INPUT_NODE, _output_node("n_out", "n_input")],
         "execution_edges": [{"id": "e_out", "source": "n_input", "target": "n_out"}],
     }
@@ -114,10 +113,9 @@ def test_startup_scan_marks_running_run_interrupted(auth_client, enable_claude_a
     assert body["steps"][0]["status"] == "interrupted"
 
 
-def test_continue_run_skips_completed_steps(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_continue_run_skips_completed_steps(auth_client, configure_codex):
+    configure_codex()
     graph = {
-        "agent": "claude",
         "nodes": [
             USER_INPUT_NODE,
             _generate_node("n_gen", "[[respond:generated]]"),
@@ -195,7 +193,6 @@ def test_continue_run_skips_completed_steps(auth_client, enable_claude_agent):
 
     asyncio.run(seed_interrupted())
     changed_graph = {
-        "agent": "claude",
         "nodes": [USER_INPUT_NODE],
         "execution_edges": [],
     }
@@ -216,8 +213,8 @@ def test_continue_run_skips_completed_steps(auth_client, enable_claude_agent):
     assert "generated" in generated["output"]
 
 
-def test_resume_waiting_run_without_memory_future_continues_from_db(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_resume_waiting_run_without_memory_future_requires_continue(auth_client, configure_codex):
+    configure_codex()
     ask = {
         "context": {"title": "确认恢复选择", "summary": "继续恢复运行前需要确认之前等待的问题。"},
         "groups": [
@@ -236,7 +233,6 @@ def test_resume_waiting_run_without_memory_future_continues_from_db(auth_client,
         "tool_use_id": "toolu_persisted",
     }
     graph = {
-        "agent": "claude",
         "nodes": [
             _generate_node("n_gen", f"[[respond:resumed]] [[ask_user:{dumps({'context': ask['context'], 'groups': ask['groups']})}]]"),
             _output_node("n_out", "n_gen"),
@@ -270,10 +266,5 @@ def test_resume_waiting_run_without_memory_future_continues_from_db(auth_client,
             "answers": [{"group_id": "choice", "selected": ["A"]}],
         },
     )
-    assert response.status_code == 204, response.text
-    final = _wait_for_status(auth_client, run_id, {"success", "failed"})
-    assert final["status"] == "success", final
-    step = next(item for item in final["steps"] if item["node_id"] == "n_gen")
-    assert step["status"] == "success"
-    assert step["input"]["resume"]["answers"] == [{"group_id": "choice", "selected": ["A"]}]
-    assert "resumed" in step["output"]
+    assert response.status_code == 409
+    assert response.json()["detail"] == "提问会话已中断，请继续运行后重试"

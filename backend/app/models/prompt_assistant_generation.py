@@ -14,7 +14,6 @@ class PromptAssistantGenerationRow(Base):
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
     app_id: Mapped[str] = mapped_column(ForeignKey("apps.id", ondelete="CASCADE"), index=True)
     status: Mapped[str] = mapped_column(String(24), default="running")
-    agent: Mapped[str] = mapped_column(String(32))
     prompt_json: Mapped[str] = mapped_column(Text)
     model: Mapped[str | None] = mapped_column(String(120), nullable=True)
     reasoning_effort: Mapped[str | None] = mapped_column(String(32), nullable=True)

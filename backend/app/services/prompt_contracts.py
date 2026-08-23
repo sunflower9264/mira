@@ -56,7 +56,7 @@ node_json 和 patch_json 必须是合法 JSON 对象字符串，不要用 markdo
 
 ### node_json 契约
 
-所有新节点都必须包含 id、type、title；不要包含 position、agent 或 agent_session_id。
+所有新节点都必须包含 id、type、title；不要包含 position。
 
 - user_input：{"id":"input_1","type":"user_input","title":"用户输入","input_schema":{"label":"请输入主题","kind":"text","required":true}}。kind 只能是 text 或 file；placeholder 可选。
 - generate：{"id":"generate_1","type":"generate","title":"生成摘要","prompt":"说明任务、输入利用方式和输出要求"}。仅当确认方案需要时增加 model、reasoning_effort 或 output_contract；自由文本不要设置 output_contract。JSON Schema 的根对象及每个 properties 业务字段（含嵌套字段）都必须有简短准确的中文 title 和 description。
@@ -94,35 +94,6 @@ def append_patch_protocol(prompt: str) -> str:
     return _join_sections(prompt, PATCH_PROTOCOL)
 
 
-def append_nlcompile_ask_user_rules(prompt: str, ask_user_protocol: str, *, final_shape: str) -> str:
-    rules = f"""
-## 自然语言编辑提问规则
-
-- 需要提问时直接调用真实 ask_user 工具并等待 tool_result；不要把问题写成普通文本或 JSON 回复。
-- 调用 ask_user 拿到用户回答后，必须继续输出方案 JSON；不要生成 graph patch 或 new_graph。
-- 如果 ask_user 工具返回内部错误、连接失败或取消，必须停止；不得声称已提问，也不得继续输出方案 JSON。
-- 最终必须严格输出形状为 {final_shape} 的 JSON。
-
-{ask_user_protocol}
-""".strip()
-    return _join_sections(prompt, rules)
-
-
-def append_prompt_assistant_ask_user_rules(prompt: str, ask_user_protocol: str) -> str:
-    rules = f"""
-## 生成提示词提问规则
-
-- 只有在缺少会明显改变当前节点 prompt 或 output_contract 的关键决策时，才调用 ask_user。
-- 用户输入、当前节点、方案上下文或上下游已经给出足够依据时，直接输出最终 JSON。
-- 最多发起 1 次 ask_user；拿到回答后必须吸收 answers / text / attachments，并继续输出最终 JSON。
-- 最终必须严格输出 JSON：{{"prompt":"完整 prompt 正文","output_contract_json":"{{...output_contract JSON...}}" 或 null}}。
-- output_contract_json 为字符串时，内容必须是合法 JSON 对象；自由文本输出填 null。
-
-{ask_user_protocol}
-""".strip()
-    return _join_sections(prompt, rules)
-
-
 def build_structured_repair_prompt(
     *,
     task_name: str,
@@ -137,7 +108,7 @@ def build_structured_repair_prompt(
         "要求：",
         f"- 只输出一个 JSON 对象，形状必须是 {output_shape}。",
         "- 不要输出 markdown、解释、注释、代码块或额外字段。",
-        "- 不要调用 ask_user 或其它工具。",
+        "- 不要再向用户提问，也不要调用其它工具。",
         "原始任务提示：",
         original_prompt,
         "上一轮输出：",

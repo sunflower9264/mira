@@ -13,7 +13,6 @@ from app.services.template import contains_template_token
 WorkflowLintSeverity = Literal["error", "warning", "info"]
 
 PROMPT_NODE_TYPES = {"generate", "condition", "output"}
-AGENT_NODE_TYPES = PROMPT_NODE_TYPES
 NODE_TYPES = {"user_input", "generate", "output", "asset", "condition"}
 TERMINAL_NODE_TYPES = {"output"}
 GENERIC_PROMPTS = {
@@ -54,11 +53,9 @@ class WorkflowLintIssue:
 def lint_workflow(
     graph: dict[str, Any],
     *,
-    enabled_agents: set[str] | None = None,
     enabled_tool_ids: set[str] | None = None,
 ) -> dict[str, Any]:
     issues: list[WorkflowLintIssue] = []
-    enabled_agents = enabled_agents or set()
     enabled_tool_ids = enabled_tool_ids or set()
 
     if not isinstance(graph, dict):
@@ -352,15 +349,6 @@ def lint_workflow(
                     suggestion="连接到工作流，或删除孤立节点。",
                 )
             )
-
-    needs_agent = any(node.get("type") in AGENT_NODE_TYPES for node in by_id.values())
-    if needs_agent:
-        agent = graph.get("agent")
-        agent_kind = agent.strip() if isinstance(agent, str) else ""
-        if not agent_kind:
-            issues.append(_issue("error", "agent_missing", "应用未选择 Agent", "包含 LLM 节点的工作流必须选择应用默认 Agent"))
-        elif agent_kind not in enabled_agents:
-            issues.append(_issue("error", "agent_disabled", "应用 Agent 未启用", f"应用默认 Agent「{agent_kind}」未启用"))
 
     return _result(_dedupe(issues))
 

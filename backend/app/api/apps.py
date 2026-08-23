@@ -244,9 +244,8 @@ async def lint_app(
         else loads(app.graph_json, EMPTY_GRAPH)
     )
     settings = await settings_out(db)
-    enabled_agents = {agent.runtime for agent in settings.agents if agent.enabled}
     enabled_tool_ids = {tool.id for tool in settings.tools if tool.enabled}
-    result = lint_workflow(graph, enabled_agents=enabled_agents, enabled_tool_ids=enabled_tool_ids)
+    result = lint_workflow(graph, enabled_tool_ids=enabled_tool_ids)
     return _redacted_lint_out(result) if redacted else result
 
 

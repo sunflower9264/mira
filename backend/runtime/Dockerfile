@@ -2,7 +2,6 @@ FROM node:22-bookworm-slim AS node_runtime
 
 FROM python:3.12-slim
 
-ARG CLAUDE_CODE_VERSION=2.1.206
 ARG CODEX_VERSION=0.147.0
 ARG RUNTIME_DEFINITION_SHA256=unversioned
 
@@ -23,22 +22,17 @@ RUN apt-get update \
         git \
     && rm -rf /var/lib/apt/lists/*
 
-RUN npm install -g \
-        @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
-        @openai/codex@${CODEX_VERSION}
+RUN npm install -g @openai/codex@${CODEX_VERSION}
 
 LABEL mira.runtime.definition-sha256="${RUNTIME_DEFINITION_SHA256}" \
-    mira.runtime.claude-code-version="${CLAUDE_CODE_VERSION}" \
     mira.runtime.codex-version="${CODEX_VERSION}"
 
 RUN useradd --create-home --shell /bin/bash --uid 1000 mira
 
 WORKDIR /workspace
 
-COPY scripts/ask_user_mcp_server.py /opt/mira/ask_user_mcp_server.py
 COPY runtime/scripts/capture_screenshots.py /opt/mira/capture_screenshots.py
-RUN chmod 0755 /opt/mira/ask_user_mcp_server.py \
-    && chmod 0755 /opt/mira/capture_screenshots.py \
+RUN chmod 0755 /opt/mira/capture_screenshots.py \
     && chown -R mira:mira /opt/mira
 
 USER mira
@@ -46,5 +40,4 @@ USER mira
 ENV HOME=/home/mira \
     USERPROFILE=/home/mira \
     CODEX_HOME=/home/mira \
-    CLAUDE_CONFIG_DIR=/home/mira/.claude \
     PATH=/home/mira/.local/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin

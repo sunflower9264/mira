@@ -1,10 +1,8 @@
 import { create } from 'zustand';
 import type {
-  AgentConfigFile,
-  AgentConfigKind,
-  AgentProviderId,
-  AgentProviderStatus,
-  AgentSetupState,
+  CodexConfigFile,
+  CodexSetupState,
+  CodexStatus,
   InstructionFile,
   McpServerConfig,
   MiraSettings,
@@ -15,47 +13,46 @@ import * as api from '../lib/api';
 
 interface SettingsStoreState {
   settings: MiraSettings | null;
-  agentSetupState: AgentSetupState | null;
+  codexSetupState: CodexSetupState | null;
   loading: boolean;
-  loadingAgentSetupState: boolean;
+  loadingCodexSetupState: boolean;
   saving: boolean;
   error: string | null;
   reset(): void;
   load(): Promise<MiraSettings>;
-  loadAgentSetupState(force?: boolean): Promise<AgentSetupState>;
+  loadCodexSetupState(force?: boolean): Promise<CodexSetupState>;
   updateSkillEnabled(skillId: string, enabled: boolean): Promise<MiraSettings>;
   updateSkillPlanningEnabled(skillId: string, planningEnabled: boolean): Promise<MiraSettings>;
   deleteSkill(skillId: string): Promise<void>;
   addMcpServer(server: McpServerConfig): Promise<MiraSettings>;
   updateMcpServer(serverId: string, server: McpServerConfig): Promise<MiraSettings>;
   deleteMcpServer(serverId: string): Promise<void>;
-  loadAgentConfig(agentId: AgentConfigKind): Promise<AgentConfigFile>;
-  saveAgentConfig(
-    agentId: Exclude<AgentConfigKind, 'codex-auth'>,
+  loadCodexConfig(): Promise<CodexConfigFile>;
+  saveCodexConfig(
     content: string,
-    options: { enabled?: boolean; authContent?: string; supportedModels: string[] },
-  ): Promise<AgentConfigFile>;
-  loadInstructionFile(provider: AgentProviderId): Promise<InstructionFile>;
-  saveInstructionFile(provider: AgentProviderId, content: string): Promise<InstructionFile>;
+    options: { authContent: string; supportedModels: string[] },
+  ): Promise<CodexConfigFile>;
+  loadInstructionFile(): Promise<InstructionFile>;
+  saveInstructionFile(content: string): Promise<InstructionFile>;
   loadPromptTemplates(): Promise<PromptTemplate[]>;
   savePromptTemplate(key: string, content: string): Promise<PromptTemplate>;
   parseSkillArchive(archive: File): Promise<SkillConfig>;
-  refreshAgentStatus(agentId: AgentProviderId): Promise<AgentProviderStatus>;
+  refreshCodexStatus(): Promise<CodexStatus>;
 }
 
 export const useSettingsStore = create<SettingsStoreState>((set, get) => ({
   settings: null,
-  agentSetupState: null,
+  codexSetupState: null,
   loading: false,
-  loadingAgentSetupState: false,
+  loadingCodexSetupState: false,
   saving: false,
   error: null,
   reset() {
     set({
       settings: null,
-      agentSetupState: null,
+      codexSetupState: null,
       loading: false,
-      loadingAgentSetupState: false,
+      loadingCodexSetupState: false,
       saving: false,
       error: null,
     });
@@ -73,16 +70,16 @@ export const useSettingsStore = create<SettingsStoreState>((set, get) => ({
       throw e;
     }
   },
-  async loadAgentSetupState(force = false) {
-    const current = get().agentSetupState;
+  async loadCodexSetupState(force = false) {
+    const current = get().codexSetupState;
     if (current && !force) return current;
-    set({ loadingAgentSetupState: true, error: null });
+    set({ loadingCodexSetupState: true, error: null });
     try {
-      const agentSetupState = await api.getAgentSetupState();
-      set({ agentSetupState, loadingAgentSetupState: false });
-      return agentSetupState;
+      const codexSetupState = await api.getCodexSetupState();
+      set({ codexSetupState, loadingCodexSetupState: false });
+      return codexSetupState;
     } catch (e) {
-      set({ error: (e as Error).message, loadingAgentSetupState: false });
+      set({ error: (e as Error).message, loadingCodexSetupState: false });
       throw e;
     }
   },
@@ -164,19 +161,19 @@ export const useSettingsStore = create<SettingsStoreState>((set, get) => ({
       throw e;
     }
   },
-  async loadAgentConfig(agentId) {
-    return api.getAgentConfig(agentId);
+  async loadCodexConfig() {
+    return api.getCodexConfig();
   },
-  async saveAgentConfig(agentId, content, options) {
-    const saved = await api.saveAgentConfig(agentId, content, options);
+  async saveCodexConfig(content, options) {
+    const saved = await api.saveCodexConfig(content, options);
     if (saved.settings) set({ settings: saved.settings });
     return saved;
   },
-  async loadInstructionFile(provider) {
-    return api.getInstructionFile(provider);
+  async loadInstructionFile() {
+    return api.getInstructionFile();
   },
-  async saveInstructionFile(provider, content) {
-    return api.saveInstructionFile(provider, content);
+  async saveInstructionFile(content) {
+    return api.saveInstructionFile(content);
   },
   async loadPromptTemplates() {
     return api.getPromptTemplates();
@@ -204,14 +201,7 @@ export const useSettingsStore = create<SettingsStoreState>((set, get) => ({
       } : {});
     return skill;
   },
-  async refreshAgentStatus(agentId) {
-    const status = await api.refreshAgentStatus(agentId);
-    set((state) => state.settings ? {
-      settings: {
-        ...state.settings,
-        agents: state.settings.agents.map((agent) => agent.id === agentId ? { ...agent, status } : agent),
-      },
-    } : {});
-    return status;
+  async refreshCodexStatus() {
+    return api.refreshCodexStatus();
   },
 }));

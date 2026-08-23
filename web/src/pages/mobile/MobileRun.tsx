@@ -11,12 +11,7 @@ import {
   Square,
 } from 'lucide-react';
 import * as api from '../../lib/api';
-import {
-  agentName,
-  enabledAgentOptions,
-  isAgentEnabled,
-  supportedModelsForAgent,
-} from '../../lib/agentOptions';
+import { supportedModels } from '../../lib/modelOptions';
 import {
   isCancellableRunStatus,
   isRestorableRunStatus,
@@ -26,7 +21,6 @@ import {
 import { useSettingsStore } from '../../stores/useSettingsStore';
 import type {
   App,
-  AppAgentKind,
   Run,
   RunSummary,
   Step,
@@ -162,10 +156,6 @@ export function MobileRun() {
   const runGraphNodes = runGraph?.nodes ?? appGraphNodes;
   const activeInput = useMemo(() => findActiveInput(app), [app]);
   const outputs = useMemo(() => runGraphNodes.filter((n) => n.type === 'output'), [runGraphNodes]);
-  const promptNodes = useMemo(
-    () => app?.can_view_source === false ? [] : appGraphNodes.filter((n) => n.type === 'generate' || n.type === 'condition' || n.type === 'output'),
-    [app?.can_view_source, appGraphNodes],
-  );
   const progress = useMemo(() => progressFor(runGraphNodes, steps), [runGraphNodes, steps]);
   const outputReady = outputs.some((node) => {
     const step = steps[node.id];
@@ -174,12 +164,11 @@ export function MobileRun() {
   const canStop = runId !== null && isCancellableRunStatus(status);
   const running = runId !== null && !['success', 'failed', 'cancelled', 'interrupted'].includes(status);
   const showIdle = status === 'idle';
-  const hasSelectedAgent = promptNodes.length === 0 || isAgentEnabled(settings, app?.graph.agent ?? '');
   const activeFilled =
     !activeInput ||
     inputForNode(activeInput, inputValue, attachments).filled;
   const hasLintErrors = (lintResult?.summary.errors ?? 0) > 0;
-  const canStart = !!app && app.can_run && appGraphNodes.length > 0 && hasSelectedAgent && activeFilled && !submitting && !hasLintErrors;
+  const canStart = !!app && app.can_run && appGraphNodes.length > 0 && activeFilled && !submitting && !hasLintErrors;
 
   const start = async () => {
     if (!app || !canStart) return;
@@ -246,8 +235,7 @@ export function MobileRun() {
             <div className="truncate text-base font-semibold">{app.name}</div>
             <div className="mt-0.5 flex items-center gap-2 text-[11px] text-black/45">
               <span>{STATUS_LABEL[status]}</span>
-              <span>·</span>
-              <span>{app.can_view_source ? agentName(app.graph.agent ?? '') : '仅运行'}</span>
+              {!app.can_view_source ? <><span>·</span><span>仅运行</span></> : null}
             </div>
           </div>
           <button
@@ -284,8 +272,6 @@ export function MobileRun() {
         {showIdle ? (
           <IdlePanel
             app={app}
-            hasSelectedAgent={hasSelectedAgent}
-            settingsReady={!!settings}
             lintResult={lintResult}
             lintLoading={lintLoading}
             lintError={lintError}
@@ -409,15 +395,11 @@ function MobilePageFrame({ title, children }: { title: string; children: React.R
 
 function IdlePanel({
   app,
-  hasSelectedAgent,
-  settingsReady,
   lintResult,
   lintLoading,
   lintError,
 }: {
   app: App;
-  hasSelectedAgent: boolean;
-  settingsReady: boolean;
   lintResult: WorkflowLintResult | null;
   lintLoading: boolean;
   lintError: string | null;
@@ -453,10 +435,6 @@ function IdlePanel({
       {app.can_view_source ? <AppToolsSummary disabledToolIds={app.graph.tools?.disabled_tool_ids ?? []} /> : null}
       {!app.can_run ? (
         <Notice tone="neutral">应用已下架，只能查看历史运行记录。</Notice>
-      ) : !settingsReady ? (
-        <Notice tone="neutral">正在读取 Agent 配置...</Notice>
-      ) : !hasSelectedAgent ? (
-        <Notice tone="warn">当前应用未选择已启用 Agent，请打开右上角运行设置选择后再运行。</Notice>
       ) : app.graph.nodes.length === 0 ? (
         <Notice tone="warn">这个应用还没有节点，需要在桌面端编辑后才能运行。</Notice>
       ) : !app.can_view_source ? (
@@ -805,7 +783,6 @@ function MobileRunSettingsSheet({
 }) {
   const settings = useSettingsStore((s) => s.settings);
   const loadSettings = useSettingsStore((s) => s.load);
-  const [agent, setAgent] = useState<AppAgentKind>(app.graph.agent ?? '');
   const [model, setModel] = useState('');
   const [disabledToolIds, setDisabledToolIds] = useState<string[]>(app.graph.tools?.disabled_tool_ids ?? []);
   const [saving, setSaving] = useState(false);
@@ -816,20 +793,17 @@ function MobileRunSettingsSheet({
 
   useEffect(() => {
     if (!open) return;
-    setAgent(app.graph.agent ?? '');
     setModel(commonModel(app.graph.nodes));
     setDisabledToolIds(app.graph.tools?.disabled_tool_ids ?? []);
   }, [open, app]);
 
-  const agents = enabledAgentOptions(settings);
-  const models = supportedModelsForAgent(settings, agent);
+  const models = supportedModels(settings);
 
   const save = async () => {
     setSaving(true);
     try {
       const nextGraph = {
         ...app.graph,
-        agent,
         tools: { disabled_tool_ids: disabledToolIds },
         nodes: app.graph.nodes.map((node) => {
           if (node.type === 'generate') {
@@ -858,31 +832,12 @@ function MobileRunSettingsSheet({
     <MobileSheet open={open} onOpenChange={onOpenChange} title="运行设置">
       <div className="space-y-5">
         <div>
-          <span className="text-[11px] font-medium uppercase tracking-[0.16em] text-black/45">Agent</span>
-          <SelectDropdown
-            value={agent}
-            options={[
-              { label: '选择 Agent', value: '' },
-              ...agents.map((option) => ({ label: option.label, value: option.value })),
-            ]}
-            onChange={(value) => {
-              const next = value as AppAgentKind;
-              setAgent(next);
-              if (model && !supportedModelsForAgent(settings, next).includes(model)) setModel('');
-            }}
-            className="mt-2"
-            buttonClassName={mobileSelectButtonCls}
-            menuClassName={mobileSelectMenuCls}
-          />
-        </div>
-
-        <div>
           <span className="text-[11px] font-medium uppercase tracking-[0.16em] text-black/45">模型</span>
           <SelectDropdown
             value={model}
-            disabled={!agent || models.length === 0}
+            disabled={models.length === 0}
             options={[
-              { label: '使用 Agent 默认模型', value: '' },
+              { label: '使用 Codex 默认模型', value: '' },
               ...models.map((item) => ({ label: item, value: item })),
             ]}
             onChange={setModel}
@@ -903,7 +858,7 @@ function MobileRunSettingsSheet({
         <button
           type="button"
           onClick={() => void save()}
-          disabled={saving || !agent}
+          disabled={saving}
           className="h-11 w-full rounded-full bg-black text-sm font-medium text-white disabled:opacity-45"
         >
           {saving ? '保存中...' : '保存设置'}

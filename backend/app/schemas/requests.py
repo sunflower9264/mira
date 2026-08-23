@@ -66,7 +66,6 @@ class WorkflowLintIn(BaseModel):
 class PromptAssistantGenerateIn(BaseModel):
     app_id: str
     generation_id: str | None = None
-    agent: Literal["claude", "codex"]
     graph: dict[str, Any]
     node_id: str
     user_request: str = ""

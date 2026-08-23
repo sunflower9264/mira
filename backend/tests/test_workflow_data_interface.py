@@ -10,7 +10,7 @@ from urllib.parse import unquote, urlparse
 
 import pytest
 
-from app.runtime.base import AgentChunk, AgentExecutionResult, AgentProviderStatus
+from app.runtime.base import AgentChunk, AgentExecutionResult, AgentRuntimeStatus
 from app.runtime.factory import set_runtime_override
 from app.services.admin import ADMIN_USER_ID
 from app.services.runtime_paths import run_workspace
@@ -22,8 +22,8 @@ class WorkflowInterfaceRuntime:
         self.calls: dict[str, dict[str, object]] = {}
         self.merge_mutation = merge_mutation
 
-    async def detect_status(self) -> AgentProviderStatus:
-        return AgentProviderStatus(
+    async def detect_status(self) -> AgentRuntimeStatus:
+        return AgentRuntimeStatus(
             installed=True,
             runnable=True,
             identity="workflow-interface",
@@ -126,8 +126,8 @@ def _wait_for_terminal(auth_client, run_id: str) -> dict:
     raise AssertionError(f"run did not finish: {last}")
 
 
-def test_linear_nodes_share_workspace_and_fanout_is_isolated_until_join(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_linear_nodes_share_workspace_and_fanout_is_isolated_until_join(auth_client, configure_codex):
+    configure_codex()
     runtime = WorkflowInterfaceRuntime()
     set_runtime_override(runtime)
     try:
@@ -135,7 +135,6 @@ def test_linear_nodes_share_workspace_and_fanout_is_isolated_until_join(auth_cli
         assert created.status_code == 200, created.text
         app_id = created.json()["id"]
         graph = {
-            "agent": "claude",
             "nodes": [
                 {
                     "id": "producer",
@@ -199,17 +198,16 @@ def test_linear_nodes_share_workspace_and_fanout_is_isolated_until_join(auth_cli
 @pytest.mark.parametrize("merge_mutation", ["tamper_base", "add_unmanifested"])
 def test_fan_in_rejects_unmanifested_workspace_changes(
     auth_client,
-    enable_claude_agent,
+    configure_codex,
     merge_mutation,
 ):
-    enable_claude_agent()
+    configure_codex()
     runtime = WorkflowInterfaceRuntime(merge_mutation=merge_mutation)
     set_runtime_override(runtime)
     try:
         created = auth_client.post("/api/apps", json={"name": "Protected merge base"})
         app_id = created.json()["id"]
         graph = {
-            "agent": "claude",
             "nodes": [
                 {
                     "id": "producer",
@@ -266,15 +264,14 @@ def test_fan_in_rejects_unmanifested_workspace_changes(
         set_runtime_override(None)
 
 
-def test_checkpoint_rerun_restores_workspace_and_reuses_declared_artifact_manifest(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_checkpoint_rerun_restores_workspace_and_reuses_declared_artifact_manifest(auth_client, configure_codex):
+    configure_codex()
     runtime = WorkflowInterfaceRuntime()
     set_runtime_override(runtime)
     try:
         created = auth_client.post("/api/apps", json={"name": "Workflow Rerun Interface"})
         app_id = created.json()["id"]
         graph = {
-            "agent": "claude",
             "nodes": [
                 {
                     "id": "producer",

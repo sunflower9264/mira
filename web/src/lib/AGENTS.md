@@ -4,7 +4,7 @@
 
 ## Role
 
-`lib/` 存放前端 HTTP API 客户端、SSE 客户端、auth token 持久化、Agent/model helper、mobile route helper、workflow lint helper 和通用工具。
+`lib/` 存放前端 HTTP API 客户端、SSE 客户端、auth token 持久化、Codex model helper、mobile route helper、workflow lint helper 和通用工具。
 
 ## Rules
 

@@ -11,7 +11,7 @@ from pathlib import Path
 from app.runtime.base import (
     AgentChunk,
     AgentExecutionResult,
-    AgentProviderStatus,
+    AgentRuntimeStatus,
     AskUserRequest,
 )
 from app.utils import now_utc
@@ -23,12 +23,11 @@ from app.utils import now_utc
 # AskUserRequest（不需要写 tool_use_id，mock 会自动生成）。
 _RESPOND_RE = re.compile(r"\[\[respond:(.*?)\]\]", re.DOTALL)
 _DELAY_RE = re.compile(r"\[\[delay:([0-9.]+)\]\]")
-_ASK_RE = re.compile(r"\[\[ask_user:(\{.*?\})\]\]", re.DOTALL)
 
 
 class MockRuntime:
-    async def detect_status(self) -> AgentProviderStatus:
-        return AgentProviderStatus(
+    async def detect_status(self) -> AgentRuntimeStatus:
+        return AgentRuntimeStatus(
             installed=True,
             runnable=True,
             identity="mock",
@@ -117,26 +116,18 @@ class MockRuntime:
 
         is_plan_prompt = "你是 Mira 工作流编辑器的 NL 编译方案助手" in prompt
         is_apply_prompt = "你是 Mira 工作流编辑器的 NL 编译实施器" in prompt
-        if runtime_policy == "ask_user_plan" and not is_plan_prompt:
-            text = _run_preflight_plan(prompt)
-            await on_chunk(AgentChunk(type="text", text=text))
-            return AgentExecutionResult(
-                session_id=session_id or "mock_session",
-                total_text=text,
-                finished_with="done",
-            )
-
         # 处理 ask_user 调用：可以多次触发（mock 用「带 respond 的 ask_user 返回结果」拼到最后输出里）。
         collected_segments: list[str] = []
         remaining = prompt
         ask_index = 0
         while True:
-            ask_match = _ASK_RE.search(remaining)
-            if ask_match is None or on_ask_user is None or is_apply_prompt:
+            ask_marker = _find_ask_marker(remaining)
+            if ask_marker is None or on_ask_user is None or is_apply_prompt:
                 break
+            ask_start, ask_end, ask_payload = ask_marker
             ask_index += 1
             try:
-                payload = json.loads(ask_match.group(1))
+                payload = json.loads(ask_payload)
             except json.JSONDecodeError:
                 payload = {}
             request = _build_ask_request(payload)
@@ -157,7 +148,20 @@ class MockRuntime:
                     error=err,
                 )
             collected_segments.append(_serialize_ask_result(result))
-            remaining = remaining[: ask_match.start()] + remaining[ask_match.end() :]
+            remaining = remaining[:ask_start] + remaining[ask_end:]
+
+        if runtime_policy == "ask_user_plan" and not is_plan_prompt:
+            summary = "\n".join(collected_segments) or "无需额外提问。"
+            text = json.dumps(
+                {"decision_summary": summary, "reason": "测试 planning turn 已完成决策收敛。"},
+                ensure_ascii=False,
+            )
+            await on_chunk(AgentChunk(type="text", text=text))
+            return AgentExecutionResult(
+                session_id=session_id or "mock_session",
+                total_text=text,
+                finished_with="done",
+            )
 
         respond_match = _RESPOND_RE.search(remaining)
         if is_plan_prompt:
@@ -256,67 +260,16 @@ def _extract_assistant_current_prompt(prompt: str) -> str:
     return "ASSISTED_PROMPT"
 
 
-def _run_preflight_plan(prompt: str) -> str:
-    history = _preflight_history(prompt)
-    ask_payloads = [json.loads(match.group(1)) for match in _ASK_RE.finditer(prompt)]
-    if len(history) < len(ask_payloads):
-        return json.dumps(
-            {
-                "action": "ask",
-                "rationale": "测试 prompt 声明需要 ask_user",
-                "request": ask_payloads[len(history)],
-            },
-            ensure_ascii=False,
-        )
-    summary = _history_summary(history)
-    return json.dumps(
-        {
-            "action": "complete",
-            "decision_summary": summary or "无需额外提问。",
-            "reason": "测试 preflight 已完成所需决策收敛。",
-        },
-        ensure_ascii=False,
-    )
-
-
-def _preflight_history(prompt: str) -> list[dict]:
-    marker = "# 已有提问历史 JSON"
-    if marker not in prompt:
-        return []
-    tail = prompt.split(marker, 1)[1].lstrip()
-    decoder = json.JSONDecoder()
-    try:
-        value, _ = decoder.raw_decode(tail)
-    except json.JSONDecodeError:
-        return []
-    return value if isinstance(value, list) else []
-
-
-def _history_summary(history: list[dict]) -> str:
-    segments: list[str] = []
-    for item in history:
-        response = item.get("response") if isinstance(item, dict) else None
-        if not isinstance(response, dict):
-            continue
-        result = type(
-            "Result",
-            (),
-            {
-                "answers": [
-                    type("Answer", (), answer)
-                    for answer in response.get("answers", [])
-                    if isinstance(answer, dict)
-                ],
-                "text": response.get("text"),
-                "attachments": [
-                    type("Attachment", (), attachment)
-                    for attachment in response.get("attachments", [])
-                    if isinstance(attachment, dict)
-                ],
-            },
-        )()
-        segments.append(_serialize_ask_result(result))
-    return "\n".join(segment for segment in segments if segment)
+def _find_ask_marker(text: str) -> tuple[int, int, str] | None:
+    marker = "[[ask_user:"
+    start = text.find(marker)
+    if start == -1:
+        return None
+    payload_start = start + len(marker)
+    end = text.find("]]", payload_start)
+    if end == -1:
+        return None
+    return start, end + 2, text[payload_start:end]
 
 
 def _serialize_ask_result(result) -> str:  # noqa: ANN001 - simple test helper

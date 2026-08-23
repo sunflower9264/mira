@@ -11,8 +11,7 @@ class SettingsRow(Base):
     __tablename__ = "settings"
 
     owner_id: Mapped[str] = mapped_column(ForeignKey("users.id"), primary_key=True)
-    agents_json: Mapped[str] = mapped_column(Text)
+    supported_models_json: Mapped[str] = mapped_column(Text)
     skills_json: Mapped[str] = mapped_column(Text)
     mcp_servers_json: Mapped[str] = mapped_column(Text)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
-

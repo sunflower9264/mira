@@ -3,7 +3,7 @@ from pathlib import Path
 
 from app.db import SessionLocal
 from app.models import PromptTemplate
-from app.runtime.base import AgentChunk, AgentExecutionResult, AgentProviderStatus
+from app.runtime.base import AgentChunk, AgentExecutionResult, AgentRuntimeStatus
 from app.runtime.factory import set_runtime_override
 from app.services import prompts as prompts_service
 from app.services.prompts import load_seed_prompts, seed_prompt_templates
@@ -16,8 +16,8 @@ class PromptCaptureRuntime:
         self.total_text = total_text
         self.prompts: list[str] = []
 
-    async def detect_status(self) -> AgentProviderStatus:
-        return AgentProviderStatus(
+    async def detect_status(self) -> AgentRuntimeStatus:
+        return AgentRuntimeStatus(
             installed=True,
             runnable=True,
             identity="prompt-capture",
@@ -59,8 +59,6 @@ def test_prompt_templates_are_seeded_and_saved_to_seed(auth_client):
         "condition_choice",
         "status_smoke",
         "prompt_assistant",
-        "ask_user_protocol",
-        "ask_user_preflight_protocol",
         "output_html_rendering",
         "output_contract_repair",
         "graph_layout_beautify",
@@ -68,7 +66,6 @@ def test_prompt_templates_are_seeded_and_saved_to_seed(auth_client):
     assert "prompt_helper" not in items
     assert "$instruction" in items["nlcompile_plan"]["content"]
     assert "goal_summary" in items["nlcompile_plan"]["content"]
-    assert "只有同时满足以下条件时才调用 ask_user" in items["nlcompile_plan"]["content"]
     assert "新建 workflow、节点较多或结构调整较大本身都不是提问理由" in items["nlcompile_plan"]["content"]
     assert "implementation_steps" in items["nlcompile_plan"]["content"]
     assert "expected_inputs" in items["nlcompile_plan"]["content"]
@@ -81,29 +78,13 @@ def test_prompt_templates_are_seeded_and_saved_to_seed(auth_client):
     assert "output 是最终 HTML 展示节点" in items["nlcompile_graph_patch"]["content"]
     assert "不能作为 source" in items["nlcompile_graph_patch"]["content"]
     assert "不得 add_node 创建第二个" in items["nlcompile_graph_patch"]["content"]
-    assert "graph patch 阶段禁止调用 ask_user" in items["nlcompile_graph_patch"]["content"]
+    assert "graph patch 阶段禁止再次向用户提问" in items["nlcompile_graph_patch"]["content"]
     assert "不得重新解释、扩展或替换确认方案" in items["nlcompile_graph_patch"]["content"]
     assert "禁止冗余传递连线" in items["nlcompile_graph_patch"]["content"]
     assert "a 已经通过 b 影响 c" in items["nlcompile_graph_patch"]["content"]
     assert "不判断画布视觉交叉、节点坐标或连线路径" in items["nlcompile_graph_patch"]["content"]
     assert "中文 title 和 description" in items["nlcompile_graph_patch"]["content"]
     assert "禁止制造交叉连接" not in items["nlcompile_graph_patch"]["content"]
-    assert "回答采纳规则" in items["ask_user_protocol"]["content"]
-    assert "必须参考用户的 `answers`、`text` 和 `attachments`" in items["ask_user_protocol"]["content"]
-    assert "可以聚焦追问" in items["ask_user_protocol"]["content"]
-    assert "2-3 个真实业务选项" in items["ask_user_protocol"]["content"]
-    assert "recommended" in items["ask_user_protocol"]["content"]
-    assert "planning/read-only" in items["ask_user_protocol"]["content"]
-    assert "以上都不是" in items["ask_user_protocol"]["content"]
-    assert "context.title" in items["ask_user_protocol"]["content"]
-    assert "context.summary" in items["ask_user_protocol"]["content"]
-    # 协议拆分：核心协议不再包含 preflight JSON action 状态机，避免污染真实工具调用场景。
-    assert '"action":"ask"' not in items["ask_user_protocol"]["content"]
-    assert "preflight 状态机" not in items["ask_user_protocol"]["content"]
-    assert '"action":"ask"' in items["ask_user_preflight_protocol"]["content"]
-    assert "decision_summary" in items["ask_user_preflight_protocol"]["content"]
-    assert "不要包含 `tool_use_id`" in items["ask_user_preflight_protocol"]["content"]
-    assert "context.title" in items["ask_user_preflight_protocol"]["content"]
     assert items["prompt_assistant"]["name"] == "提示词助手"
     assert "执行祖先/后继关系" in items["prompt_assistant"]["description"]
     assert "先选模式；有歧义时最小改动" in items["prompt_assistant"]["content"]
@@ -147,8 +128,6 @@ def test_prompt_templates_are_seeded_and_saved_to_seed(auth_client):
         "status_smoke": "DB_ONLY_STATUS",
         "nlcompile_plan": "DB_ONLY_NLCOMPILE_PLAN",
         "nlcompile_graph_patch": "DB_ONLY_NLCOMPILE",
-        "ask_user_protocol": "DB_ONLY_ASK_USER",
-        "ask_user_preflight_protocol": "DB_ONLY_ASK_USER_PREFLIGHT",
         "prompt_assistant": "DB_ONLY_PROMPT_ASSISTANT",
         "output_html_rendering": "DB_ONLY_OUTPUT_HTML",
         "output_contract_repair": "DB_ONLY_OUTPUT_CONTRACT_REPAIR",
@@ -210,7 +189,7 @@ def test_status_smoke_uses_database_prompt(auth_client):
     runtime = PromptCaptureRuntime(total_text="OK")
     set_runtime_override(runtime)
     try:
-        response = auth_client.post("/api/settings/agents/claude-code/status")
+        response = auth_client.post("/api/settings/codex/status")
     finally:
         set_runtime_override(MockRuntime())
 

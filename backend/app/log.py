@@ -41,7 +41,7 @@ def setup_logging() -> None:
                 "mira.request": {"handlers": ["console", "file"], "level": level, "propagate": False},
                 "mira.run": {"handlers": ["console", "file"], "level": level, "propagate": False},
                 "mira.agent": {"handlers": ["console", "file"], "level": level, "propagate": False},
-                # 涵盖 app.runtime.claude_runtime / app.runtime.codex_runtime 这类
+                # 涵盖 app.runtime.codex_runtime 这类
                 # 直接用 logging.getLogger(__name__) 的模块日志，让它们也落盘。
                 # 不动 root，避免和 uvicorn 自身的日志配置冲突。
                 "app": {"handlers": ["console", "file"], "level": level, "propagate": False},
@@ -53,4 +53,3 @@ def setup_logging() -> None:
 request_logger = logging.getLogger("mira.request")
 run_logger = logging.getLogger("mira.run")
 agent_logger = logging.getLogger("mira.agent")
-

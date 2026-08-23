@@ -51,7 +51,6 @@ def _build_app(auth_client) -> str:
         f"/api/apps/{created['id']}",
             json={
                 "graph": {
-                    "agent": "claude",
                     "nodes": [USER_INPUT_NODE, ASSET_NODE, OUTPUT_NODE],
                     "execution_edges": [
                         {"id": "e_input_out", "source": "n_input", "target": "n_out"},
@@ -70,7 +69,6 @@ def _build_run_only_failing_app(auth_client) -> str:
         f"/api/apps/{created['id']}",
         json={
             "graph": {
-                "agent": "claude",
                 "nodes": [USER_INPUT_NODE, OUTPUT_FAIL_NODE],
                 "execution_edges": [{"id": "e1", "source": "n_input", "target": "n_out"}],
             }
@@ -154,8 +152,8 @@ def _read_sse(auth_client, run_id: str, *, last_event_id: str | None = None) -> 
         return response.status_code, "".join(chunks)
 
 
-def test_sse_emits_step_and_run_end_for_empty_orchestrator(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_sse_emits_step_and_run_end_for_empty_orchestrator(auth_client, configure_codex):
+    configure_codex()
     app_id = _build_app(auth_client)
     run = auth_client.post(
         "/api/runs", json={"app_id": app_id, "inputs": {"n_input": "x"}}
@@ -191,8 +189,8 @@ def test_sse_emits_step_and_run_end_for_empty_orchestrator(auth_client, enable_c
     assert payload["status"] == "success"
 
 
-def test_sse_step_end_scrubs_upload_local_paths(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_sse_step_end_scrubs_upload_local_paths(auth_client, configure_codex):
+    configure_codex()
     uploaded = auth_client.post(
         "/api/uploads",
         files={"file": ("asset.txt", b"asset", "text/plain")},
@@ -204,7 +202,6 @@ def test_sse_step_end_scrubs_upload_local_paths(auth_client, enable_claude_agent
         f"/api/apps/{created['id']}",
         json={
             "graph": {
-                "agent": "claude",
                 "nodes": [
                     {
                         "id": "n_asset",
@@ -245,8 +242,8 @@ def test_sse_step_end_scrubs_upload_local_paths(auth_client, enable_claude_agent
     assert output[0]["download_url"].startswith(f"/api/uploads/{upload['id']}?download_token=")
 
 
-def test_sse_last_event_id_replays_from_after(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_sse_last_event_id_replays_from_after(auth_client, configure_codex):
+    configure_codex()
     app_id = _build_app(auth_client)
     run = auth_client.post(
         "/api/runs", json={"app_id": app_id, "inputs": {"n_input": "x"}}
@@ -264,8 +261,8 @@ def test_sse_last_event_id_replays_from_after(auth_client, enable_claude_agent):
     assert frames2[-1]["event"] == "run.end"
 
 
-def test_sse_replays_from_db_when_live_channel_has_no_replay_buffer(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_sse_replays_from_db_when_live_channel_has_no_replay_buffer(auth_client, configure_codex):
+    configure_codex()
     app_id = _build_app(auth_client)
     run = auth_client.post(
         "/api/runs", json={"app_id": app_id, "inputs": {"n_input": "x"}}
@@ -289,8 +286,8 @@ def test_sse_replays_from_db_when_live_channel_has_no_replay_buffer(auth_client,
     assert frames2[-1]["event"] == "run.end"
 
 
-def test_sse_live_event_during_db_replay_is_not_lost_or_duplicated(auth_client, enable_claude_agent, monkeypatch):
-    enable_claude_agent()
+def test_sse_live_event_during_db_replay_is_not_lost_or_duplicated(auth_client, configure_codex, monkeypatch):
+    configure_codex()
     runner = create_regular_user("sse-live-tail-runner")
     auth_client.headers.update({"Authorization": f"Bearer {runner['token']}"})
     app_id = _build_app(auth_client)
@@ -324,8 +321,8 @@ def test_sse_live_event_during_db_replay_is_not_lost_or_duplicated(auth_client, 
     assert json.loads(frames[1]["data"]) == {"status": "success", "source": "live"}
 
 
-def test_sse_replay_only_returns_db_history_and_closes(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_sse_replay_only_returns_db_history_and_closes(auth_client, configure_codex):
+    configure_codex()
     app_id = _build_app(auth_client)
     run = auth_client.post(
         "/api/runs", json={"app_id": app_id, "inputs": {"n_input": "x"}}
@@ -347,8 +344,8 @@ def test_sse_replay_only_returns_db_history_and_closes(auth_client, enable_claud
     assert events[-1] == "run.end"
 
 
-def test_sse_returns_410_for_invalid_last_event_id(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_sse_returns_410_for_invalid_last_event_id(auth_client, configure_codex):
+    configure_codex()
     app_id = _build_app(auth_client)
     run = auth_client.post(
         "/api/runs", json={"app_id": app_id, "inputs": {"n_input": "x"}}
@@ -359,8 +356,8 @@ def test_sse_returns_410_for_invalid_last_event_id(auth_client, enable_claude_ag
     assert "Last-Event-ID" in body or "无效" in body
 
 
-def test_sse_returns_410_after_run_deleted(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_sse_returns_410_after_run_deleted(auth_client, configure_codex):
+    configure_codex()
     app_id = _build_app(auth_client)
     run = auth_client.post(
         "/api/runs", json={"app_id": app_id, "inputs": {"n_input": "x"}}
@@ -379,8 +376,8 @@ def test_sse_returns_410_after_run_deleted(auth_client, enable_claude_agent):
     assert status == 404
 
 
-def test_sse_requires_owner(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_sse_requires_owner(auth_client, configure_codex):
+    configure_codex()
     app_id = _build_app(auth_client)
     run = auth_client.post(
         "/api/runs", json={"app_id": app_id, "inputs": {"n_input": "x"}}
@@ -395,8 +392,8 @@ def test_sse_requires_owner(auth_client, enable_claude_agent):
         assert response.status_code == 404
 
 
-def test_run_only_failure_errors_are_redacted_for_runner(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_run_only_failure_errors_are_redacted_for_runner(auth_client, configure_codex):
+    configure_codex()
     admin_auth = auth_client.headers["Authorization"]
     app_id = _build_run_only_failing_app(auth_client)
 

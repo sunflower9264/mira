@@ -1,18 +1,36 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
+import tomllib
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
 import tomli_w
 
-from app.runtime.ask_user_bridge import InternalAskUserBridge
-from app.runtime.base import AgentChunk, AgentExecutionResult, AgentProviderStatus, RuntimePolicy
-from app.runtime.call_context import RuntimeCallContext
-from app.runtime.sandbox import CONTAINER_HOME, CONTAINER_WORKSPACE, DockerSandboxRunner, DockerSandboxSpec
-from app.services.runtime_paths import codex_home, scoped_runtime_home
+from app.runtime.base import (
+    AgentChunk,
+    AgentExecutionResult,
+    AgentRuntimeStatus,
+    AskUserCallback,
+    AskUserRequest,
+    AskUserResult,
+    RuntimePolicy,
+)
+from app.runtime.sandbox import (
+    CONTAINER_HOME,
+    CONTAINER_WORKSPACE,
+    DockerSandboxReply,
+    DockerSandboxRunner,
+    DockerSandboxSpec,
+    RuntimePathMap,
+)
+from app.schemas.decision import DecisionGroup, DecisionOption, DecisionRequestContext
+from app.services.runtime_paths import codex_home, scoped_codex_home
+from app.services.runtime_uploads import current_runtime_upload_context, stage_ask_user_result_for_runtime
 from app.services.skills_install import sync_runtime_skills
 from app.services.tools import RuntimeToolConfig
 from app.utils import now_utc
@@ -53,194 +71,262 @@ _POSIX_ENV_KEYS = {
     "XDG_CACHE_HOME",
     "XDG_DATA_HOME",
 }
+_INITIALIZE_REQUEST_ID = 1
+_THREAD_REQUEST_ID = 2
+_TURN_REQUEST_ID = 3
 
 
-class CodexCliRuntime:
+class CodexRuntime:
     def __init__(self, user_id: str):
         self.user_id = user_id
         self.runner = DockerSandboxRunner()
 
-    async def detect_status(self) -> AgentProviderStatus:
+    async def detect_status(self) -> AgentRuntimeStatus:
         status = await self.runner.check_available()
         if not status.ok:
-            return AgentProviderStatus(
+            return AgentRuntimeStatus(
                 installed=False,
-                method="Docker sandbox + config.toml + auth.json",
+                method="Docker sandbox + Codex App Server",
                 error=status.error,
                 checked_at=now_utc(),
             )
         home = codex_home()
         if not (home / "config.toml").exists():
-            return AgentProviderStatus(
+            return AgentRuntimeStatus(
                 installed=False,
-                method="Docker sandbox + config.toml + auth.json",
-                error="未找到 Codex 配置文件",
+                method="Docker sandbox + Codex App Server",
+                error="未找到 Codex config.toml",
                 checked_at=now_utc(),
             )
         if not (home / "auth.json").exists():
-            return AgentProviderStatus(
+            return AgentRuntimeStatus(
                 installed=False,
-                method="Docker sandbox + config.toml + auth.json",
+                method="Docker sandbox + Codex App Server",
                 error="未找到 Codex auth.json 凭据",
                 checked_at=now_utc(),
             )
-        return AgentProviderStatus(
+        return AgentRuntimeStatus(
             installed=True,
-            identity="Docker sandbox",
-            method="Docker sandbox + config.toml + auth.json",
+            identity="Codex App Server",
+            method="Docker sandbox + Codex App Server",
             checked_at=now_utc(),
         )
 
     async def execute(
         self,
         *,
-        prompt,
-        session_id,
-        allowed_tools,
-        model,
-        reasoning_effort,
+        prompt: str,
+        session_id: str | None,
+        allowed_tools: list[str] | None,
+        model: str | None,
+        reasoning_effort: str | None,
         cwd: Path,
         on_chunk,
-        cancel_event,
-        on_ask_user=None,
+        cancel_event: asyncio.Event,
+        on_ask_user: AskUserCallback | None = None,
         runtime_tools: RuntimeToolConfig | None = None,
         runtime_policy: RuntimePolicy = "execute",
         output_schema: dict | None = None,
         session_scope: str | None = None,
         fork_session: bool = False,
-    ):
+    ) -> AgentExecutionResult:
+        del allowed_tools
         status = await self.detect_status()
         if not status.installed:
             await on_chunk(AgentChunk(type="error", text=status.error))
             return AgentExecutionResult(finished_with="error", error=status.error)
-        effective_runtime_tools = runtime_tools
-        home = _prepare_scoped_home(
-            codex_home(), cwd, effective_runtime_tools, session_scope=session_scope
-        )
-        env = _clean_env(CONTAINER_HOME)
-        chunks: list[str] = []
-        structured_outputs: list[str] = []
-        new_session = session_id
-        unhandled_error_lines: list[str] = []  # 看起来含错误但没被分支识别的原始行，便于失败诊断
-        stdout_text_lines: list[str] = []
-        try:
-            async with RuntimeCallContext(
-                user_id=self.user_id,
-                workspace=cwd,
-                home=home,
-                on_ask_user=on_ask_user,
-            ) as call:
-                path_map = call.require_path_map()
-                env.update(call.bridge_env())
-                if fork_session:
-                    if not session_id:
-                        raise ValueError("fork_session 需要已有 Codex session_id")
-                    new_session = await _fork_codex_session(
-                        self.runner,
-                        parent_session_id=session_id,
-                        env=env,
-                        path_map=path_map,
-                        prompt_path=call.call_dir / "fork-session.jsonl",
-                        cancel_event=cancel_event,
-                    )
-                output_schema_path = None
-                if output_schema is not None:
-                    output_schema_path = call.call_dir / "output_schema.json"
-                    output_schema_path.write_text(json.dumps(output_schema, ensure_ascii=False), encoding="utf-8")
-                cmd = _build_exec_cmd(
-                    Path("codex"),
-                    CONTAINER_WORKSPACE,
-                    prompt,
-                    new_session,
-                    model,
-                    reasoning_effort,
-                    effective_runtime_tools,
-                    call.bridge,
-                    runtime_policy,
-                    output_schema_path=(
-                        path_map.host_to_container_path(output_schema_path) if output_schema_path is not None else None
-                    ),
-                )
 
-                async def on_stdout_line(line: str) -> None:
-                    nonlocal new_session
-                    raw = line.strip()
-                    try:
-                        data = json.loads(raw)
-                    except json.JSONDecodeError:
-                        if raw:
-                            stdout_text_lines.append(raw)
-                        data = {"type": "text", "content": raw}
-                    new_session = _extract_session_id(data) or new_session
-                    produced = _chunks_from_event(data)
-                    for chunk in produced:
-                        if chunk.text:
-                            chunk.text = path_map.container_to_host_text(chunk.text)
-                        if chunk.type == "text" and chunk.text:
-                            chunks.append(chunk.text)
-                            structured_output = _structured_output_text_from_chunk(chunk)
-                            if output_schema is not None and structured_output:
-                                structured_outputs.append(structured_output)
+        cwd.mkdir(parents=True, exist_ok=True)
+        home = _prepare_scoped_home(codex_home(), cwd, runtime_tools, session_scope=session_scope)
+        path_map = RuntimePathMap.for_call(workspace=cwd, home=home)
+        effective_model = (model or "").strip() or _configured_model(home)
+        if runtime_policy == "ask_user_plan" and not effective_model:
+            detail = "Codex Plan 模式需要配置模型"
+            await on_chunk(AgentChunk(type="error", text=detail))
+            return AgentExecutionResult(session_id=session_id, finished_with="error", error=detail)
+
+        thread_request = _thread_request(
+            session_id=session_id,
+            model=effective_model,
+            runtime_policy=runtime_policy,
+            fork_session=fork_session,
+        )
+        initial_input = _jsonl(
+            {
+                "id": _INITIALIZE_REQUEST_ID,
+                "method": "initialize",
+                "params": {
+                    "clientInfo": {"name": "mira", "title": "Mira", "version": "1"},
+                    "capabilities": {"experimentalApi": True},
+                },
+            },
+            {"method": "initialized", "params": {}},
+            thread_request,
+        )
+        chunks: list[str] = []
+        final_messages: list[str] = []
+        errors: list[str] = []
+        active_thread_id = session_id
+        turn_status: str | None = None
+        sandbox_cancel_event = asyncio.Event()
+
+        async def mirror_cancel() -> None:
+            await cancel_event.wait()
+            sandbox_cancel_event.set()
+
+        cancel_mirror = asyncio.create_task(mirror_cancel())
+
+        async def on_stdout_line(line: str) -> DockerSandboxReply | None:
+            nonlocal active_thread_id, turn_status
+            raw = line.strip()
+            if not raw:
+                return None
+            try:
+                message = json.loads(raw)
+            except json.JSONDecodeError:
+                errors.append(f"App Server 返回了非 JSON 输出：{raw[:500]}")
+                return None
+            if not isinstance(message, dict):
+                return None
+
+            response_id = message.get("id")
+            if response_id == _INITIALIZE_REQUEST_ID and message.get("error"):
+                errors.append(_rpc_error_text(message["error"]))
+                return DockerSandboxReply(complete=True)
+            if response_id == _THREAD_REQUEST_ID:
+                if message.get("error"):
+                    errors.append(_rpc_error_text(message["error"]))
+                    return DockerSandboxReply(complete=True)
+                active_thread_id = _thread_id_from_result(message.get("result")) or active_thread_id
+                if not active_thread_id:
+                    errors.append("Codex App Server 未返回 thread id")
+                    return DockerSandboxReply(complete=True)
+                await on_chunk(
+                    AgentChunk(
+                        type="session",
+                        raw={"thread": {"id": active_thread_id}},
+                    )
+                )
+                return DockerSandboxReply(
+                    input=_jsonl(
+                        _turn_request(
+                            thread_id=active_thread_id,
+                            prompt=prompt,
+                            model=effective_model,
+                            reasoning_effort=reasoning_effort,
+                            runtime_policy=runtime_policy,
+                            output_schema=output_schema,
+                        )
+                    )
+                )
+            if response_id == _TURN_REQUEST_ID and message.get("error"):
+                errors.append(_rpc_error_text(message["error"]))
+                return DockerSandboxReply(complete=True)
+
+            method = str(message.get("method") or "")
+            params = message.get("params")
+            if method == "item/tool/requestUserInput":
+                response = await _request_user_input_response(
+                    message,
+                    on_ask_user,
+                    sandbox_cancel_event,
+                )
+                if sandbox_cancel_event.is_set():
+                    return DockerSandboxReply(complete=True)
+                return DockerSandboxReply(
+                    input=response
+                )
+            if method == "thread/started" and isinstance(params, dict):
+                active_thread_id = _thread_id_from_result(params) or active_thread_id
+                return None
+            if method == "item/agentMessage/delta" and isinstance(params, dict):
+                delta = params.get("delta")
+                if isinstance(delta, str) and delta:
+                    chunks.append(delta)
+                    await on_chunk(AgentChunk(type="text", text=delta, raw=message))
+                return None
+            if method == "item/completed" and isinstance(params, dict):
+                item = params.get("item")
+                if isinstance(item, dict) and item.get("type") == "agentMessage":
+                    text = item.get("text")
+                    if isinstance(text, str) and text:
+                        final_messages.append(text)
+                else:
+                    chunk = _chunk_from_completed_item(item, message)
+                    if chunk is not None:
                         await on_chunk(chunk)
-                    if not produced and _looks_like_error_event(data):
-                        unhandled_error_lines.append(raw)
-                run_result = await self.runner.run(
+                return None
+            if method == "error" and isinstance(params, dict):
+                errors.append(_notification_error_text(params))
+                return None
+            if method == "turn/completed" and isinstance(params, dict):
+                turn = params.get("turn")
+                if isinstance(turn, dict):
+                    turn_status = str(turn.get("status") or "")
+                    if turn.get("error"):
+                        errors.append(_rpc_error_text(turn["error"]))
+                return DockerSandboxReply(complete=True)
+            return None
+
+        try:
+            try:
+                run_result = await self.runner.run_interactive(
                     DockerSandboxSpec(
-                        provider="codex",
-                        command=cmd,
-                        prompt=prompt,
-                        env=env,
+                        command=_build_app_server_cmd(runtime_tools),
+                        prompt=initial_input,
+                        env=_clean_env(CONTAINER_HOME),
                         path_map=path_map,
-                        prompt_path=call.prompt_path,
+                        prompt_path=home / ".mira-app-server-input.jsonl",
                     ),
                     on_stdout_line=on_stdout_line,
-                    cancel_event=cancel_event,
+                    cancel_event=sandbox_cancel_event,
                 )
-                stderr = run_result.stderr
-                code = run_result.return_code
-                if cancel_event.is_set():
-                    return AgentExecutionResult(
-                        session_id=new_session,
-                        total_text=structured_outputs[-1] if structured_outputs else "".join(chunks),
-                        finished_with="cancelled",
-                    )
-                if code != 0:
-                    detail = _format_failure_detail(stderr, unhandled_error_lines, stdout_text_lines, code)
-                    logger.warning(
-                        "Codex CLI failed: code=%s stderr=%r stdout=%s unhandled=%s cmd=%s",
-                        code,
-                        stderr.strip(),
-                        stdout_text_lines[-3:],
-                        unhandled_error_lines[-3:],
-                        _redact_command_for_log(cmd),
-                    )
-                    await on_chunk(AgentChunk(type="error", text=detail))
-                    return AgentExecutionResult(
-                        session_id=new_session,
-                        total_text=structured_outputs[-1] if structured_outputs else "".join(chunks),
-                        finished_with="error",
-                        error=detail,
-                    )
-                return AgentExecutionResult(
-                    session_id=new_session,
-                    total_text=_final_codex_text(
-                        home,
-                        new_session,
-                        structured_outputs[-1] if structured_outputs else "".join(chunks),
-                        path_map,
-                    ),
-                    finished_with="done",
-                )
+            finally:
+                cancel_mirror.cancel()
+                with suppress(asyncio.CancelledError):
+                    await cancel_mirror
         except Exception as exc:  # noqa: BLE001
-            logger.exception("Codex sandbox failed")
-            detail = str(exc) or "Codex sandbox 执行失败"
+            logger.exception("Codex App Server sandbox failed")
+            detail = str(exc) or "Codex App Server 执行失败"
             await on_chunk(AgentChunk(type="error", text=detail))
             return AgentExecutionResult(
-                session_id=new_session,
-                total_text=structured_outputs[-1] if structured_outputs else "".join(chunks),
+                session_id=active_thread_id,
+                total_text=final_messages[-1] if final_messages else "".join(chunks),
                 finished_with="error",
                 error=detail,
             )
+
+        total_text = final_messages[-1] if final_messages else "".join(chunks)
+        total_text = path_map.container_to_host_text(total_text)
+        total_text = _final_codex_text(home, active_thread_id, total_text, path_map)
+        if cancel_event.is_set() or run_result.return_code == 130 or turn_status == "interrupted":
+            return AgentExecutionResult(
+                session_id=active_thread_id,
+                total_text=total_text,
+                finished_with="cancelled",
+            )
+        if run_result.return_code != 0 or errors or turn_status not in {None, "completed"}:
+            detail = errors[-1] if errors else run_result.stderr.strip()
+            if not detail:
+                detail = f"Codex App Server 执行失败（turn status: {turn_status or 'unknown'}）"
+            logger.warning(
+                "Codex App Server failed: code=%s turn_status=%s error=%r",
+                run_result.return_code,
+                turn_status,
+                detail,
+            )
+            await on_chunk(AgentChunk(type="error", text=detail))
+            return AgentExecutionResult(
+                session_id=active_thread_id,
+                total_text=total_text,
+                finished_with="error",
+                error=detail,
+            )
+        return AgentExecutionResult(
+            session_id=active_thread_id,
+            total_text=total_text,
+            finished_with="done",
+        )
 
 
 def _clean_env(home: Path) -> dict[str, str]:
@@ -269,7 +355,7 @@ def _prepare_scoped_home(
     *,
     session_scope: str | None = None,
 ) -> Path:
-    home = scoped_runtime_home("codex_home", cwd, session_scope=session_scope)
+    home = scoped_codex_home(cwd, session_scope=session_scope)
     home.mkdir(parents=True, exist_ok=True)
     for filename in ("config.toml", "auth.json"):
         source = shared_home / filename
@@ -281,156 +367,94 @@ def _prepare_scoped_home(
     return home
 
 
-async def _fork_codex_session(
-    runner: DockerSandboxRunner,
-    *,
-    parent_session_id: str,
-    env: dict[str, str],
-    path_map,
-    prompt_path: Path,
-    cancel_event,
-) -> str:
-    requests = [
-        {
-            "id": 1,
-            "method": "initialize",
-            "params": {"clientInfo": {"name": "mira", "title": "Mira", "version": "1"}},
-        },
-        {"method": "initialized", "params": {}},
-        {
-            "id": 2,
-            "method": "thread/fork",
-            "params": {"threadId": parent_session_id, "cwd": str(CONTAINER_WORKSPACE)},
-        },
-    ]
-    payload = "\n".join(json.dumps(item, separators=(",", ":")) for item in requests) + "\n"
-    child_session_id: str | None = None
-    errors: list[str] = []
-
-    async def on_stdout_line(line: str) -> None:
-        nonlocal child_session_id
-        try:
-            response = json.loads(line)
-        except json.JSONDecodeError:
-            return
-        if response.get("id") != 2:
-            return
-        error = response.get("error")
-        if error:
-            errors.append(str(error))
-            return
-        child_session_id = _forked_thread_id(response.get("result"))
-
-    result = await runner.run(
-        DockerSandboxSpec(
-            provider="codex",
-            command=["codex", "app-server"],
-            prompt=payload,
-            env=env,
-            path_map=path_map,
-            prompt_path=prompt_path,
-        ),
-        on_stdout_line=on_stdout_line,
-        cancel_event=cancel_event,
-    )
-    if result.return_code != 0 or not child_session_id:
-        detail = errors[-1] if errors else result.stderr.strip() or "thread/fork 未返回 child thread"
-        raise RuntimeError(f"Codex session fork 失败：{detail}")
-    if child_session_id == parent_session_id:
-        raise RuntimeError("Codex session fork 返回了父 thread")
-    return child_session_id
-
-
-def _forked_thread_id(value: Any) -> str | None:
-    if not isinstance(value, dict):
+def _configured_model(home: Path) -> str | None:
+    try:
+        data = tomllib.loads((home / "config.toml").read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
         return None
-    thread = value.get("thread")
-    if isinstance(thread, dict) and isinstance(thread.get("id"), str):
-        return thread["id"]
-    for key in ("threadId", "thread_id", "id"):
-        item = value.get(key)
-        if isinstance(item, str):
-            return item
-    return None
+    value = data.get("model")
+    return value.strip() if isinstance(value, str) and value.strip() else None
 
 
-def _build_exec_cmd(
-    cli: Path,
-    cwd: Path,
-    prompt: str,
+def _thread_request(
+    *,
     session_id: str | None,
     model: str | None,
-    reasoning_effort: str | None,
-    runtime_tools: RuntimeToolConfig | None = None,
-    bridge: InternalAskUserBridge | None = None,
-    runtime_policy: RuntimePolicy = "execute",
-    output_schema_path: Path | None = None,
-) -> list[str]:
-    cmd = [str(cli), "exec", "--json"]
-    cmd.append("--skip-git-repo-check")
-    mcp_config = _runtime_mcp_config(
-        runtime_tools,
-        bridge,
-        auto_approve=runtime_policy == "ask_user_plan",
-    )
-    if mcp_config:
-        cmd.extend(["-c", f"mcp_servers={_toml_inline_value(mcp_config)}"])
-    if runtime_policy == "ask_user_plan":
-        cmd.extend(["--sandbox", "read-only"])
-        cmd.extend(_ask_user_plan_config_args())
-    else:
-        cmd.append("--dangerously-bypass-approvals-and-sandbox")
-    if output_schema_path is not None:
-        cmd.extend(["--output-schema", str(output_schema_path)])
-    if session_id:
-        cmd.append("resume")
-        if model:
-            cmd.extend(["--model", model])
-        if reasoning_effort:
-            cmd.extend(["-c", f'model_reasoning_effort="{reasoning_effort}"'])
-        cmd.extend([session_id, "-"])
-        return cmd
-    cmd.extend(["--cd", str(cwd)])
-    if model:
-        cmd.extend(["--model", model])
-    if reasoning_effort:
-        cmd.extend(["-c", f'model_reasoning_effort="{reasoning_effort}"'])
-    cmd.append("-")
-    return cmd
-
-
-def _ask_user_plan_config_args() -> list[str]:
-    return ["-c", 'approval_policy="never"']
-
-
-def _runtime_mcp_config(
-    runtime_tools: RuntimeToolConfig | None,
-    bridge: InternalAskUserBridge | None,
-    *,
-    auto_approve: bool,
+    runtime_policy: RuntimePolicy,
+    fork_session: bool,
 ) -> dict[str, Any]:
-    mcp_servers: dict[str, Any] = {}
-    if runtime_tools is not None:
-        for server in runtime_tools.mcp_servers:
-            server_config: dict[str, object] = {
-                "url": server.url,
-            }
-            if server.headers:
-                server_config["http_headers"] = {header.name: header.value for header in server.headers}
-            mcp_servers[server.name] = server_config
-    if bridge is not None:
-        server_config = {
-            "command": "python",
-            "args": ["/opt/mira/ask_user_mcp_server.py"],
-            "env": {
-                "MIRA_ASK_USER_BRIDGE_URL": bridge.url,
-                "MIRA_ASK_USER_BRIDGE_TOKEN": bridge.token,
+    params: dict[str, Any] = {
+        "cwd": str(CONTAINER_WORKSPACE),
+        "approvalPolicy": "never",
+        "sandbox": "read-only" if runtime_policy == "ask_user_plan" else "danger-full-access",
+    }
+    if model:
+        params["model"] = model
+    if session_id:
+        params["threadId"] = session_id
+        method = "thread/fork" if fork_session else "thread/resume"
+    else:
+        if fork_session:
+            raise ValueError("fork_session 需要已有 Codex session_id")
+        method = "thread/start"
+    return {"id": _THREAD_REQUEST_ID, "method": method, "params": params}
+
+
+def _turn_request(
+    *,
+    thread_id: str,
+    prompt: str,
+    model: str | None,
+    reasoning_effort: str | None,
+    runtime_policy: RuntimePolicy,
+    output_schema: dict | None,
+) -> dict[str, Any]:
+    params: dict[str, Any] = {
+        "threadId": thread_id,
+        "input": [{"type": "text", "text": prompt}],
+        "approvalPolicy": "never",
+        "sandboxPolicy": (
+            {"type": "readOnly", "networkAccess": False}
+            if runtime_policy == "ask_user_plan"
+            else {"type": "dangerFullAccess"}
+        ),
+    }
+    if model:
+        params["model"] = model
+    if reasoning_effort:
+        params["effort"] = reasoning_effort
+    if output_schema is not None:
+        params["outputSchema"] = output_schema
+    if runtime_policy == "ask_user_plan":
+        params["collaborationMode"] = {
+            "mode": "plan",
+            "settings": {
+                "model": model,
+                "reasoning_effort": reasoning_effort,
+                "developer_instructions": None,
             },
         }
-        if auto_approve:
-            server_config["default_tools_approval_mode"] = "approve"
-        mcp_servers["ask_user"] = server_config
-    return mcp_servers
+    return {"id": _TURN_REQUEST_ID, "method": "turn/start", "params": params}
+
+
+def _build_app_server_cmd(runtime_tools: RuntimeToolConfig | None) -> list[str]:
+    command = ["codex", "app-server"]
+    mcp_config = _runtime_mcp_config(runtime_tools)
+    if mcp_config:
+        command.extend(["-c", f"mcp_servers={_toml_inline_value(mcp_config)}"])
+    return command
+
+
+def _runtime_mcp_config(runtime_tools: RuntimeToolConfig | None) -> dict[str, Any]:
+    if runtime_tools is None:
+        return {}
+    servers: dict[str, Any] = {}
+    for server in runtime_tools.mcp_servers:
+        config: dict[str, object] = {"url": server.url}
+        if server.headers:
+            config["http_headers"] = {header.name: header.value for header in server.headers}
+        servers[server.name] = config
+    return servers
 
 
 def _toml_inline_value(value: Any) -> str:
@@ -448,17 +472,167 @@ def _toml_key(key: str) -> str:
     return _toml_inline_value(key)
 
 
+async def _request_user_input_response(
+    message: dict[str, Any],
+    callback: AskUserCallback | None,
+    cancel_event: asyncio.Event,
+) -> str:
+    request_id = message.get("id")
+    if callback is None:
+        return _jsonl(_jsonrpc_error(request_id, "Mira 当前流程不接受用户提问"))
+    try:
+        request = _normalize_request_user_input(message.get("params"))
+    except ValueError as exc:
+        return _jsonl(_jsonrpc_error(request_id, str(exc)))
+    callback_task = asyncio.create_task(callback(request))
+    cancel_task = asyncio.create_task(cancel_event.wait())
+    done, _ = await asyncio.wait(
+        {callback_task, cancel_task},
+        return_when=asyncio.FIRST_COMPLETED,
+    )
+    if cancel_task in done:
+        callback_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await callback_task
+        return _jsonl(_jsonrpc_error(request_id, "运行已取消"))
+    cancel_task.cancel()
+    with suppress(asyncio.CancelledError):
+        await cancel_task
+    result = await callback_task
+    upload_context = current_runtime_upload_context()
+    if upload_context is not None:
+        result = stage_ask_user_result_for_runtime(upload_context, result)
+    if not result.ok:
+        return _jsonl(_jsonrpc_error(request_id, result.error or "用户输入未通过校验"))
+    return _jsonl({"id": request_id, "result": _native_answers(request, result)})
+
+
+def _normalize_request_user_input(params: Any) -> AskUserRequest:
+    if not isinstance(params, dict):
+        raise ValueError("request_user_input 缺少 params")
+    questions = params.get("questions")
+    if not isinstance(questions, list) or not questions:
+        raise ValueError("request_user_input 必须包含问题")
+    groups: list[DecisionGroup] = []
+    for question in questions:
+        if not isinstance(question, dict):
+            raise ValueError("request_user_input 问题格式无效")
+        if question.get("isSecret") is True:
+            raise ValueError("Mira 不通过运行提问收集密钥或其他敏感信息")
+        question_id = str(question.get("id") or "").strip()
+        label = str(question.get("header") or "").strip()
+        text = str(question.get("question") or "").strip()
+        options = question.get("options")
+        if not question_id or not label or not text:
+            raise ValueError("request_user_input 问题缺少 id、header 或 question")
+        if not isinstance(options, list) or not 2 <= len(options) <= 3:
+            raise ValueError("Mira 的 request_user_input 问题必须提供 2-3 个选项")
+        normalized_options: list[DecisionOption] = []
+        for index, option in enumerate(options):
+            if not isinstance(option, dict):
+                raise ValueError("request_user_input 选项格式无效")
+            option_label = str(option.get("label") or "").strip()
+            description = str(option.get("description") or "").strip()
+            if not option_label or not description:
+                raise ValueError("request_user_input 选项缺少 label 或 description")
+            normalized_options.append(
+                DecisionOption(
+                    label=option_label,
+                    description=description,
+                    recommended=index == 0,
+                )
+            )
+        groups.append(
+            DecisionGroup(
+                id=question_id,
+                label=text,
+                type="single",
+                options=normalized_options,
+            )
+        )
+    first = questions[0]
+    title = _clip(str(first.get("header") or "需要补充信息"), 80)
+    summary = _clip("；".join(str(item.get("question") or "").strip() for item in questions), 240)
+    return AskUserRequest(
+        context=DecisionRequestContext(title=title, summary=summary),
+        groups=groups,
+        tool_use_id=str(params.get("itemId") or "request_user_input"),
+    )
+
+
+def _native_answers(request: AskUserRequest, result: AskUserResult) -> dict[str, Any]:
+    selected_by_group = {answer.group_id: list(answer.selected) for answer in result.answers}
+    extras: list[str] = []
+    if result.text:
+        extras.append(result.text)
+    for attachment in result.attachments:
+        if attachment.path:
+            extras.append(f"附件 {attachment.name}: {attachment.path}")
+        else:
+            extras.append(f"附件: {attachment.name}")
+    answers: dict[str, dict[str, list[str]]] = {}
+    for index, group in enumerate(request.groups):
+        values = selected_by_group.get(group.id, [])
+        if index == 0:
+            values = [*values, *extras]
+        answers[group.id] = {"answers": values}
+    return {"answers": answers}
+
+
+def _jsonrpc_error(request_id: Any, message: str) -> dict[str, Any]:
+    return {"id": request_id, "error": {"code": -32602, "message": message}}
+
+
+def _thread_id_from_result(value: Any) -> str | None:
+    if not isinstance(value, dict):
+        return None
+    thread = value.get("thread")
+    if isinstance(thread, dict) and isinstance(thread.get("id"), str):
+        return thread["id"]
+    if isinstance(value.get("threadId"), str):
+        return value["threadId"]
+    return None
+
+
+def _chunk_from_completed_item(item: Any, raw: dict[str, Any]) -> AgentChunk | None:
+    if not isinstance(item, dict):
+        return None
+    item_type = str(item.get("type") or "")
+    if item_type in {"commandExecution", "mcpToolCall", "dynamicToolCall"}:
+        return AgentChunk(type="tool_result", text=json.dumps(item, ensure_ascii=False), raw=raw)
+    return None
+
+
+def _rpc_error_text(value: Any) -> str:
+    if isinstance(value, dict):
+        for key in ("message", "detail", "error"):
+            text = value.get(key)
+            if isinstance(text, str) and text.strip():
+                return text.strip()
+    text = str(value or "").strip()
+    return text or "Codex App Server 请求失败"
+
+
+def _notification_error_text(params: dict[str, Any]) -> str:
+    return _rpc_error_text(params.get("error") or params)
+
+
+def _jsonl(*messages: dict[str, Any]) -> str:
+    return "\n".join(json.dumps(message, ensure_ascii=False, separators=(",", ":")) for message in messages) + "\n"
+
+
+def _clip(value: str, limit: int) -> str:
+    text = value.strip()
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
 def _final_codex_text(home: Path, session_id: str | None, stdout_text: str, path_map) -> str:
     if "\ufffd" not in stdout_text:
         return stdout_text
     recovered = _read_last_session_agent_message(home, session_id)
     if not recovered or "\ufffd" in recovered:
         return stdout_text
-    recovered = path_map.container_to_host_text(recovered)
-    structured = _structured_output_text_from_chunk(AgentChunk(type="text", text=recovered))
-    if structured and "\ufffd" not in structured:
-        return structured
-    return recovered
+    return path_map.container_to_host_text(recovered)
 
 
 def _read_last_session_agent_message(home: Path, session_id: str | None) -> str | None:
@@ -481,105 +655,16 @@ def _read_last_session_agent_message(home: Path, session_id: str | None) -> str 
                 if not isinstance(record, dict):
                     continue
                 payload = record.get("payload")
-                if not isinstance(payload, dict):
+                if not isinstance(payload, dict) or record.get("type") != "event_msg":
                     continue
-                if record.get("type") == "event_msg" and payload.get("type") == "agent_message":
+                if payload.get("type") == "agent_message":
                     message = payload.get("message")
                     if isinstance(message, str) and message.strip():
                         last = message
-                elif record.get("type") == "event_msg" and payload.get("type") == "task_complete":
+                elif payload.get("type") == "task_complete":
                     message = payload.get("last_agent_message")
                     if isinstance(message, str) and message.strip():
                         last = message
     except OSError:
         return last
     return last
-
-
-def _extract_session_id(data: dict) -> str | None:
-    for key in ("session_id", "sessionId", "thread_id", "threadId", "conversation_id"):
-        value = data.get(key)
-        if isinstance(value, str):
-            return value
-    nested = data.get("message") or data.get("data") or data.get("thread")
-    if isinstance(nested, dict):
-        return _extract_session_id(nested)
-    return None
-
-
-def _chunks_from_event(data: dict) -> list[AgentChunk]:
-    chunks: list[AgentChunk] = []
-    event_type = str(data.get("type") or data.get("event") or "")
-    text = data.get("content") or data.get("delta") or data.get("text")
-    if isinstance(text, str) and text:
-        chunks.append(AgentChunk(type="text", text=text, raw=data))
-    item = data.get("item")
-    if isinstance(item, dict):
-        item_type = str(item.get("type") or "")
-        item_text = item.get("text") or item.get("content")
-        if item_type == "agent_message" and isinstance(item_text, str) and item_text:
-            chunks.append(AgentChunk(type="text", text=item_text, raw=data))
-        elif "command" in item_type or "tool" in item_type:
-            command = item.get("command") or item.get("name") or item_type
-            if str(data.get("type") or "").endswith(".started"):
-                chunks.append(AgentChunk(type="tool_call", text=str(command), raw=data))
-            elif str(data.get("type") or "").endswith(".completed"):
-                output = item.get("aggregated_output") or item.get("output") or command
-                chunks.append(AgentChunk(type="tool_result", text=str(output), raw=data))
-    if "tool" in event_type and ("call" in event_type or "use" in event_type):
-        name = data.get("name") or data.get("tool") or event_type
-        chunks.append(AgentChunk(type="tool_call", text=str(name), raw=data))
-    elif "tool" in event_type and "result" in event_type:
-        output = data.get("output") or data.get("content") or event_type
-        chunks.append(AgentChunk(type="tool_result", text=str(output), raw=data))
-    elif "error" in event_type:
-        chunks.append(AgentChunk(type="error", text=str(data.get("error") or data), raw=data))
-    return chunks
-
-
-def _structured_output_text_from_chunk(chunk: AgentChunk) -> str | None:
-    if chunk.type != "text" or not chunk.text:
-        return None
-    try:
-        parsed = json.loads(chunk.text.strip())
-    except json.JSONDecodeError:
-        return None
-    if not isinstance(parsed, dict):
-        return None
-    return json.dumps(parsed, ensure_ascii=False)
-
-
-def _looks_like_error_event(data: dict) -> bool:
-    """启发式：识别 stream-json 中可能藏错误信息但未被 _chunks_from_event 抓住的帧。"""
-    if data.get("is_error") is True:
-        return True
-    event_type = str(data.get("type") or data.get("event") or "").lower()
-    if "error" in event_type or "fail" in event_type:
-        return True
-    if data.get("error"):
-        return True
-    return False
-
-
-def _format_failure_detail(stderr: str, unhandled: list[str], stdout_lines: list[str], code: int) -> str:
-    parts: list[str] = []
-    cleaned = stderr.strip()
-    if cleaned:
-        parts.append(cleaned)
-    if stdout_lines:
-        parts.append("stdout: " + " | ".join(stdout_lines[-2:]))
-    if unhandled:
-        parts.append("最近事件: " + " | ".join(unhandled[-2:]))
-    if not parts:
-        parts.append(f"Codex exited {code}")
-    return "\n".join(parts)
-
-
-def _redact_command_for_log(cmd: list[str]) -> list[str]:
-    redacted: list[str] = []
-    for item in cmd:
-        if item.startswith("mcp_servers="):
-            redacted.append("mcp_servers=<redacted>")
-        else:
-            redacted.append(item)
-    return redacted

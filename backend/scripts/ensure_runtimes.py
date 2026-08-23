@@ -1,6 +1,6 @@
-"""Ensure the Docker sandbox image used by Claude/Codex runtimes exists.
+"""Ensure the Docker sandbox image used by the Codex runtime exists.
 
-The backend no longer installs Claude/Codex CLIs on the host. Real Agent calls
+The backend does not install Codex on the host. Real Agent calls
 run inside the image built from ``runtime/Dockerfile``. Build failures are
 reported as warnings and do not block backend startup; Settings status checks
 surface the actionable runtime error.
@@ -26,7 +26,6 @@ def _image_name() -> str:
 def _runtime_definition_files() -> tuple[Path, ...]:
     return (
         BACKEND_ROOT / "runtime" / "Dockerfile",
-        BACKEND_ROOT / "scripts" / "ask_user_mcp_server.py",
         BACKEND_ROOT / "runtime" / "scripts" / "capture_screenshots.py",
     )
 

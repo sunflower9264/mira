@@ -24,7 +24,7 @@
 - StepTab 不展示 JSON output contract、Schema、字段大纲或祖先字段引用；内部 JSON 契约由 Prompt Assistant 根据任务维护。
 - live run 中正在执行的画布节点显示跑马灯边框，收到 step 终态后立即停止；历史 replay 不显示运行动画，并遵守 `prefers-reduced-motion`。
 - Prompt Assistant 前端当前不做 active endpoint 刷新恢复；不要在组件文案或状态里假设它已恢复。
-- 模型下拉只显示当前 Agent 的 `supported_models`；推理等级使用 provider 固定选项，默认最低 `low`。
+- 模型下拉只显示全局 Codex `supported_models`；推理等级使用 Codex 固定选项，默认最低 `low`。
 
 ## Verification
 

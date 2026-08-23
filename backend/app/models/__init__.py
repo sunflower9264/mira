@@ -1,6 +1,6 @@
-from .agent_config import AgentConfig
 from .app import App
 from .app_version import AppVersion
+from .codex_config import CodexConfig
 from .nlcompile_session import NlCompileSessionRow
 from .prompt_assistant_generation import PromptAssistantGenerationRow
 from .prompt_template import PromptTemplate
@@ -10,9 +10,9 @@ from .skill import Skill
 from .user import User
 
 __all__ = [
-    "AgentConfig",
     "App",
     "AppVersion",
+    "CodexConfig",
     "NlCompileSessionRow",
     "PromptAssistantGenerationRow",
     "PromptTemplate",

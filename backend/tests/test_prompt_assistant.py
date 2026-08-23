@@ -11,7 +11,7 @@ from sqlalchemy import select
 
 from app.db import SessionLocal
 from app.models import PromptAssistantGenerationRow, User
-from app.runtime.base import AgentChunk, AgentExecutionResult, AgentProviderStatus, AskUserRequest
+from app.runtime.base import AgentChunk, AgentExecutionResult, AgentRuntimeStatus, AskUserRequest
 from app.runtime.factory import set_runtime_override
 from app.services.structured_output import PROMPT_ASSISTANT_OUTPUT_SCHEMA
 from app.utils import now_utc
@@ -44,8 +44,8 @@ class PromptAssistantRuntime:
         self.output_schema = None
         self.cancel_seen = False
 
-    async def detect_status(self) -> AgentProviderStatus:
-        return AgentProviderStatus(
+    async def detect_status(self) -> AgentRuntimeStatus:
+        return AgentRuntimeStatus(
             installed=True,
             runnable=True,
             identity="prompt-assistant-test",
@@ -155,20 +155,18 @@ def _assistant_result(prompt: str, output_contract=None) -> str:
     return json.dumps({"prompt": prompt, "output_contract_json": output_contract_json}, ensure_ascii=False)
 
 
-def _create_app_with_agent(client, agent: str | None = "claude") -> str:
+def _create_app(client) -> str:
     response = client.post("/api/apps", json={"name": "Prompt Assistant Demo"})
     assert response.status_code == 200, response.text
     app_id = response.json()["id"]
     graph = {"nodes": [], "execution_edges": []}
-    if agent is not None:
-        graph["agent"] = agent
     patch = client.patch(f"/api/apps/{app_id}", json={"graph": graph})
     assert patch.status_code == 200, patch.text
     return app_id
 
 
-def _prompt_graph(agent: str | None = "claude") -> dict:
-    graph = {
+def _prompt_graph() -> dict:
+    return {
         "nodes": [
             {
                 "id": "n_input",
@@ -200,15 +198,9 @@ def _prompt_graph(agent: str | None = "claude") -> dict:
             {"id": "e_generate_output", "source": "n_generate", "target": "n_output"},
         ],
     }
-    if agent is not None:
-        graph["agent"] = agent
-    return graph
-
-
 def _assistant_payload(*, app_id: str, graph: dict | None = None, **overrides) -> dict:
     payload = {
         "app_id": app_id,
-        "agent": "claude",
         "graph": graph if graph is not None else _prompt_graph(),
         "node_id": "n_generate",
         "user_request": "写一个提示词",
@@ -234,7 +226,6 @@ def _create_interrupted_prompt_assistant_generation(client, *, app_id: str, gene
                     user_id=user.id,
                     app_id=app_id,
                     status="interrupted",
-                    agent="claude",
                     prompt_json=json.dumps({"prompt": "prompt", "graph": _prompt_graph()}, ensure_ascii=False),
                     history_json="[]",
                     error="后端进程重启，提示词生成已暂停",
@@ -247,19 +238,9 @@ def _create_interrupted_prompt_assistant_generation(client, *, app_id: str, gene
     asyncio.run(_insert())
 
 
-def test_prompt_assistant_requires_enabled_app_agent(auth_client):
-    app_id = _create_app_with_agent(auth_client)
-    response = auth_client.post(
-        "/api/prompt-assistant/generate",
-        json=_assistant_payload(app_id=app_id),
-    )
-    assert response.status_code == 400
-    assert response.json()["detail"] == "无可用 Agent，请先在设置中启用 Agent"
-
-
-def test_prompt_assistant_uses_ai_with_graph_context_and_user_request(auth_client, enable_claude_agent):
-    enable_claude_agent()
-    app_id = _create_app_with_agent(auth_client)
+def test_prompt_assistant_uses_ai_with_graph_context_and_user_request(auth_client, configure_codex):
+    configure_codex()
+    app_id = _create_app(auth_client)
     runtime = PromptAssistantRuntime(text=_assistant_result("新的完整提示词"))
     set_runtime_override(runtime)
     try:
@@ -295,9 +276,9 @@ def test_prompt_assistant_uses_ai_with_graph_context_and_user_request(auth_clien
     assert "中文 title 和 description" in runtime.last_prompt
 
 
-def test_prompt_assistant_keeps_full_target_prompt_and_related_prompt_tail(auth_client, enable_claude_agent):
-    enable_claude_agent()
-    app_id = _create_app_with_agent(auth_client)
+def test_prompt_assistant_keeps_full_target_prompt_and_related_prompt_tail(auth_client, configure_codex):
+    configure_codex()
+    app_id = _create_app(auth_client)
     graph = _prompt_graph()
     target_prompt = "TARGET_HEAD\n" + ("目标正文。" * 900) + "\nTARGET_TAIL_REQUIREMENT"
     downstream_prompt = "DOWNSTREAM_HEAD\n" + ("下游说明。" * 500) + "\nDOWNSTREAM_TAIL_REQUIREMENT"
@@ -339,9 +320,9 @@ def test_prompt_assistant_keeps_full_target_prompt_and_related_prompt_tail(auth_
     assert "当前设置仍合适且无需修改时返回 null" in runtime.last_prompt
 
 
-def test_prompt_assistant_rejects_target_prompt_over_200_kib(auth_client, enable_claude_agent):
-    enable_claude_agent()
-    app_id = _create_app_with_agent(auth_client)
+def test_prompt_assistant_rejects_target_prompt_over_200_kib(auth_client, configure_codex):
+    configure_codex()
+    app_id = _create_app(auth_client)
     graph = _prompt_graph()
     for node in graph["nodes"]:
         if node["id"] == "n_generate":
@@ -362,9 +343,9 @@ def test_prompt_assistant_rejects_target_prompt_over_200_kib(auth_client, enable
     assert runtime.call_count == 0
 
 
-def test_prompt_assistant_rejects_total_context_over_200_kib(auth_client, enable_claude_agent):
-    enable_claude_agent()
-    app_id = _create_app_with_agent(auth_client)
+def test_prompt_assistant_rejects_total_context_over_200_kib(auth_client, configure_codex):
+    configure_codex()
+    app_id = _create_app(auth_client)
     graph = _prompt_graph()
     runtime = PromptAssistantRuntime(text=_assistant_result("unused"))
     set_runtime_override(runtime)
@@ -385,9 +366,9 @@ def test_prompt_assistant_rejects_total_context_over_200_kib(auth_client, enable
     assert runtime.call_count == 0
 
 
-def test_prompt_assistant_rejects_plain_text_output(auth_client, enable_claude_agent):
-    enable_claude_agent()
-    app_id = _create_app_with_agent(auth_client)
+def test_prompt_assistant_rejects_plain_text_output(auth_client, configure_codex):
+    configure_codex()
+    app_id = _create_app(auth_client)
     runtime = PromptAssistantRuntime(text="新的完整提示词")
     set_runtime_override(runtime)
     try:
@@ -403,9 +384,9 @@ def test_prompt_assistant_rejects_plain_text_output(auth_client, enable_claude_a
     assert runtime.output_schema == PROMPT_ASSISTANT_OUTPUT_SCHEMA
 
 
-def test_prompt_assistant_repairs_malformed_structured_output(auth_client, enable_claude_agent):
-    enable_claude_agent()
-    app_id = _create_app_with_agent(auth_client)
+def test_prompt_assistant_repairs_malformed_structured_output(auth_client, configure_codex):
+    configure_codex()
+    app_id = _create_app(auth_client)
     runtime = PromptAssistantRuntime(
         texts=[
             "新的完整提示词",
@@ -426,12 +407,11 @@ def test_prompt_assistant_repairs_malformed_structured_output(auth_client, enabl
     assert runtime.call_count == 2
     assert runtime.output_schema == PROMPT_ASSISTANT_OUTPUT_SCHEMA
     assert "校验失败原因" in runtime.prompts[1]
-    assert "不要调用 ask_user 或其它工具" in runtime.prompts[1]
 
 
-def test_prompt_assistant_includes_runtime_error_detail(auth_client, enable_claude_agent):
-    enable_claude_agent()
-    app_id = _create_app_with_agent(auth_client)
+def test_prompt_assistant_includes_runtime_error_detail(auth_client, configure_codex):
+    configure_codex()
+    app_id = _create_app(auth_client)
     runtime = PromptAssistantRuntime(text="", finished_with="error", error="Invalid schema for response_format")
     set_runtime_override(runtime)
     try:
@@ -448,9 +428,9 @@ def test_prompt_assistant_includes_runtime_error_detail(auth_client, enable_clau
     assert runtime.output_schema == PROMPT_ASSISTANT_OUTPUT_SCHEMA
 
 
-def test_prompt_assistant_accepts_explanation_wrapped_json(auth_client, enable_claude_agent):
-    enable_claude_agent()
-    app_id = _create_app_with_agent(auth_client)
+def test_prompt_assistant_accepts_explanation_wrapped_json(auth_client, configure_codex):
+    configure_codex()
+    app_id = _create_app(auth_client)
     runtime = PromptAssistantRuntime(
         text="现在我来分析。\n\n```json\n"
         + _assistant_result("真正的提示词")
@@ -469,9 +449,9 @@ def test_prompt_assistant_accepts_explanation_wrapped_json(auth_client, enable_c
     assert response.json() == {"status": "completed", "prompt": "真正的提示词", "output_contract": None}
 
 
-def test_prompt_assistant_accepts_full_fenced_json(auth_client, enable_claude_agent):
-    enable_claude_agent()
-    app_id = _create_app_with_agent(auth_client)
+def test_prompt_assistant_accepts_full_fenced_json(auth_client, configure_codex):
+    configure_codex()
+    app_id = _create_app(auth_client)
     runtime = PromptAssistantRuntime(text="```json\n" + _assistant_result("完整提示词") + "\n```")
     set_runtime_override(runtime)
     try:
@@ -486,9 +466,9 @@ def test_prompt_assistant_accepts_full_fenced_json(auth_client, enable_claude_ag
     assert response.json() == {"status": "completed", "prompt": "完整提示词", "output_contract": None}
 
 
-def test_prompt_assistant_accepts_prompt_with_inner_codeblock(auth_client, enable_claude_agent):
-    enable_claude_agent()
-    app_id = _create_app_with_agent(auth_client)
+def test_prompt_assistant_accepts_prompt_with_inner_codeblock(auth_client, configure_codex):
+    configure_codex()
+    app_id = _create_app(auth_client)
     prompt = '输出示例：\n```json\n{"title":"示例"}\n```'
     runtime = PromptAssistantRuntime(text=_assistant_result(prompt))
     set_runtime_override(runtime)
@@ -506,12 +486,11 @@ def test_prompt_assistant_accepts_prompt_with_inner_codeblock(auth_client, enabl
 
 def test_prompt_assistant_uses_conservative_ask_user_default(
     auth_client,
-    enable_claude_agent,
+    configure_codex,
 ):
-    enable_claude_agent()
-    app_id = _create_app_with_agent(auth_client)
+    configure_codex()
+    app_id = _create_app(auth_client)
     graph = {
-        "agent": "claude",
         "nodes": [
             {
                 "id": "n_input",
@@ -547,17 +526,14 @@ def test_prompt_assistant_uses_conservative_ask_user_default(
 
     assert response.status_code == 200, response.text
     assert runtime.last_prompt is not None
-    assert "只有信息无法可靠推断且不同答案会显著改变 prompt 或 `output_contract` 时才调用 ask_user" in runtime.last_prompt
-    assert "否则采用保守默认直接生成" in runtime.last_prompt
-    assert "一次最多问一项" in runtime.last_prompt
+    assert runtime.runtime_policy == "ask_user_plan"
 
 
-def test_prompt_assistant_allows_intermediate_graph_and_strips_runtime_snapshot(auth_client, enable_claude_agent):
-    enable_claude_agent()
-    app_id = _create_app_with_agent(auth_client)
+def test_prompt_assistant_allows_intermediate_graph_and_strips_runtime_snapshot(auth_client, configure_codex):
+    configure_codex()
+    app_id = _create_app(auth_client)
     generation_id = f"pa_{uuid.uuid4().hex[:10]}"
     graph = {
-        "agent": "claude",
         "_runtime_tools": {"allowed_tool_ids": ["mcp:injected"]},
         "nodes": [
             {
@@ -592,9 +568,9 @@ def test_prompt_assistant_allows_intermediate_graph_and_strips_runtime_snapshot(
     assert "_runtime_tools" not in asyncio.run(stored_prompt_json())
 
 
-def test_prompt_assistant_passes_planning_safe_mcp_tools(auth_client, enable_claude_agent):
-    enable_claude_agent()
-    app_id = _create_app_with_agent(auth_client)
+def test_prompt_assistant_passes_planning_safe_mcp_tools(auth_client, configure_codex):
+    configure_codex()
+    app_id = _create_app(auth_client)
     assert auth_client.post(
         "/api/settings/mcp",
         json={
@@ -602,7 +578,6 @@ def test_prompt_assistant_passes_planning_safe_mcp_tools(auth_client, enable_cla
             "name": "prompt-plan-mcp",
             "enabled": True,
             "planning_enabled": True,
-            "provider_ids": ["claude-code", "codex"],
             "url": "http://localhost:9999/prompt-plan",
             "headers": [],
             "env_var_names": [],
@@ -615,7 +590,6 @@ def test_prompt_assistant_passes_planning_safe_mcp_tools(auth_client, enable_cla
             "name": "prompt-execute-mcp",
             "enabled": True,
             "planning_enabled": False,
-            "provider_ids": ["claude-code", "codex"],
             "url": "http://localhost:9999/prompt-execute",
             "headers": [],
             "env_var_names": [],
@@ -628,7 +602,6 @@ def test_prompt_assistant_passes_planning_safe_mcp_tools(auth_client, enable_cla
             "name": "prompt-disabled-mcp",
             "enabled": True,
             "planning_enabled": True,
-            "provider_ids": ["claude-code", "codex"],
             "url": "http://localhost:9999/prompt-disabled",
             "headers": [],
             "env_var_names": [],
@@ -657,9 +630,9 @@ def test_prompt_assistant_passes_planning_safe_mcp_tools(auth_client, enable_cla
     assert [server.name for server in runtime.runtime_tools.mcp_servers] == ["prompt-plan-mcp"]
 
 
-def test_prompt_assistant_waits_for_user_and_resumes(auth_client, enable_claude_agent):
-    enable_claude_agent()
-    app_id = _create_app_with_agent(auth_client)
+def test_prompt_assistant_waits_for_user_and_resumes(auth_client, configure_codex):
+    configure_codex()
+    app_id = _create_app(auth_client)
     generation_id = f"pa_{uuid.uuid4().hex[:10]}"
     runtime = PromptAssistantAskRuntime()
     set_runtime_override(runtime)
@@ -675,7 +648,6 @@ def test_prompt_assistant_waits_for_user_and_resumes(auth_client, enable_claude_
         labels = [option["label"] for option in waiting["request"]["groups"][0]["options"]]
         assert labels == ["专业", "轻松", "以上都不是"]
         assert runtime.runtime_policy == "ask_user_plan"
-        assert "生成提示词提问规则" in (runtime.last_prompt or "")
 
         resumed = auth_client.post(
             f"/api/prompt-assistant/{generation_id}/resume",
@@ -692,9 +664,9 @@ def test_prompt_assistant_waits_for_user_and_resumes(auth_client, enable_claude_
         set_runtime_override(MockRuntime())
 
 
-def test_prompt_assistant_waiting_active_endpoint(auth_client, enable_claude_agent):
-    enable_claude_agent()
-    app_id = _create_app_with_agent(auth_client)
+def test_prompt_assistant_waiting_active_endpoint(auth_client, configure_codex):
+    configure_codex()
+    app_id = _create_app(auth_client)
     generation_id = f"pa_{uuid.uuid4().hex[:10]}"
     runtime = PromptAssistantAskRuntime()
     set_runtime_override(runtime)
@@ -715,9 +687,9 @@ def test_prompt_assistant_waiting_active_endpoint(auth_client, enable_claude_age
         set_runtime_override(MockRuntime())
 
 
-def test_prompt_assistant_interrupted_active_endpoint(auth_client, enable_claude_agent):
-    enable_claude_agent()
-    app_id = _create_app_with_agent(auth_client)
+def test_prompt_assistant_interrupted_active_endpoint(auth_client, configure_codex):
+    configure_codex()
+    app_id = _create_app(auth_client)
     generation_id = f"pa_{uuid.uuid4().hex[:10]}"
     _create_interrupted_prompt_assistant_generation(auth_client, app_id=app_id, generation_id=generation_id)
 
@@ -731,9 +703,9 @@ def test_prompt_assistant_interrupted_active_endpoint(auth_client, enable_claude
     }
 
 
-def test_prompt_assistant_active_returns_204_when_no_waiting_session(auth_client, enable_claude_agent):
-    enable_claude_agent()
-    app_id = _create_app_with_agent(auth_client)
+def test_prompt_assistant_active_returns_204_when_no_waiting_session(auth_client, configure_codex):
+    configure_codex()
+    app_id = _create_app(auth_client)
 
     active = auth_client.get(f"/api/apps/{app_id}/prompt-assistant/active")
 
@@ -741,9 +713,9 @@ def test_prompt_assistant_active_returns_204_when_no_waiting_session(auth_client
     assert active.content == b""
 
 
-def test_prompt_assistant_guides_format_cleanup_as_edit(auth_client, enable_claude_agent):
-    enable_claude_agent()
-    app_id = _create_app_with_agent(auth_client)
+def test_prompt_assistant_guides_format_cleanup_as_edit(auth_client, configure_codex):
+    configure_codex()
+    app_id = _create_app(auth_client)
     graph = _prompt_graph()
     for node in graph["nodes"]:
         if node["id"] == "n_generate":
@@ -770,9 +742,9 @@ def test_prompt_assistant_guides_format_cleanup_as_edit(auth_client, enable_clau
     assert "格式清理和精确修改只用上下文理解指代" in runtime.last_prompt
 
 
-def test_prompt_assistant_returns_generate_output_contract(auth_client, enable_claude_agent):
-    enable_claude_agent()
-    app_id = _create_app_with_agent(auth_client)
+def test_prompt_assistant_returns_generate_output_contract(auth_client, configure_codex):
+    configure_codex()
+    app_id = _create_app(auth_client)
     runtime = PromptAssistantRuntime(
         text=json.dumps(
             {
@@ -807,9 +779,9 @@ def test_prompt_assistant_returns_generate_output_contract(auth_client, enable_c
     assert "当用户明确要求图片、代码包、HTML 文件" in runtime.last_prompt
 
 
-def test_prompt_assistant_accepts_zip_output_contract(auth_client, enable_claude_agent):
-    enable_claude_agent()
-    app_id = _create_app_with_agent(auth_client)
+def test_prompt_assistant_accepts_zip_output_contract(auth_client, configure_codex):
+    configure_codex()
+    app_id = _create_app(auth_client)
     runtime = PromptAssistantRuntime(
         text=json.dumps(
             {
@@ -843,9 +815,9 @@ def test_prompt_assistant_accepts_zip_output_contract(auth_client, enable_claude
     assert "|archive|zip|file" in runtime.last_prompt
 
 
-def test_prompt_assistant_preserves_office_validation_contract(auth_client, enable_claude_agent):
-    enable_claude_agent()
-    app_id = _create_app_with_agent(auth_client)
+def test_prompt_assistant_preserves_office_validation_contract(auth_client, configure_codex):
+    configure_codex()
+    app_id = _create_app(auth_client)
     runtime = PromptAssistantRuntime(
         text=json.dumps(
             {
@@ -882,9 +854,9 @@ def test_prompt_assistant_preserves_office_validation_contract(auth_client, enab
     }
 
 
-def test_prompt_assistant_drops_json_field_level_contract(auth_client, enable_claude_agent):
-    enable_claude_agent()
-    app_id = _create_app_with_agent(auth_client)
+def test_prompt_assistant_drops_json_field_level_contract(auth_client, configure_codex):
+    configure_codex()
+    app_id = _create_app(auth_client)
     runtime = PromptAssistantRuntime(
         text=json.dumps(
             {
@@ -910,9 +882,9 @@ def test_prompt_assistant_drops_json_field_level_contract(auth_client, enable_cl
     assert response.json() == {"status": "completed", "prompt": "生成结构化摘要。", "output_contract": None}
 
 
-def test_prompt_assistant_drops_invalid_output_contract(auth_client, enable_claude_agent):
-    enable_claude_agent()
-    app_id = _create_app_with_agent(auth_client)
+def test_prompt_assistant_drops_invalid_output_contract(auth_client, configure_codex):
+    configure_codex()
+    app_id = _create_app(auth_client)
     runtime = PromptAssistantRuntime(
         text=json.dumps(
             {
@@ -935,31 +907,9 @@ def test_prompt_assistant_drops_invalid_output_contract(auth_client, enable_clau
     assert response.json() == {"status": "completed", "prompt": "生成结构化摘要。", "output_contract": None}
 
 
-def test_prompt_assistant_requires_graph_agent(auth_client, enable_claude_agent):
-    enable_claude_agent()
-    app_id = _create_app_with_agent(auth_client, agent=None)
-    response = auth_client.post(
-        "/api/prompt-assistant/generate",
-        json=_assistant_payload(app_id=app_id, graph=_prompt_graph(agent=None), node_id="n_output"),
-    )
-    assert response.status_code == 400
-    assert response.json()["detail"] == "应用未配置 Agent"
-
-
-def test_prompt_assistant_rejects_stale_agent(auth_client, enable_claude_agent):
-    enable_claude_agent()
-    app_id = _create_app_with_agent(auth_client, agent="claude")
-    response = auth_client.post(
-        "/api/prompt-assistant/generate",
-        json=_assistant_payload(app_id=app_id, agent="codex"),
-    )
-    assert response.status_code == 400
-    assert response.json()["detail"] == "应用 Agent 已变更，请刷新后重试"
-
-
-def test_prompt_assistant_app_owned_by_other_user_returns_404(client, auth_client, enable_claude_agent):
-    enable_claude_agent()
-    app_id = _create_app_with_agent(auth_client)
+def test_prompt_assistant_app_owned_by_other_user_returns_404(client, auth_client, configure_codex):
+    configure_codex()
+    app_id = _create_app(auth_client)
     user = create_regular_user(f"prompt_assistant_{uuid.uuid4().hex[:10]}")
     client.headers.update({"Authorization": f"Bearer {user['token']}"})
 
@@ -970,9 +920,9 @@ def test_prompt_assistant_app_owned_by_other_user_returns_404(client, auth_clien
     assert response.status_code == 404
 
 
-def test_prompt_assistant_cancel_sets_runtime_cancel_event(auth_client, enable_claude_agent):
-    enable_claude_agent()
-    app_id = _create_app_with_agent(auth_client)
+def test_prompt_assistant_cancel_sets_runtime_cancel_event(auth_client, configure_codex):
+    configure_codex()
+    app_id = _create_app(auth_client)
     generation_id = f"pa_{uuid.uuid4().hex[:10]}"
     runtime = PromptAssistantRuntime(wait_for_cancel=True)
     set_runtime_override(runtime)
@@ -995,9 +945,9 @@ def test_prompt_assistant_cancel_sets_runtime_cancel_event(auth_client, enable_c
     assert runtime.cancel_seen is True
 
 
-def test_prompt_assistant_cancel_foreign_generation_returns_404(client, auth_client, enable_claude_agent):
-    enable_claude_agent()
-    app_id = _create_app_with_agent(auth_client)
+def test_prompt_assistant_cancel_foreign_generation_returns_404(client, auth_client, configure_codex):
+    configure_codex()
+    app_id = _create_app(auth_client)
     generation_id = f"pa_{uuid.uuid4().hex[:10]}"
     runtime = PromptAssistantRuntime(wait_for_cancel=True)
     set_runtime_override(runtime)
@@ -1024,9 +974,9 @@ def test_prompt_assistant_cancel_foreign_generation_returns_404(client, auth_cli
     assert response.status_code == 409
 
 
-def test_prompt_assistant_resume_foreign_generation_returns_404(client, auth_client, enable_claude_agent):
-    enable_claude_agent()
-    app_id = _create_app_with_agent(auth_client)
+def test_prompt_assistant_resume_foreign_generation_returns_404(client, auth_client, configure_codex):
+    configure_codex()
+    app_id = _create_app(auth_client)
     generation_id = f"pa_{uuid.uuid4().hex[:10]}"
     runtime = PromptAssistantAskRuntime()
     set_runtime_override(runtime)

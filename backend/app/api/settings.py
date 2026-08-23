@@ -1,17 +1,16 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_admin, get_current_user
 from app.db import get_db
 from app.models import User
 from app.schemas import (
-    AgentConfigSaveIn,
-    AgentSetupState,
+    CodexConfigSaveIn,
+    CodexSetupState,
     InstructionSaveIn,
     McpServerConfig,
     PromptTemplateSaveIn,
@@ -20,11 +19,10 @@ from app.schemas import (
 )
 from app.runtime.factory import get_runtime
 from app.services import instructions, prompts, runtime_config, skills_install
-from app.services.agent_config import (
-    agent_setup_completed,
-    read_config_file,
-    validate_content,
-    write_config_file,
+from app.services.codex_config import (
+    codex_setup_completed,
+    read_codex_config,
+    save_codex_config,
 )
 from app.services.runtime_paths import runtime_dir
 from app.services.serializers import skill_to_config
@@ -33,7 +31,7 @@ from app.services.settings import (
     delete_mcp_server,
     delete_skill_entry,
     normalize_supported_models,
-    save_agent_config_metadata,
+    save_supported_models,
     settings_out,
     update_mcp_server,
     update_skill_enabled,
@@ -43,12 +41,6 @@ from app.utils import now_utc
 
 router = APIRouter(tags=["settings"])
 
-# GET 路由支持虚拟 id "codex-auth"，方便前端单独读取 auth.json 正文；
-# PUT 路由不再接受 "codex-auth"，auth.json 保存合并到 codex 的 PUT
-# （payload.auth_content），以便和 config.toml / enabled 一次性同步。
-AgentConfigGetKind = Literal["claude-code", "codex", "codex-auth"]
-AgentConfigPutKind = Literal["claude-code", "codex"]
-InstructionProvider = Literal["claude-code", "codex"]
 SMOKE_STATUS_TIMEOUT_SEC = 45
 
 
@@ -132,47 +124,34 @@ async def delete_settings_mcp_item(
     return None
 
 
-@router.get("/settings/agents/{agent_id}/config")
-async def get_agent_config(
-    agent_id: AgentConfigGetKind,
+@router.get("/settings/codex/config")
+async def get_codex_config(
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    return await read_config_file(db, agent_id)
+    return await read_codex_config(db)
 
 
-@router.get("/settings/agents/setup-state", response_model=AgentSetupState)
-async def get_agent_setup_state(
+@router.get("/settings/codex/setup-state", response_model=CodexSetupState)
+async def get_codex_setup_state(
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    return AgentSetupState(completed=await agent_setup_completed(db))
+    return CodexSetupState(completed=await codex_setup_completed(db))
 
 
-@router.put("/settings/agents/{agent_id}/config")
-async def put_agent_config(
-    agent_id: AgentConfigPutKind,
-    payload: AgentConfigSaveIn,
+@router.put("/settings/codex/config")
+async def put_codex_config(
+    payload: CodexConfigSaveIn,
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    if payload.auth_content is not None and agent_id != "codex":
-        raise HTTPException(status_code=400, detail="auth_content 只能与 codex 配置一起保存")
     supported_models = normalize_supported_models(payload.supported_models)
-    # 先 validate 再写入，避免 codex 配置合法 / auth.json 非法时出现半成功。
-    if agent_id == "codex" and payload.auth_content is not None:
-        validate_content("codex-auth", payload.auth_content)
-    auth_saved = None
-    settings = None
     try:
-        await write_config_file(db, agent_id, payload.content, commit=False)
-        if agent_id == "codex" and payload.auth_content is not None:
-            auth_saved = await write_config_file(db, "codex-auth", payload.auth_content, commit=False)
-        settings = await save_agent_config_metadata(
+        await save_codex_config(db, payload.content, payload.auth_content, commit=False)
+        await save_supported_models(
             db,
-            agent_id,
-            enabled=payload.enabled,
-            supported_models=supported_models,
+            supported_models,
             commit=False,
         )
         await db.commit()
@@ -180,29 +159,21 @@ async def put_agent_config(
         await db.rollback()
         raise
     await runtime_config.write_configs(db)
-    saved = await read_config_file(db, agent_id)
-    payload_out = saved.model_dump(mode="json")
-    if auth_saved is not None:
-        auth_saved = await read_config_file(db, "codex-auth")
-    if auth_saved is not None:
-        payload_out["auth"] = auth_saved.model_dump(mode="json")
-    if settings is not None:
-        settings = await settings_out(db, reveal_keys=True)
-        payload_out["settings"] = settings.model_dump(mode="json")
-    return payload_out
+    return {
+        **(await read_codex_config(db)).model_dump(mode="json"),
+        "settings": (await settings_out(db, reveal_keys=True)).model_dump(mode="json"),
+    }
 
 
-@router.post("/settings/agents/{agent_id}/status")
-async def refresh_agent_status(
-    agent_id: AgentConfigPutKind,
+@router.post("/settings/codex/status")
+async def refresh_codex_status(
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
     # 先把 DB 中的配置正文同步成 runtime 文件，再做 CLI / 配置文件存在性检查；
-    # CLI + 配置文件就绪后，无条件执行一次真实短调用，由 smoke 结果填 runnable。
+    # App Server + 配置文件就绪后，无条件执行一次真实短调用，由 smoke 结果填 runnable。
     await runtime_config.write_configs(db)
-    runtime_kind = "codex" if agent_id == "codex" else "claude"
-    runtime = get_runtime(runtime_kind, admin.id)
+    runtime = get_runtime(admin.id)
     status = await runtime.detect_status()
     if not status.installed:
         return status.model_copy(update={"runnable": False})
@@ -210,7 +181,7 @@ async def refresh_agent_status(
     async def on_chunk(_chunk):
         return None
 
-    cwd = runtime_dir() / "status_checks" / admin.id / runtime_kind
+    cwd = runtime_dir() / "status_checks" / admin.id / "codex"
     cwd.mkdir(parents=True, exist_ok=True)
     smoke_prompt = await prompts.get_prompt_content(db, "status_smoke")
     try:
@@ -232,7 +203,7 @@ async def refresh_agent_status(
         return status.model_copy(
             update={
                 "runnable": False,
-                "error": "Agent 可用性检测超时",
+                "error": "Codex 可用性检测超时",
                 "checked_at": now_utc(),
             }
         )
@@ -240,7 +211,7 @@ async def refresh_agent_status(
         return status.model_copy(
             update={
                 "runnable": False,
-                "error": str(exc) or "Agent 可用性检测失败",
+                "error": str(exc) or "Codex 可用性检测失败",
                 "checked_at": now_utc(),
             }
         )
@@ -248,7 +219,7 @@ async def refresh_agent_status(
         return status.model_copy(
             update={
                 "runnable": False,
-                "error": result.error or "Agent 可用性检测失败",
+                "error": result.error or "Codex 可用性检测失败",
                 "checked_at": now_utc(),
             }
         )
@@ -273,21 +244,19 @@ async def put_prompt(
     return await prompts.save_prompt_template(db, prompt_key, payload.content)
 
 
-@router.get("/settings/instructions/{provider}")
+@router.get("/settings/instructions")
 async def get_instruction(
-    provider: InstructionProvider,
     admin: User = Depends(get_current_admin),
 ):
-    return instructions.read_instruction_file(provider)
+    return instructions.read_instruction_file()
 
 
-@router.put("/settings/instructions/{provider}")
+@router.put("/settings/instructions")
 async def put_instruction(
-    provider: InstructionProvider,
     payload: InstructionSaveIn,
     admin: User = Depends(get_current_admin),
 ):
-    return instructions.write_instruction_file(provider, payload.content)
+    return instructions.write_instruction_file(payload.content)
 
 
 @router.post("/skills/parse")

@@ -29,6 +29,7 @@ class RuntimeUploadContext:
     def __init__(self, workspace: Path) -> None:
         self.workspace = workspace.resolve()
         self.staging_dir = self.workspace / ".inputs" / uuid.uuid4().hex
+        self.staging_dir.mkdir(parents=True, exist_ok=True)
         self._path_rewrites: dict[str, str] = {}
 
     def add_refs(self, refs: Iterable[RuntimeUploadRef]) -> None:
@@ -70,7 +71,7 @@ class RuntimeUploadContext:
             path = attachment.path
             staged_path: str | None = None
             if path:
-                staged = self.stage_file(attachment.id, Path(path))
+                staged = self.stage_file(attachment.id, Path(path), name=attachment.name)
                 staged_path = str(staged) if staged is not None else None
             attachments.append(attachment.model_copy(update={"path": staged_path}))
         return result.model_copy(update={"attachments": attachments})

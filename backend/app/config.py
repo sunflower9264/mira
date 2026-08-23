@@ -14,7 +14,7 @@ class Settings(BaseSettings):
 
     database_url: str = "sqlite+aiosqlite:///./data/mira.sqlite"
     jwt_secret: str
-    agent_config_secret: str = ""
+    codex_config_secret: str = ""
     jwt_ttl_days: int = 30
     admin_username: str
     admin_password: str
@@ -28,7 +28,6 @@ class Settings(BaseSettings):
     max_resume_text_bytes: int = 8_192
     disk_warn_bytes: int = 5_000_000_000
     runtime_sandbox_image: str = "mira-agent-runtime:latest"
-    runtime_callback_base_url: str = "http://host.docker.internal:8000/api/internal/runtime"
     runtime_docker_network: str = ""
     runtime_container_memory: str = "2g"
     runtime_container_cpus: float = 2.0

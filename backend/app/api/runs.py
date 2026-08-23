@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import logging
 from typing import Annotated
 
@@ -37,10 +39,9 @@ from app.services.runs import (
     delete_run_record,
     list_run_summaries_for_app,
     load_run_or_404,
-    resume_groups_for_waiting_step,
-    submit_persisted_resume,
     submit_resume,
     update_run_name,
+    validate_live_resume,
 )
 from app.utils import loads
 
@@ -183,19 +184,9 @@ async def cancel_run(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> None:
-    row = (
-        await db.execute(select(Run.status).where(Run.id == run_id, Run.owner_id == user.id))
-    ).first()
-    previous_status = row[0] if row is not None else None
     changed = await cancel_run_record(db, run_id, user.id)
     if changed:
-        if previous_status == "waiting_for_user":
-            channel = get_run_hub().get(run_id)
-            if channel is not None:
-                await channel.publish("run.end", {"status": "cancelled"})
-            await get_run_hub().discard(run_id)
-        else:
-            cancel_run_signal(run_id)
+        cancel_run_signal(run_id)
 
 
 @router.post("/runs/{run_id}/resume", status_code=204)
@@ -207,14 +198,15 @@ async def resume_run(
 ) -> None:
     # service 校验：owner、status、附件归属、空 payload、文本长度。
     result = await submit_resume(db, user.id, run_id, payload)
-    # 持久化 resume；若仍有并行节点在运行，则由当前 live orchestrator 接续。
-    groups = await resume_groups_for_waiting_step(db, run_id, payload.node_id)
-    should_schedule = await submit_persisted_resume(db, user.id, run_id, payload, result, groups)
-    if not should_schedule:
-        return
-    await get_run_hub().discard(run_id)
-    await get_run_hub().create(run_id)
-    schedule_run(run_id, continuation=True)
+    await validate_live_resume(db, user.id, run_id, payload, result)
+    channel = get_run_hub().get(run_id)
+    ack_future = (
+        channel.submit_resume(payload.node_id, payload.tool_use_id, result)
+        if channel is not None
+        else None
+    )
+    if ack_future is None or not await asyncio.shield(ack_future):
+        raise HTTPException(status_code=409, detail="提问会话已中断，请继续运行后重试")
 
 
 @router.post("/runs/{run_id}/continue", response_model=RunOut)

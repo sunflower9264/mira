@@ -3,7 +3,6 @@ from datetime import datetime
 
 def _user_input_graph() -> dict:
     return {
-        "agent": "claude",
         "nodes": [
             {
                 "id": "n_input",
@@ -26,7 +25,6 @@ def _user_input_graph() -> dict:
 
 def _no_user_input_graph() -> dict:
     return {
-        "agent": "claude",
         "nodes": [
             {
                 "id": "n_asset",
@@ -48,8 +46,8 @@ def _no_user_input_graph() -> dict:
     }
 
 
-def test_run_name_defaults_to_user_input_value(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_run_name_defaults_to_user_input_value(auth_client, configure_codex):
+    configure_codex()
     app = auth_client.post("/api/apps", json={"name": "History Names"}).json()
     patched = auth_client.patch(f"/api/apps/{app['id']}", json={"graph": _user_input_graph()})
     assert patched.status_code == 200, patched.text
@@ -64,8 +62,8 @@ def test_run_name_defaults_to_user_input_value(auth_client, enable_claude_agent)
     assert run["name"] == "很长的用户输入 会被折叠空白"
 
 
-def test_run_name_falls_back_to_app_name_and_can_be_renamed(auth_client, enable_claude_agent, monkeypatch):
-    enable_claude_agent()
+def test_run_name_falls_back_to_app_name_and_can_be_renamed(auth_client, configure_codex, monkeypatch):
+    configure_codex()
     monkeypatch.setattr("app.services.runs.display_now", lambda: datetime.fromisoformat("2026-07-04T09:30:00+08:00"))
     app = auth_client.post("/api/apps", json={"name": "No Input App"}).json()
     patched = auth_client.patch(f"/api/apps/{app['id']}", json={"graph": _no_user_input_graph()})
@@ -86,8 +84,8 @@ def test_run_name_falls_back_to_app_name_and_can_be_renamed(auth_client, enable_
     assert listed[0]["name"] == "手动命名"
 
 
-def test_run_rename_rejects_empty_name(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_run_rename_rejects_empty_name(auth_client, configure_codex):
+    configure_codex()
     app = auth_client.post("/api/apps", json={"name": "Reject Empty"}).json()
     patched = auth_client.patch(f"/api/apps/{app['id']}", json={"graph": _no_user_input_graph()})
     assert patched.status_code == 200, patched.text

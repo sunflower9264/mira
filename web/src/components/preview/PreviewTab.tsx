@@ -6,7 +6,6 @@ import { AppRunContent } from './AppRunContent';
 
 export function PreviewTab({ hideRunFailureError = false }: { hideRunFailureError?: boolean }) {
   const app = useEditorStore((s) => s.app);
-  const setGraphAgent = useEditorStore((s) => s.setGraphAgent);
   const setGraph = useEditorStore((s) => s.setGraph);
 
   if (!app) return null;
@@ -16,7 +15,6 @@ export function PreviewTab({ hideRunFailureError = false }: { hideRunFailureErro
       app={app}
       variant="preview"
       failureErrorPlacement={hideRunFailureError ? 'hidden' : 'bottom'}
-      onAgentChange={setGraphAgent}
       onToolsChange={(disabledToolIds) => {
         setGraph({
           ...app.graph,

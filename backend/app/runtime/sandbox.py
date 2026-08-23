@@ -42,7 +42,7 @@ class RuntimePathMap:
     uploads_container: Path = CONTAINER_UPLOADS
 
     @classmethod
-    def for_call(cls, *, user_id: str, workspace: Path, home: Path) -> "RuntimePathMap":
+    def for_call(cls, *, workspace: Path, home: Path) -> "RuntimePathMap":
         upload_context = current_runtime_upload_context()
         return cls(
             workspace_host=workspace.resolve(),
@@ -106,7 +106,6 @@ class RuntimePathMap:
 
 @dataclass(frozen=True)
 class DockerSandboxSpec:
-    provider: str
     command: list[str]
     prompt: str
     env: dict[str, str]
@@ -121,6 +120,15 @@ class DockerSandboxResult:
 
 
 StdoutCallback = Callable[[str], Awaitable[None]]
+
+
+@dataclass(frozen=True)
+class DockerSandboxReply:
+    input: str | None = None
+    complete: bool = False
+
+
+InteractiveStdoutCallback = Callable[[str], Awaitable[DockerSandboxReply | None]]
 
 
 def iter_utf8_lines(chunks: Iterable[bytes]) -> Iterator[str]:
@@ -171,6 +179,32 @@ class DockerSandboxRunner:
             future.result()
 
         return await asyncio.to_thread(self._run_sync, spec, forward_line, cancel_event)
+
+    async def run_interactive(
+        self,
+        spec: DockerSandboxSpec,
+        *,
+        on_stdout_line: InteractiveStdoutCallback,
+        cancel_event: asyncio.Event,
+    ) -> DockerSandboxResult:
+        loop = asyncio.get_running_loop()
+
+        def forward_line(line: str) -> DockerSandboxReply | None:
+            future = asyncio.run_coroutine_threadsafe(on_stdout_line(line), loop)
+            return future.result()
+
+        worker = asyncio.create_task(
+            asyncio.to_thread(self._run_interactive_sync, spec, forward_line, cancel_event)
+        )
+        try:
+            return await asyncio.shield(worker)
+        except asyncio.CancelledError:
+            cancel_event.set()
+            try:
+                await asyncio.shield(worker)
+            except Exception:  # noqa: BLE001
+                pass
+            raise
 
     def _client_or_create(self):  # noqa: ANN202
         if self._client is not None:
@@ -233,7 +267,6 @@ class DockerSandboxRunner:
             "extra_hosts": {"host.docker.internal": "host-gateway"},
             "labels": {
                 "mira.runtime": "agent",
-                "mira.provider": spec.provider,
             },
             **host_config,
         }
@@ -275,9 +308,171 @@ class DockerSandboxRunner:
                 except Exception:  # noqa: BLE001
                     logger.warning("failed to remove runtime sandbox container", exc_info=True)
 
+    def _run_interactive_sync(
+        self,
+        spec: DockerSandboxSpec,
+        on_stdout_line: Callable[[str], DockerSandboxReply | None],
+        cancel_event: asyncio.Event,
+    ) -> DockerSandboxResult:
+        client = self._client_or_create()
+        settings = get_settings()
+        volumes = _volumes(spec.path_map)
+        host_config = {
+            "mem_limit": settings.runtime_container_memory,
+            "pids_limit": settings.runtime_container_pids_limit,
+            "cap_drop": ["ALL"],
+            "security_opt": ["no-new-privileges:true"],
+        }
+        if settings.runtime_container_cpus > 0:
+            host_config["nano_cpus"] = int(settings.runtime_container_cpus * 1_000_000_000)
+        create_kwargs = {
+            "image": settings.runtime_sandbox_image,
+            "command": spec.command,
+            "detach": True,
+            "init": True,
+            "stdin_open": True,
+            "tty": False,
+            "environment": spec.env,
+            "working_dir": str(CONTAINER_WORKSPACE),
+            "user": _container_user(),
+            "volumes": volumes,
+            "extra_hosts": {"host.docker.internal": "host-gateway"},
+            "labels": {
+                "mira.runtime": "agent",
+            },
+            **host_config,
+        }
+        if settings.runtime_docker_network.strip():
+            create_kwargs["network"] = settings.runtime_docker_network.strip()
+
+        container = None
+        attached = None
+        watcher_stop = threading.Event()
+        stderr_parts: list[str] = []
+        try:
+            container = client.containers.create(**create_kwargs)
+            attached = container.attach_socket(
+                params={"stdin": 1, "stdout": 1, "stderr": 1, "stream": 1}
+            )
+            container.start()
+            watcher = threading.Thread(
+                target=_watch_cancel,
+                args=(container, cancel_event, watcher_stop),
+                daemon=True,
+            )
+            watcher.start()
+            initial = spec.path_map.host_to_container_text(spec.prompt)
+            _write_socket(attached, initial)
+            decoder = _MultiplexedLineDecoder()
+            while not cancel_event.is_set():
+                frame = _read_multiplexed_frame(attached)
+                if frame is None:
+                    break
+                stream_type, chunk = frame
+                if stream_type == 2:
+                    stderr_parts.extend(decoder.feed_stderr(chunk))
+                    continue
+                if stream_type != 1:
+                    continue
+                for line in decoder.feed_stdout(chunk):
+                    reply = on_stdout_line(line)
+                    if reply is None:
+                        continue
+                    if reply.input:
+                        _write_socket(attached, spec.path_map.host_to_container_text(reply.input))
+                    if reply.complete:
+                        _stop_container(container)
+                        return DockerSandboxResult(
+                            return_code=0,
+                            stderr=spec.path_map.container_to_host_text("\n".join(stderr_parts)),
+                        )
+            stderr_parts.extend(decoder.finish_stderr())
+            if cancel_event.is_set():
+                _stop_container(container)
+                return DockerSandboxResult(return_code=130, stderr="cancelled")
+            wait_result = container.wait(timeout=5)
+            return DockerSandboxResult(
+                return_code=int(wait_result.get("StatusCode") or 0),
+                stderr=spec.path_map.container_to_host_text("\n".join(stderr_parts)),
+            )
+        except DockerSandboxError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            raise DockerSandboxError(f"Agent sandbox 交互执行失败: {exc}") from exc
+        finally:
+            watcher_stop.set()
+            if attached is not None:
+                try:
+                    attached.close()
+                except Exception:  # noqa: BLE001
+                    pass
+            if container is not None:
+                try:
+                    container.remove(force=True)
+                except Exception:  # noqa: BLE001
+                    logger.warning("failed to remove runtime sandbox container", exc_info=True)
+
 
 def _shell_command(command: list[str], prompt_path: Path) -> list[str]:
     return ["/bin/sh", "-c", f"exec {shlex.join(command)} < {shlex.quote(prompt_path.as_posix())}"]
+
+
+class _MultiplexedLineDecoder:
+    def __init__(self) -> None:
+        self._stdout_decoder = codecs.getincrementaldecoder("utf-8")("replace")
+        self._stderr_decoder = codecs.getincrementaldecoder("utf-8")("replace")
+        self._stdout_buffer = ""
+        self._stderr_buffer = ""
+
+    def feed_stdout(self, chunk: bytes) -> list[str]:
+        self._stdout_buffer += self._stdout_decoder.decode(chunk)
+        lines, self._stdout_buffer = _split_complete_lines(self._stdout_buffer)
+        return lines
+
+    def feed_stderr(self, chunk: bytes) -> list[str]:
+        self._stderr_buffer += self._stderr_decoder.decode(chunk)
+        lines, self._stderr_buffer = _split_complete_lines(self._stderr_buffer)
+        return lines
+
+    def finish_stderr(self) -> list[str]:
+        self._stderr_buffer += self._stderr_decoder.decode(b"", final=True)
+        return [self._stderr_buffer] if self._stderr_buffer else []
+
+
+def _split_complete_lines(value: str) -> tuple[list[str], str]:
+    parts = value.split("\n")
+    return parts[:-1], parts[-1]
+
+
+def _read_multiplexed_frame(attached) -> tuple[int, bytes] | None:  # noqa: ANN001
+    header = _read_exactly(attached, 8)
+    if header is None:
+        return None
+    size = int.from_bytes(header[4:8], byteorder="big")
+    payload = _read_exactly(attached, size)
+    if payload is None:
+        raise DockerSandboxError("Agent sandbox 输出流意外中断")
+    return header[0], payload
+
+
+def _read_exactly(attached, size: int) -> bytes | None:  # noqa: ANN001
+    chunks: list[bytes] = []
+    remaining = size
+    while remaining:
+        chunk = attached._sock.recv(remaining)  # noqa: SLF001 - docker SDK only exposes the hijacked socket here
+        if not chunk:
+            if not chunks:
+                return None
+            raise DockerSandboxError("Agent sandbox 输出流意外中断")
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    return b"".join(chunks)
+
+
+def _write_socket(attached, value: str) -> None:  # noqa: ANN001
+    payload = value.encode("utf-8")
+    if payload:
+        attached._sock.sendall(payload)  # noqa: SLF001 - docker SDK only exposes the hijacked socket here
 
 
 def _container_user() -> str:

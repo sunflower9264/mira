@@ -9,7 +9,7 @@
 ## Key Files
 
 - `main.tsx`：React mount 入口。
-- `routes.tsx`：桌面/手机路由、鉴权 gate、管理员 Agent 初始化 gate。
+- `routes.tsx`：桌面/手机路由、鉴权 gate、管理员 Codex 初始化 gate。
 - `types.ts`：前端核心类型，必须与后端 schema 和 API 响应保持一致。
 - `index.css`：Tailwind 和全局样式。
 

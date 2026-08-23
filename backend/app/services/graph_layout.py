@@ -16,9 +16,8 @@ from app.services import runtime_config
 from app.services.graph_inputs import prepare_structural_graph
 from app.services.graph_validation import GraphValidationError
 from app.services.prompts import get_prompt_content, render_prompt
-from app.services.reasoning_effort import max_reasoning_effort_for_agent
+from app.services.reasoning_effort import max_reasoning_effort
 from app.services.runtime_paths import graph_layout_workspace
-from app.services.settings import NO_ENABLED_AGENT_DETAIL, settings_out
 
 
 async def beautify_graph_layout(
@@ -29,7 +28,7 @@ async def beautify_graph_layout(
     *,
     cancel_event: asyncio.Event | None = None,
 ) -> dict[str, Any]:
-    """Use the app Agent to calculate node positions, then merge positions only."""
+    """Use Codex to calculate node positions, then merge positions only."""
 
     try:
         graph = prepare_structural_graph(graph)
@@ -38,22 +37,12 @@ async def beautify_graph_layout(
     if not graph.get("nodes"):
         return _clone_graph(graph)
 
-    graph_agent = str(graph.get("agent") or "").strip()
-    if not graph_agent:
-        raise HTTPException(status_code=400, detail="应用未配置 Agent")
-
-    settings = await settings_out(db, reveal_keys=True)
-    agent = next((item for item in settings.agents if item.enabled and item.runtime == graph_agent), None)
-    if not agent:
-        raise HTTPException(status_code=400, detail=NO_ENABLED_AGENT_DETAIL)
-
     await runtime_config.write_configs(db)
     template = await get_prompt_content(db, "graph_layout_beautify")
-    runtime = get_runtime(agent.runtime, user_id)
+    runtime = get_runtime(user_id)
     return await beautify_graph_layout_with_runtime(
         runtime=runtime,
         user_id=user_id,
-        agent=agent.runtime,
         graph=graph,
         node_sizes=node_sizes or {},
         template=template,
@@ -65,7 +54,6 @@ async def beautify_graph_layout_with_runtime(
     *,
     runtime: object,
     user_id: str,
-    agent: str,
     graph: dict[str, Any],
     node_sizes: dict[str, dict[str, float]] | None,
     template: str,
@@ -79,7 +67,7 @@ async def beautify_graph_layout_with_runtime(
         return _clone_graph(graph)
 
     prompt = build_graph_layout_prompt(graph, node_sizes or {}, template)
-    output = await _run_layout_agent(runtime, user_id, agent, prompt, cancel_event)
+    output = await _run_layout_agent(runtime, user_id, prompt, cancel_event)
     positions = extract_layout_positions(output, graph)
     next_graph = _clone_graph(graph)
     for node in next_graph.get("nodes", []):
@@ -112,9 +100,9 @@ def build_graph_layout_prompt(
 硬性规则：
 - 只输出一个 JSON 对象，形状必须是 {{"positions":[{{"id":"node_id","x":number,"y":number}}]}}。
 - positions 必须覆盖当前 graph 的全部节点；每个节点只能出现一次。
-- 禁止新增、删除、改名或改写节点；禁止修改 execution_edges、prompt、title、description、agent、viewport 或其它字段。
+- 禁止新增、删除、改名或改写节点；禁止修改 execution_edges、prompt、title、description、viewport 或其它字段。
 - 不要输出 markdown、解释、注释或代码块。
-- 不要调用 ask_user；直接完成布局。
+- 不要向用户提问；直接完成布局。
 
 管理员美化样式模板：
 {helper_instruction}
@@ -124,7 +112,6 @@ def build_graph_layout_prompt(
 async def _run_layout_agent(
     runtime: object,
     user_id: str,
-    agent: str,
     prompt: str,
     cancel_event: asyncio.Event,
 ) -> str:
@@ -139,7 +126,7 @@ async def _run_layout_agent(
         session_id=None,
         allowed_tools=None,
         model=None,
-        reasoning_effort=max_reasoning_effort_for_agent(agent),
+        reasoning_effort=max_reasoning_effort(),
         cwd=graph_layout_workspace(user_id),
         on_chunk=on_chunk,
         cancel_event=cancel_event,

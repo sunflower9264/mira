@@ -4,14 +4,7 @@ import asyncio
 import os
 from pathlib import Path
 
-import pytest
-from fastapi import HTTPException
-
-from app.runtime.ask_user_bridge import InternalAskUserBridge, handle_internal_ask_user
-from app.runtime.base import AskUserRequest, AskUserResult
-from app.runtime.call_context import RuntimeCallContext
 from app.runtime.sandbox import DockerSandboxRunner, DockerSandboxSpec, RuntimePathMap, iter_utf8_lines
-from app.schemas.decision import DecisionAnswer
 from app.services.runtime_paths import uploads_dir
 from app.services.runtime_uploads import RuntimeUploadRef, runtime_upload_context
 
@@ -90,7 +83,7 @@ def test_runtime_path_map_for_call_does_not_use_user_uploads_root(tmp_path):
     user_uploads = uploads_dir("sandbox_user")
     user_uploads.mkdir(parents=True, exist_ok=True)
 
-    path_map = RuntimePathMap.for_call(user_id="sandbox_user", workspace=workspace, home=home)
+    path_map = RuntimePathMap.for_call(workspace=workspace, home=home)
 
     assert path_map.uploads_host is None
     rewritten = path_map.host_to_container_text(str(user_uploads / "upl_secret" / "blob"))
@@ -108,7 +101,7 @@ def test_runtime_path_map_for_call_uses_staged_uploads_only(tmp_path):
     source.write_bytes(b"allowed")
 
     with runtime_upload_context(workspace, [RuntimeUploadRef(id="upl_allowed", path=source)]) as upload_context:
-        path_map = RuntimePathMap.for_call(user_id="sandbox_user", workspace=workspace, home=home)
+        path_map = RuntimePathMap.for_call(workspace=workspace, home=home)
         staged_text = upload_context.rewrite_text(str(source))
         container_text = path_map.host_to_container_text(staged_text)
 
@@ -116,44 +109,6 @@ def test_runtime_path_map_for_call_uses_staged_uploads_only(tmp_path):
     assert path_map.uploads_host != source.parent.parent
     assert "/mnt/inputs/upl_allowed/blob" in container_text
     assert str(source) not in container_text
-
-
-async def test_runtime_call_context_uses_per_call_paths_and_staged_uploads(tmp_path):
-    workspace = tmp_path / "workspace"
-    home = tmp_path / "home"
-    source = tmp_path / "uploads" / "upl_allowed" / "blob"
-    workspace.mkdir()
-    home.mkdir()
-    source.parent.mkdir(parents=True)
-    source.write_bytes(b"allowed")
-
-    with runtime_upload_context(workspace, [RuntimeUploadRef(id="upl_allowed", path=source)]) as upload_context:
-        async with RuntimeCallContext(
-            user_id="sandbox_user",
-            workspace=workspace,
-            home=home,
-            on_ask_user=None,
-        ) as first:
-            first_call_id = first.call_id
-            first_prompt_path = first.prompt_path
-            first_call_dir = first.call_dir
-            assert first_call_dir.exists()
-            assert first_prompt_path.parent == first_call_dir
-            assert first.require_path_map().home_host == home.resolve()
-            assert first.require_path_map().uploads_host == upload_context.staging_dir.resolve()
-
-        async with RuntimeCallContext(
-            user_id="sandbox_user",
-            workspace=workspace,
-            home=home,
-            on_ask_user=None,
-        ) as second:
-            second_call_id = second.call_id
-            second_prompt_path = second.prompt_path
-
-    assert first_call_id != second_call_id
-    assert first_prompt_path != second_prompt_path
-    assert not first_call_dir.exists()
 
 
 async def test_docker_sandbox_runner_mounts_paths_and_rewrites_output(tmp_path):
@@ -174,8 +129,7 @@ async def test_docker_sandbox_runner_mounts_paths_and_rewrites_output(tmp_path):
 
     result = await runner.run(
         DockerSandboxSpec(
-            provider="codex",
-            command=["codex", "exec", "--json", "-"],
+            command=["codex", "app-server"],
             prompt=f"use {workspace}/input.txt",
             env={"HOME": "/home/mira"},
             path_map=path_map,
@@ -212,40 +166,6 @@ def _expected_container_user() -> str:
     if getuid is None or getgid is None:
         return "mira"
     return f"{getuid()}:{getgid()}"
-
-
-async def test_internal_ask_user_bridge_validates_token_and_forwards_payload():
-    seen: list[AskUserRequest] = []
-
-    async def callback(request: AskUserRequest) -> AskUserResult:
-        seen.append(request)
-        return AskUserResult(answers=[DecisionAnswer(group_id="choice", selected=["A"])])
-
-    async with InternalAskUserBridge(callback) as bridge:
-        payload = {
-            "context": {
-                "title": "Choose an option",
-                "summary": "Select the option used to verify the internal callback bridge.",
-            },
-            "groups": [
-                {
-                    "id": "choice",
-                    "label": "Choose",
-                    "type": "single",
-                    "options": [
-                        {"label": "A", "description": "Use A", "recommended": True},
-                        {"label": "B", "description": "Use B", "recommended": False},
-                    ],
-                }
-            ]
-        }
-        result = await handle_internal_ask_user(bridge.session_id, f"Bearer {bridge.token}", payload)
-
-        with pytest.raises(HTTPException):
-            await handle_internal_ask_user(bridge.session_id, "Bearer wrong", payload)
-
-    assert seen[0].groups[0].id == "choice"
-    assert result["answers"] == [{"group_id": "choice", "selected": ["A"]}]
 
 
 def test_iter_utf8_lines_keeps_cjk_character_split_across_chunks() -> None:

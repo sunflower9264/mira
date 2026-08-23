@@ -6,7 +6,7 @@
 - handler 返回 ``NodeResult``：success+output、failed+error 或 cancelled。
 - generate / output / condition 的 LLM 调用统一走 ``app.runtime.factory.get_runtime``。
 
-``_run_llm`` 先用受限 planning 状态机处理 ``ask_user``，再执行节点主体。
+``_run_llm`` 先用 Codex Plan mode 补齐关键决策，再执行节点主体。
 """
 
 from __future__ import annotations
@@ -22,8 +22,8 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Step, StepLog
-from app.runtime.base import AgentChunk, AskUserRequest
+from app.models import Run, RunAgentBranch, Step, StepLog
+from app.runtime.base import AgentChunk, AskUserRequest, AskUserResult
 from app.runtime.factory import get_runtime
 from app.schemas import RunInputValue
 from app.services.decision_prompts import append_ask_user_none_option, validate_ask_request_groups
@@ -36,7 +36,7 @@ from app.services.output_contracts import (
     validate_contract_output,
 )
 from app.services.prompts import get_prompt_content, render_prompt
-from app.services.reasoning_effort import normalize_reasoning_effort_for_agent
+from app.services.reasoning_effort import normalize_reasoning_effort
 from app.services.run_hub import RunChannel
 from app.services.runs import attachments_meta
 from app.services.runtime_uploads import RuntimeUploadRef, rewrite_runtime_upload_paths, runtime_upload_context
@@ -52,69 +52,18 @@ from app.services.workflow_data import (
 from app.utils import dumps, loads, new_id, now_utc
 
 logger = logging.getLogger(__name__)
-_TEST_ASK_USER_RE = re.compile(r"\[\[ask_user:\{.*?\}\]\]", re.DOTALL)
-_ASK_USER_PREFLIGHT_MAX_ATTEMPTS = 2
 _OFFICE_VALIDATION_CONCURRENCY = 2
 _OFFICE_VALIDATION_SEMAPHORE = asyncio.Semaphore(_OFFICE_VALIDATION_CONCURRENCY)
 _UNICODE_REPAIR_MARKER = "[[MIRA_CORRUPTED_TEXT]]"
 _UNICODE_REPLACEMENT_ESCAPE_RE = re.compile(r"\\u[fF]{3}[dD]")
-_ASK_USER_PREFLIGHT_OUTPUT_SCHEMA: dict[str, Any] = {
+_ASK_USER_PLAN_OUTPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
     "properties": {
-        "action": {"type": "string", "enum": ["ask", "complete"]},
-        "rationale": {"type": ["string", "null"]},
-        "request": {
-            "type": ["object", "null"],
-            "additionalProperties": False,
-            "properties": {
-                "context": {
-                    "type": "object",
-                    "additionalProperties": False,
-                    "properties": {
-                        "title": {"type": "string", "minLength": 1, "maxLength": 80},
-                        "summary": {"type": "string", "minLength": 1, "maxLength": 240},
-                    },
-                    "required": ["title", "summary"],
-                },
-                "groups": {
-                    "type": "array",
-                    "minItems": 1,
-                    "maxItems": 3,
-                    "items": {
-                        "type": "object",
-                        "additionalProperties": False,
-                        "properties": {
-                            "id": {"type": "string", "minLength": 1},
-                            "label": {"type": "string", "minLength": 1},
-                            "type": {"type": "string", "enum": ["single", "multi"]},
-                            "options": {
-                                "type": "array",
-                                "minItems": 2,
-                                "maxItems": 3,
-                                "items": {
-                                    "type": "object",
-                                    "additionalProperties": False,
-                                    "properties": {
-                                        "label": {"type": "string", "minLength": 1},
-                                        "description": {"type": "string", "minLength": 1},
-                                        "recommended": {"type": "boolean"},
-                                    },
-                                    "required": ["label", "description", "recommended"],
-                                },
-                            },
-                            "placeholder": {"type": ["string", "null"]},
-                        },
-                        "required": ["id", "label", "type", "options", "placeholder"],
-                    },
-                },
-            },
-            "required": ["context", "groups"],
-        },
-        "decision_summary": {"type": ["string", "null"]},
-        "reason": {"type": ["string", "null"]},
+        "decision_summary": {"type": "string", "minLength": 1},
+        "reason": {"type": "string", "minLength": 1},
     },
-    "required": ["action", "rationale", "request", "decision_summary", "reason"],
+    "required": ["decision_summary", "reason"],
 }
 
 
@@ -123,7 +72,7 @@ _ASK_USER_PREFLIGHT_OUTPUT_SCHEMA: dict[str, Any] = {
 
 @dataclass
 class NodeResult:
-    status: str  # "success" / "failed" / "skipped" / "waiting" / "cancelled"
+    status: str  # "success" / "failed" / "skipped" / "cancelled"
     output: Any = None
     error: str | None = None
     failure_kind: str | None = None
@@ -139,7 +88,6 @@ class ExecutionContext:
     app_id: str
     run_id: str
     graph: dict[str, Any]
-    agent: str
     workspace: Path
     # 用户启动时收集的 user_input 节点输入：{node_id: RunInputValue}。
     inputs: dict[str, RunInputValue]
@@ -165,7 +113,6 @@ def build_context(
     app_id: str,
     run_id: str,
     graph: dict[str, Any],
-    agent: str,
     workspace: Path,
     inputs: dict[str, RunInputValue],
     execution_plan: ExecutionPlan | None = None,
@@ -181,7 +128,6 @@ def build_context(
         app_id=app_id,
         run_id=run_id,
         graph=graph,
-        agent=agent,
         workspace=workspace,
         inputs=inputs,
         execution_plan=plan,
@@ -325,7 +271,7 @@ async def _handle_condition(ctx: ExecutionContext, node: dict[str, Any], step: S
         )
         return NodeResult(status="success", output=chosen)
     template_content = await get_prompt_content(ctx.db, "condition_choice")
-    user_prompt = await _compose_prompt(ctx, node, include_ask_user_protocol=False)
+    user_prompt = await _compose_prompt(ctx, node)
     prompt = render_prompt(
         template_content,
         {
@@ -368,10 +314,7 @@ async def _run_llm(
     expects_text: bool,
     override_prompt: str | None = None,
 ) -> NodeResult:
-    agent_kind = ctx.agent.strip()
-    if not agent_kind:
-        return NodeResult(status="failed", error="应用未配置 Agent", failure_kind="runtime")
-    runtime = get_runtime(agent_kind, ctx.user_id)
+    runtime = get_runtime(ctx.user_id)
     cwd = ctx.workspace
     try:
         input_refs = _runtime_upload_refs_for_node(ctx, node, step)
@@ -388,7 +331,6 @@ async def _run_llm(
             step,
             expects_text=expects_text,
             override_prompt=override_prompt,
-            agent_kind=agent_kind,
             runtime=runtime,
             cwd=cwd,
         )
@@ -401,50 +343,44 @@ async def _run_llm_with_upload_context(
     *,
     expects_text: bool,
     override_prompt: str | None,
-    agent_kind: str,
     runtime,
     cwd: Path,
 ) -> NodeResult:
-    task_prompt = override_prompt if override_prompt is not None else await _compose_prompt(ctx, node, include_ask_user_protocol=False)
+    task_prompt = override_prompt if override_prompt is not None else await _compose_prompt(ctx, node)
     prompt = task_prompt
     if override_prompt is None:
         prompt = _append_prompt(prompt, contract_prompt_suffix(node))
     output_schema = schema_for_contract(node) if override_prompt is None else None
-    prompt = _append_recovery_resume_context(prompt, step)
     prompt = rewrite_runtime_upload_paths(prompt)
-    input_payload = loads(step.input_json, {}) or {}
-    if not isinstance(input_payload, dict):
-        input_payload = {}
     model = str(node.get("model") or "").strip() or None
-    reasoning_effort = normalize_reasoning_effort_for_agent(agent_kind, node.get("reasoning_effort"))
+    reasoning_effort = normalize_reasoning_effort(node.get("reasoning_effort"))
 
-    preflight: str | NodeResult = ""
-    if _should_run_ask_user_preflight(ctx, node):
-        preflight = await _run_ask_user_preflight(
+    decision_summary: str | NodeResult = ""
+    if _should_run_decision_plan(ctx, node):
+        decision_summary = await _run_decision_plan(
             ctx,
             node,
             step,
             runtime=runtime,
-            prompt=rewrite_runtime_upload_paths(_append_recovery_resume_context(task_prompt, step)),
+            prompt=rewrite_runtime_upload_paths(task_prompt),
             model=model,
             reasoning_effort=reasoning_effort,
             cwd=cwd,
         )
-    if isinstance(preflight, NodeResult):
-        return preflight
+    if isinstance(decision_summary, NodeResult):
+        return decision_summary
     input_payload = loads(step.input_json, {}) or {}
     if not isinstance(input_payload, dict):
         input_payload = {}
-    if preflight:
-        input_payload["ask_user_plan"] = {"summary": preflight}
+    if decision_summary:
         prompt = _append_prompt(
             prompt,
             "\n".join(
                 [
                     "# 用户决策摘要",
-                    preflight,
+                    decision_summary,
                     "# 执行要求",
-                    "请基于上述用户决策完成当前节点；不要再次调用 ask_user。",
+                    "请基于上述用户决策完成当前节点；不要再次向用户提问。",
                 ]
             ),
         )
@@ -455,9 +391,9 @@ async def _run_llm_with_upload_context(
     async def on_chunk(chunk: AgentChunk) -> None:
         session_from_chunk = _extract_session_id(chunk.raw) if isinstance(chunk.raw, dict) else None
         if session_from_chunk and session_from_chunk != ctx.agent_session_id:
-            ctx.agent_session_id = session_from_chunk
-            step.agent_session_id = session_from_chunk
-            await ctx.db.commit()
+            await _persist_session_id(ctx, step, session_from_chunk)
+        if chunk.type == "session":
+            return
         if chunk.type == "text" and chunk.text:
             chunks.append(chunk.text)
         # 把 chunk 转发给前端：用 model_dump 让 SSE 中的 chunk 形态与前端 AgentChunk 类型一致。
@@ -575,7 +511,7 @@ async def _run_llm_with_upload_context(
     return NodeResult(status="success", output=output, agent_session_id=next_session_id)
 
 
-async def _run_ask_user_preflight(
+async def _run_decision_plan(
     ctx: ExecutionContext,
     node: dict[str, Any],
     step: Step,
@@ -586,135 +522,100 @@ async def _run_ask_user_preflight(
     reasoning_effort: str | None,
     cwd: Path,
 ) -> str | NodeResult:
-    core_protocol = await get_prompt_content(ctx.db, "ask_user_protocol")
-    preflight_protocol = await get_prompt_content(ctx.db, "ask_user_preflight_protocol")
-    ask_user_protocol = f"{core_protocol.strip()}\n\n{preflight_protocol.strip()}"
+    plan_prompt = _build_decision_plan_prompt(prompt)
+    chunks: list[str] = []
+
+    async def on_plan_chunk(chunk: AgentChunk) -> None:
+        session_from_chunk = _extract_session_id(chunk.raw) if isinstance(chunk.raw, dict) else None
+        if session_from_chunk and session_from_chunk != ctx.agent_session_id:
+            await _persist_session_id(ctx, step, session_from_chunk)
+        if chunk.type == "text" and chunk.text:
+            chunks.append(chunk.text)
+
+    async def on_ask_user(request: AskUserRequest) -> AskUserResult:
+        protocol_error = _validate_ask_request(request)
+        if protocol_error:
+            return AskUserResult(ok=False, error=protocol_error)
+        request = request.model_copy(update={"groups": append_ask_user_none_option(request.groups)})
+        async with ctx.channel.waiting_lock:
+            if ctx.channel.cancel_event.is_set():
+                return AskUserResult(ok=False, error="运行已取消")
+            future = ctx.channel.begin_waiting(node["id"], request.tool_use_id)
+            try:
+                await _persist_live_ask_user(ctx, step, request)
+                answer = await future
+                await _persist_live_ask_user_answer(ctx, step, request, answer)
+                ctx.channel.acknowledge_resume(node["id"], request.tool_use_id)
+                return answer
+            finally:
+                ctx.channel.clear_waiting(node["id"], request.tool_use_id)
+
+    try:
+        result = await runtime.execute(
+            prompt=plan_prompt,
+            session_id=ctx.agent_session_id,
+            allowed_tools=None,
+            model=model,
+            reasoning_effort=reasoning_effort,
+            cwd=cwd,
+            on_chunk=on_plan_chunk,
+            cancel_event=ctx.channel.cancel_event,
+            on_ask_user=on_ask_user,
+            runtime_tools=ctx.planning_runtime_tools,
+            runtime_policy="ask_user_plan",
+            output_schema=_ASK_USER_PLAN_OUTPUT_SCHEMA,
+            session_scope=f"run:{ctx.run_id}",
+            fork_session=ctx.fork_session,
+        )
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("runtime ask_user plan crashed for node=%s", node.get("id"))
+        return NodeResult(
+            status="failed",
+            error=f"Agent 提问规划异常: {exc}",
+            failure_kind="runtime",
+            agent_session_id=ctx.agent_session_id,
+        )
+
+    next_session_id = result.session_id or ctx.agent_session_id
+    if next_session_id:
+        ctx.agent_session_id = next_session_id
+        step.agent_session_id = next_session_id
+        await ctx.db.commit()
+    ctx.fork_session = False
+    if result.finished_with == "cancelled":
+        return NodeResult(status="cancelled", agent_session_id=ctx.agent_session_id)
+    if result.finished_with == "error":
+        return NodeResult(
+            status="failed",
+            error=result.error or "Agent 提问规划失败",
+            failure_kind="runtime",
+            agent_session_id=ctx.agent_session_id,
+        )
+    payload = _json_object_from_text(result.total_text or "".join(chunks))
+    summary = str(payload.get("decision_summary") or "").strip() if payload else ""
+    if not summary:
+        return NodeResult(
+            status="failed",
+            error="Agent 提问规划未返回决策摘要",
+            failure_kind="contract",
+            agent_session_id=ctx.agent_session_id,
+        )
     input_payload = loads(step.input_json, {}) or {}
     if not isinstance(input_payload, dict):
         input_payload = {}
-    state = _preflight_state(input_payload)
-    final = state.get("final")
-    if isinstance(final, dict):
-        summary = str(final.get("decision_summary") or "").strip()
-        if summary:
-            return summary
-
-    feedback: str | None = None
-    for _attempt in range(_ASK_USER_PREFLIGHT_MAX_ATTEMPTS):
-        preflight_prompt = _build_ask_user_preflight_prompt(
-            prompt,
-            ask_user_protocol,
-            state,
-            feedback=feedback,
-        )
-        chunks: list[str] = []
-
-        async def on_preflight_chunk(chunk: AgentChunk) -> None:
-            if chunk.type == "text" and chunk.text:
-                chunks.append(chunk.text)
-
-        try:
-            result = await runtime.execute(
-                prompt=preflight_prompt,
-                session_id=ctx.agent_session_id,
-                allowed_tools=None,
-                model=model,
-                reasoning_effort=reasoning_effort,
-                cwd=cwd,
-                on_chunk=on_preflight_chunk,
-                cancel_event=ctx.channel.cancel_event,
-                on_ask_user=None,
-                runtime_tools=ctx.planning_runtime_tools,
-                runtime_policy="ask_user_plan",
-                output_schema=_ASK_USER_PREFLIGHT_OUTPUT_SCHEMA,
-                session_scope=f"run:{ctx.run_id}",
-                fork_session=ctx.fork_session,
-            )
-        except Exception as exc:  # noqa: BLE001
-            logger.exception("runtime ask_user preflight crashed for node=%s", node.get("id"))
-            return NodeResult(
-                status="failed",
-                error=f"Agent 提问预检异常: {exc}",
-                failure_kind="runtime",
-                agent_session_id=ctx.agent_session_id,
-            )
-
-        next_session_id = result.session_id or ctx.agent_session_id
-        if next_session_id:
-            ctx.agent_session_id = next_session_id
-            step.agent_session_id = next_session_id
-            await ctx.db.commit()
-        ctx.fork_session = False
-        if result.finished_with == "cancelled":
-            return NodeResult(status="cancelled", agent_session_id=ctx.agent_session_id)
-        if result.finished_with == "error":
-            return NodeResult(
-                status="failed",
-                error=result.error or "Agent 提问预检失败",
-                failure_kind="runtime",
-                agent_session_id=ctx.agent_session_id,
-            )
-
-        raw_output = result.total_text or "".join(chunks)
-        action_payload, feedback = _parse_preflight_action(raw_output)
-        if action_payload is None:
-            await _append_log(
-                ctx,
-                step,
-                "warn",
-                f"Agent 提问预检输出无效：{feedback or '未返回合法 action'}；原始输出：{_truncate_log_text(raw_output)}",
-            )
-            continue
-        action = action_payload["action"]
-        if action == "ask":
-            request, feedback = _preflight_ask_request(action_payload)
-            if request is None:
-                continue
-            return await _enter_ask_user_waiting(
-                ctx,
-                node,
-                step,
-                request,
-                state=state,
-                rationale=str(action_payload.get("rationale") or "").strip() or None,
-            )
-
-        summary, reason, feedback = _preflight_complete(
-            action_payload,
-            prompt,
-            state,
-            ancestor_requires_questions=_ancestor_requires_questions(ctx, node),
-        )
-        if summary is None or reason is None:
-            continue
-        state["final"] = {"decision_summary": summary, "reason": reason}
-        input_payload = loads(step.input_json, {}) or {}
-        if not isinstance(input_payload, dict):
-            input_payload = {}
-        input_payload["ask_user_preflight"] = state
-        input_payload.pop("ask_user", None)
-        step.input_json = dumps(input_payload)
-        await ctx.db.commit()
-        return summary
-
-    return NodeResult(
-        status="failed",
-        error=f"Agent 提问预检输出无效：{feedback or '未返回合法 action'}",
-        failure_kind="contract",
-    )
+    input_payload["ask_user_plan"] = {
+        "summary": summary,
+        "reason": str(payload.get("reason") or "").strip(),
+    }
+    input_payload.pop("ask_user", None)
+    step.input_json = dumps(input_payload)
+    await ctx.db.commit()
+    return summary
 
 
-def _preflight_state(input_payload: dict[str, Any]) -> dict[str, Any]:
-    state = input_payload.get("ask_user_preflight")
-    if not isinstance(state, dict):
-        state = {}
-    history = state.get("history")
-    if not isinstance(history, list):
-        state["history"] = []
-    return dict(state)
-
-
-def _should_run_ask_user_preflight(ctx: ExecutionContext, node: dict[str, Any]) -> bool:
+def _should_run_decision_plan(ctx: ExecutionContext, node: dict[str, Any]) -> bool:
     if node.get("type") == "output":
         return False
     if node.get("type") == "generate" and node.get("ask_user_enabled") is False:
@@ -763,63 +664,16 @@ def _has_meaningful_input_value(value: Any) -> bool:
     return value is not None
 
 
-def _build_ask_user_preflight_prompt(
-    prompt: str,
-    ask_user_protocol: str,
-    state: dict[str, Any],
-    *,
-    feedback: str | None,
-) -> str:
-    history = state.get("history") if isinstance(state.get("history"), list) else []
-    sections = [
-        prompt,
-        ask_user_protocol,
-        "# 受限提问阶段",
-        "你现在处于 planning/read-only 阶段，只能判断是否需要向用户补齐会影响当前节点执行的真实决策。",
-        "不要完成当前节点任务，不要生成文件、代码、最终答案或运行结果。",
-        "推荐、选择、个性化、需求澄清、方案收敛类任务中，如果上游输入缺少会显著影响结果的偏好、约束、目标或交付形式，必须先进入提问。",
-        "如果用户明确要求先问几个问题、先了解偏好再决定、或明确要求调用 ask_user，在没有历史回答前必须返回 action=ask。",
-        "用户回答后，如果仍缺关键决策，可以继续返回 action=ask；如果信息已经足够，返回 action=complete。",
-        "没有历史回答时，不得声称用户已回答、用户取消了提问、已获得用户偏好，或当前无法继续获取更多决策信息。",
-        "# 已有提问历史 JSON",
-        dumps(history),
-        "# 输出格式",
-        "只输出一个 JSON 对象，不要输出 Markdown 代码块或解释。",
-        "输出该 JSON 对象后必须立即停止，禁止继续输出当前节点任务结果、示例、代码块或第二个 JSON。",
-        "需要继续提问时输出：{\"action\":\"ask\",\"rationale\":\"...\",\"request\":{\"context\":{\"title\":\"...\",\"summary\":\"...\"},\"groups\":[...]}}。",
-        "信息足够时输出：{\"action\":\"complete\",\"decision_summary\":\"...\",\"reason\":\"...\"}。",
-        "request.context 必须包含面向用户的 title 和 summary，用于说明本轮提问主题和为什么现在需要选择。",
-        "request.groups 必须遵守 ask_user 协议：1-3 组问题，每组 2-3 个真实业务选项，且一个 recommended=true 的推荐项排第一。",
-    ]
-    if feedback:
-        sections.extend(["# 上一次输出无效，请修正", feedback])
-    return "\n\n".join(section for section in sections if section)
-
-
-def _parse_preflight_action(text: str) -> tuple[dict[str, Any] | None, str | None]:
-    payload = _json_object_from_text(text)
-    if payload is None:
-        return None, "必须输出合法 JSON 对象"
-    if contains_unicode_replacement(payload):
-        return None, UNICODE_REPLACEMENT_ERROR
-    action = payload.get("action")
-    if action == "ask":
-        return payload, None
-    if action == "complete":
-        return payload, None
-    if isinstance(payload.get("ask_user"), dict):
-        return {
-            "action": "ask",
-            "request": payload["ask_user"],
-            "rationale": payload.get("rationale") or payload.get("reason"),
-        }, None
-    if isinstance(payload.get("decision_summary"), str):
-        return {
-            "action": "complete",
-            "decision_summary": payload.get("decision_summary"),
-            "reason": payload.get("reason"),
-        }, None
-    return None, "JSON 必须包含 action=ask 或 action=complete"
+def _build_decision_plan_prompt(prompt: str) -> str:
+    return "\n\n".join(
+        [
+            prompt,
+            "# 执行前规划",
+            "只判断当前任务开始前是否缺少会显著改变结果的用户决策，不要执行任务或创建文件。",
+            "如果缺少关键偏好、约束、目标或交付形式，请在规划阶段向用户提问；信息足够后继续规划。",
+            "最后仅返回决策摘要和判断理由。",
+        ]
+    )
 
 
 def _json_object_from_text(text: str) -> dict[str, Any] | None:
@@ -847,121 +701,73 @@ def _json_object_from_text(text: str) -> dict[str, Any] | None:
     return None
 
 
-def _truncate_log_text(text: str, limit: int = 1000) -> str:
-    cleaned = text.strip()
-    if len(cleaned) <= limit:
-        return cleaned
-    return f"{cleaned[:limit]}..."
-
-
-def _preflight_ask_request(action_payload: dict[str, Any]) -> tuple[AskUserRequest | None, str | None]:
-    raw_request = action_payload.get("request")
-    if not isinstance(raw_request, dict):
-        return None, "action=ask 必须包含 request 对象"
-    request_payload = dict(raw_request)
-    request_payload["tool_use_id"] = str(request_payload.get("tool_use_id") or new_id("ask"))
-    try:
-        request = AskUserRequest.model_validate(request_payload)
-    except Exception as exc:  # noqa: BLE001
-        return None, f"ask_user request 不合法：{exc}"
-    protocol_error = _validate_ask_request(request)
-    if protocol_error:
-        return None, protocol_error
-    return request, None
-
-
-def _preflight_complete(
-    action_payload: dict[str, Any],
-    prompt: str,
-    state: dict[str, Any],
-    *,
-    ancestor_requires_questions: bool,
-) -> tuple[str | None, str | None, str | None]:
-    summary = str(action_payload.get("decision_summary") or "").strip()
-    reason = str(action_payload.get("reason") or "").strip()
-    if not summary:
-        return None, None, "action=complete 必须包含非空 decision_summary"
-    if not reason:
-        return None, None, "action=complete 必须包含非空 reason"
-    history = state.get("history") if isinstance(state.get("history"), list) else []
-    if not history and (_prompt_requires_questions(prompt) or ancestor_requires_questions):
-        return None, None, "用户明确要求先提问或调用 ask_user；没有历史回答前不能 complete"
-    if not history and _claims_user_interaction(summary + "\n" + reason):
-        return None, None, "没有历史回答时不能声称用户已回答、取消或已经提供偏好"
-    return summary, reason, None
-
-
-def _ancestor_requires_questions(ctx: ExecutionContext, node: dict[str, Any]) -> bool:
-    node_id = str(node.get("id") or "")
-    for ancestor_id in ctx.execution_plan.ancestor_ids(node_id):
-        if ancestor_id not in ctx.outputs:
-            continue
-        value = visible_output(ctx.outputs[ancestor_id])
-        try:
-            text = value if isinstance(value, str) else dumps(value)
-        except Exception:  # noqa: BLE001
-            text = str(value)
-        if _prompt_requires_questions(text):
-            return True
-    return False
-
-
-def _prompt_requires_questions(prompt: str) -> bool:
-    patterns = [
-        r"问我.{0,20}问题",
-        r"先.{0,12}问",
-        r"提.{0,12}问题.{0,12}再",
-        r"了解.{0,12}偏好.{0,12}再",
-        r"调用\s*ask_user",
-        r"触发\s*ask_user",
-    ]
-    return any(re.search(pattern, prompt, flags=re.IGNORECASE) for pattern in patterns)
-
-
-def _claims_user_interaction(text: str) -> bool:
-    patterns = [
-        r"用户.{0,12}取消",
-        r"用户.{0,12}已.{0,6}回答",
-        r"用户.{0,12}回答",
-        r"根据用户回答",
-        r"收到用户",
-        r"已获得.{0,12}偏好",
-        r"无法继续获取",
-    ]
-    return any(re.search(pattern, text) for pattern in patterns)
-
-
-async def _enter_ask_user_waiting(
+async def _persist_live_ask_user(
     ctx: ExecutionContext,
-    node: dict[str, Any],
     step: Step,
     request: AskUserRequest,
-    *,
-    state: dict[str, Any],
-    rationale: str | None,
-) -> NodeResult:
-    request = request.model_copy(update={"groups": append_ask_user_none_option(request.groups)})
-    if ctx.channel.cancel_event.is_set():
-        return NodeResult(status="cancelled", agent_session_id=ctx.agent_session_id)
-
+) -> None:
     input_payload = loads(step.input_json, {}) or {}
     if not isinstance(input_payload, dict):
         input_payload = {}
-    state = dict(state)
-    state["current_request"] = request.model_dump(exclude_none=True)
-    if rationale:
-        state["rationale"] = rationale
-    input_payload["ask_user_preflight"] = state
     input_payload["ask_user"] = request.model_dump(exclude_none=True)
     step.input_json = dumps(input_payload)
     step.status = "waiting_for_user"
-
+    run = await ctx.db.get(Run, ctx.run_id)
+    if run is not None:
+        run.status = "waiting_for_user"
+        run.resume_from_node_id = step.node_id
+    await ctx.db.commit()
     label = request.groups[0].label if request.groups else "需要补充输入"
     if len(request.groups) > 1:
         label = f"{label} 等 {len(request.groups)} 个问题"
     await _append_log(ctx, step, "info", f"向用户提问：{label}")
+    await ctx.channel.publish(
+        "step.waiting",
+        {"node_id": step.node_id, "request": request.model_dump(exclude_none=True)},
+    )
+    await ctx.channel.publish("run.waiting_for_user", {"node_id": step.node_id})
 
-    return NodeResult(status="waiting", agent_session_id=ctx.agent_session_id)
+
+async def _persist_session_id(ctx: ExecutionContext, step: Step, session_id: str) -> None:
+    ctx.agent_session_id = session_id
+    step.agent_session_id = session_id
+    if step.branch_id:
+        branch = await ctx.db.get(RunAgentBranch, step.branch_id)
+        if branch is not None:
+            branch.provider_session_id = session_id
+            branch.fork_from_session_id = None
+    await ctx.db.commit()
+
+
+async def _persist_live_ask_user_answer(
+    ctx: ExecutionContext,
+    step: Step,
+    request: AskUserRequest,
+    result: AskUserResult,
+) -> None:
+    input_payload = loads(step.input_json, {}) or {}
+    if not isinstance(input_payload, dict):
+        input_payload = {}
+    history = input_payload.get("ask_user_history")
+    if not isinstance(history, list):
+        history = []
+    history.append(
+        {
+            "request": request.model_dump(exclude_none=True),
+            "response": result.model_dump(exclude_none=True),
+        }
+    )
+    input_payload["ask_user_history"] = history
+    input_payload["resume"] = result.model_dump(exclude_none=True)
+    input_payload.pop("ask_user", None)
+    step.input_json = dumps(input_payload)
+    step.status = "running"
+    run = await ctx.db.get(Run, ctx.run_id)
+    if run is not None and run.status == "waiting_for_user":
+        run.status = "running"
+        run.resume_from_node_id = None
+    await ctx.db.commit()
+    await ctx.channel.publish("run.resumed", {"node_id": step.node_id})
 
 
 async def _repair_contract_output(
@@ -1147,36 +953,12 @@ def _validate_ask_request(request: AskUserRequest) -> str | None:
     return validate_ask_request_groups(request.groups)
 
 
-async def _compose_prompt(ctx: ExecutionContext, node: dict[str, Any], *, include_ask_user_protocol: bool = True) -> str:
+async def _compose_prompt(ctx: ExecutionContext, node: dict[str, Any]) -> str:
     prompt = await asyncio.to_thread(_compose_node_prompt, ctx, node)
-    if include_ask_user_protocol:
-        ask_user_protocol = await get_prompt_content(ctx.db, "ask_user_protocol")
-        prompt = _append_prompt(prompt, ask_user_protocol)
     if node.get("type") == "output":
         template_content = await get_prompt_content(ctx.db, "output_html_rendering")
         return render_prompt(template_content, {"user_prompt": prompt})
     return prompt
-
-
-def _append_recovery_resume_context(prompt: str, step: Step) -> str:
-    payload = loads(step.input_json, {}) or {}
-    if not isinstance(payload, dict):
-        return prompt
-    ask = payload.get("ask_user")
-    resume = payload.get("resume")
-    if not isinstance(ask, dict) or not isinstance(resume, dict):
-        return prompt
-    clean_prompt = _TEST_ASK_USER_RE.sub("", prompt).strip()
-    sections = [
-        clean_prompt,
-        "# 恢复上下文",
-        "本节点在等待用户输入后运行被中断。请基于下面的用户回答继续完成当前节点，不要再次调用 ask_user。",
-        "## 已提出的问题",
-        dumps(ask),
-        "## 用户回答",
-        dumps(resume),
-    ]
-    return "\n\n".join(section for section in sections if section)
 
 
 def _extract_session_id(data: dict | None) -> str | None:
@@ -1268,16 +1050,6 @@ def _collect_resume_upload_refs(ctx: ExecutionContext, step: Step, refs: dict[st
     resume = payload.get("resume")
     if isinstance(resume, dict):
         _collect_upload_refs_from_value(ctx.user_id, resume.get("attachments"), refs)
-    preflight = payload.get("ask_user_preflight")
-    if isinstance(preflight, dict):
-        history = preflight.get("history")
-        if isinstance(history, list):
-            for entry in history:
-                if not isinstance(entry, dict):
-                    continue
-                response = entry.get("response")
-                if isinstance(response, dict):
-                    _collect_upload_refs_from_value(ctx.user_id, response.get("attachments"), refs)
 
 
 def _collect_upload_refs_from_value(owner_id: str, value: Any, refs: dict[str, RuntimeUploadRef]) -> None:

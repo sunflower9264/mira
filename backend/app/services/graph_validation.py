@@ -10,7 +10,6 @@ from app.services.output_contracts import validate_output_contract_config
 
 
 PROMPT_NODE_TYPES = {"generate", "condition", "output"}
-AGENT_NODE_TYPES = PROMPT_NODE_TYPES
 NODE_TYPES = {"user_input", "generate", "output", "asset", "condition"}
 DEFAULT_BRANCH_KEY = "__default__"
 BRANCH_KEY_PATTERN = r"^[a-zA-Z0-9_]+$"
@@ -244,20 +243,6 @@ def _condition_handles(node: dict[str, Any]) -> set[str]:
             raise GraphValidationError("binary condition 只能使用 true / false 分支")
         return {"true", "false"}
     return set(keys) | {DEFAULT_BRANCH_KEY}
-
-
-def validate_graph_agent_enabled(graph: dict[str, Any], enabled_agents: set[str]) -> None:
-    needs_agent = any(node.get("type") in AGENT_NODE_TYPES for node in graph.get("nodes", []))
-    if not needs_agent:
-        return
-    agent = graph.get("agent")
-    agent_kind = agent.strip() if isinstance(agent, str) else ""
-    if not agent_kind:
-        raise GraphValidationError("应用必须选择 Agent")
-    if agent_kind not in enabled_agents:
-        raise GraphValidationError(
-            f"应用默认 Agent \"{agent_kind}\" 未启用，请在 Settings 启用或切换应用 Agent"
-        )
 
 
 def sanitize_prompt_template_tokens(graph: dict[str, Any]) -> dict[str, Any]:

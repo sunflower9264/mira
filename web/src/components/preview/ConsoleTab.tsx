@@ -678,7 +678,6 @@ function TraceMetaGrid({ trace }: { trace: RunStepTrace }) {
   const items = [
     ['状态', STEP_LABEL[trace.status]],
     ['节点类型', llmNodeTypeLabel(trace.node_type)],
-    ['Agent', trace.agent || '未配置'],
     ['模型', trace.model || '默认'],
     ['推理等级', trace.reasoning_effort || '默认'],
     ['耗时', formatDuration(trace.duration_ms ?? 0)],

@@ -8,7 +8,7 @@ from app.models import App, AppVersion, Run
 from app.services.apps import GALLERY_OWNER_ID, seed_gallery
 from app.services.auth import create_access_token
 from app.services.output_contracts import contract_prompt_suffix
-from app.services.runtime_paths import claude_home, codex_home
+from app.services.runtime_paths import codex_home
 from app.services.uploads import resolve_upload
 from app.utils import dumps, now_utc
 from tests.auth_helpers import create_regular_user
@@ -16,7 +16,6 @@ from tests.auth_helpers import create_regular_user
 
 def _minimal_output_graph() -> dict:
     return {
-        "agent": "claude",
         "nodes": [
             {
                 "id": "n_asset",
@@ -63,7 +62,6 @@ def test_apps_gallery_versions_and_settings(auth_client):
         f"/api/apps/{created['id']}",
         json={
             "graph": {
-                "agent": "claude",
                 "nodes": [
                     {
                         "id": "n1",
@@ -71,7 +69,6 @@ def test_apps_gallery_versions_and_settings(auth_client):
                         "position": {"x": 0, "y": 0},
                         "title": "G",
                         "prompt": "hi",
-                        "agent_session_id": "old",
                     },
                     {
                         "id": "n_out",
@@ -87,7 +84,6 @@ def test_apps_gallery_versions_and_settings(auth_client):
     )
     assert patched.status_code == 200
     clone = auth_client.post(f"/api/apps/{created['id']}/clone").json()
-    assert clone["graph"]["nodes"][0]["agent_session_id"] is None
 
     version = auth_client.post(f"/api/apps/{created['id']}/versions", json={"label": "v1"})
     assert version.status_code == 200
@@ -98,17 +94,19 @@ def test_apps_gallery_versions_and_settings(auth_client):
     settings = auth_client.get("/api/settings")
     assert settings.status_code == 200
     body = settings.json()
-    assert all(agent["enabled"] is False for agent in body["agents"])
-    assert all(agent["supported_models"] == [] for agent in body["agents"])
+    assert body["supported_models"] == []
     assert auth_client.put("/api/settings", json=body).status_code == 405
-    body["agents"][0]["enabled"] = False
-    config = auth_client.get("/api/settings/agents/claude-code/config").json()
+    config = auth_client.get("/api/settings/codex/config").json()
     saved = auth_client.put(
-        "/api/settings/agents/claude-code/config",
-        json={"content": config["content"], "enabled": False, "supported_models": ["test-model"]},
+        "/api/settings/codex/config",
+        json={
+            "content": config["content"],
+            "auth_content": config["auth"]["content"],
+            "supported_models": ["test-model"],
+        },
     )
     assert saved.status_code == 200
-    assert saved.json()["settings"]["agents"][0]["enabled"] is False
+    assert saved.json()["settings"]["supported_models"] == ["test-model"]
 
 
 def test_settings_redacts_mcp_header_values_for_regular_users(auth_client):
@@ -121,7 +119,6 @@ def test_settings_redacts_mcp_header_values_for_regular_users(auth_client):
             "name": "Secret Headers MCP",
             "enabled": True,
             "planning_enabled": True,
-            "provider_ids": ["claude-code", "codex"],
             "url": "http://localhost:9999/secret",
             "headers": [{"name": "Authorization", "value": secret}],
             "env_var_names": [],
@@ -150,7 +147,6 @@ def test_settings_redacts_mcp_header_values_for_regular_users(auth_client):
 def test_patch_app_strips_runtime_tools_snapshot(auth_client):
     created = auth_client.post("/api/apps", json={"name": "StripRuntimeTools"}).json()
     graph = {
-        "agent": "claude",
         "_runtime_tools": {"allowed_tool_ids": ["mcp:injected"]},
         "nodes": [],
         "execution_edges": [],
@@ -252,7 +248,6 @@ def test_publish_rejects_non_empty_graph_without_output(auth_client):
 def test_publish_revalidates_stored_asset_upload_owner(auth_client):
     created = auth_client.post("/api/apps", json={"name": "Stored Missing Asset"}).json()
     graph = {
-        "agent": "claude",
         "nodes": [
             {
                 "id": "n_asset",
@@ -591,7 +586,6 @@ def test_patch_app_rejects_invalid_graph_edges(auth_client):
         f"/api/apps/{created['id']}",
         json={
             "graph": {
-                "agent": "claude",
                 "nodes": base_nodes,
                 "execution_edges": [
                     {"id": "e1", "source": "n_input", "target": "n_gen"},
@@ -611,7 +605,6 @@ def test_patch_app_accepts_output_with_execution_predecessor(auth_client):
         f"/api/apps/{created['id']}",
         json={
             "graph": {
-                "agent": "claude",
                 "nodes": [
                     {
                         "id": "n_gen",
@@ -661,7 +654,6 @@ def test_patch_app_rejects_multiple_output_nodes(auth_client):
         f"/api/apps/{created['id']}",
         json={
             "graph": {
-                "agent": "claude",
                 "nodes": [
                     {
                         "id": "n_gen",
@@ -732,7 +724,6 @@ def test_patch_app_rejects_output_contract_on_output_node(auth_client):
         f"/api/apps/{created['id']}",
         json={
             "graph": {
-                "agent": "claude",
                 "nodes": [
                     {
                         "id": "n_gen",
@@ -764,7 +755,6 @@ def test_patch_app_rejects_invalid_artifact_kind(auth_client):
         f"/api/apps/{created['id']}",
         json={
             "graph": {
-                "agent": "claude",
                 "nodes": [
                     {
                         "id": "n_gen",
@@ -908,7 +898,6 @@ def test_patch_app_normalizes_stale_output_contract_fields(auth_client):
         f"/api/apps/{created['id']}",
         json={
             "graph": {
-                "agent": "claude",
                 "nodes": [
                     {
                         "id": "n_gen",
@@ -939,7 +928,6 @@ def test_patch_app_rejects_json_field_level_output_contract(auth_client):
         f"/api/apps/{created['id']}",
         json={
             "graph": {
-                "agent": "claude",
                 "nodes": [
                     {
                         "id": "n_gen",
@@ -1046,7 +1034,6 @@ def test_patch_app_rejects_invalid_condition_handle(auth_client):
         f"/api/apps/{created['id']}",
         json={
             "graph": {
-                "agent": "claude",
                 "nodes": [
                     {
                         "id": "n_cond",
@@ -1071,37 +1058,6 @@ def test_patch_app_rejects_invalid_condition_handle(auth_client):
     )
     assert response.status_code == 400
     assert "branch_key 无效" in response.json()["detail"]
-
-
-def test_gallery_and_version_clone_clear_agent_session_id(auth_client):
-    gallery_clone = auth_client.post("/api/apps/clone/tpl_book_recs")
-    assert gallery_clone.status_code == 200
-    assert all(
-        node.get("agent_session_id") is None
-        for node in gallery_clone.json()["graph"]["nodes"]
-        if node["type"] == "generate"
-    )
-
-    app = auth_client.post("/api/apps", json={"name": "VersionClone"}).json()
-    graph = {
-        "agent": "claude",
-        "nodes": [
-            {
-                "id": "gen",
-                "type": "generate",
-                "position": {"x": 0, "y": 0},
-                "title": "Gen",
-                "prompt": "hi",
-                "agent_session_id": "session_old",
-            }
-        ],
-        "execution_edges": [],
-    }
-    auth_client.patch(f"/api/apps/{app['id']}", json={"graph": graph})
-    version = auth_client.post(f"/api/apps/{app['id']}/versions", json={"label": "has session"}).json()
-    cloned = auth_client.post(f"/api/versions/{version['id']}/clone")
-    assert cloned.status_code == 200
-    assert cloned.json()["graph"]["nodes"][0]["agent_session_id"] is None
 
 
 def test_gallery_clone_is_idempotent_per_user(auth_client):
@@ -1230,8 +1186,8 @@ def test_clone_app_copies_file_asset_uploads_for_new_owner(auth_client):
     assert resolve_upload(other["id"], clone_upload["id"]) is not None
 
 
-def test_published_apps_market_visibility_and_readonly_access(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_published_apps_market_visibility_and_readonly_access(auth_client, configure_codex):
+    configure_codex()
     admin_auth = auth_client.headers["Authorization"]
     public_app = auth_client.post("/api/apps", json={"name": "Public Market App"}).json()
     private_app = auth_client.post("/api/apps", json={"name": "Private Market App"}).json()
@@ -1286,12 +1242,11 @@ def test_published_apps_market_visibility_and_readonly_access(auth_client, enabl
     auth_client.headers.update({"Authorization": admin_auth})
 
 
-def test_run_only_market_app_blocks_clone_hides_source_and_tracks_recent(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_run_only_market_app_blocks_clone_hides_source_and_tracks_recent(auth_client, configure_codex):
+    configure_codex()
     admin_auth = auth_client.headers["Authorization"]
     created = auth_client.post("/api/apps", json={"name": "Run Only Market App"}).json()
     graph = {
-        "agent": "claude",
         "nodes": [
             {
                 "id": "n_input",
@@ -1409,7 +1364,6 @@ def test_skill_zip_upload(auth_client):
     assert skill["name"] == "pdf-summarizer"
     settings = auth_client.get("/api/settings").json()
     assert any(tool["id"] == f"skill:{skill['id']}" and tool["enabled"] for tool in settings["tools"])
-    assert not (claude_home() / ".claude" / "skills" / skill["id"]).exists()
     assert not (codex_home() / ".agents" / "skills" / skill["id"]).exists()
 
 
@@ -1464,26 +1418,21 @@ def test_skill_runtime_sync_on_disable_enable_and_delete(auth_client):
         "/api/skills/parse",
         files={"archive": ("sync.zip", buffer.getvalue(), "application/zip")},
     ).json()
-    claude_skill = claude_home() / ".claude" / "skills" / skill["id"]
     codex_skill = codex_home() / ".agents" / "skills" / skill["id"]
-    assert not claude_skill.exists()
     assert not codex_skill.exists()
 
     disabled = auth_client.patch(f"/api/settings/skills/{skill['id']}", json={"enabled": False})
     assert disabled.status_code == 200, disabled.text
-    assert not claude_skill.exists()
     assert not codex_skill.exists()
     assert any(tool["id"] == f"skill:{skill['id']}" and not tool["enabled"] for tool in disabled.json()["tools"])
 
     enabled = auth_client.patch(f"/api/settings/skills/{skill['id']}", json={"enabled": True})
     assert enabled.status_code == 200, enabled.text
-    assert not claude_skill.exists()
     assert not codex_skill.exists()
     assert any(tool["id"] == f"skill:{skill['id']}" and tool["enabled"] for tool in enabled.json()["tools"])
 
     deleted = auth_client.delete(f"/api/settings/skills/{skill['id']}")
     assert deleted.status_code == 204
-    assert not claude_skill.exists()
     assert not codex_skill.exists()
 
 

@@ -14,7 +14,7 @@
 - `api/` 只做鉴权、schema 接收、HTTP 错误转换和 service 调用；复杂业务流程放 `services/`。
 - `models/` 只表达数据库结构；业务流程和权限判断放 service。
 - `schemas/` 定义 API wire shape；不要直接把 ORM model 暴露给前端。
-- `runtime/` 封装 provider adapter、Docker sandbox 和 ask_user bridge；API/service 不应散落 provider CLI 细节。
+- `runtime/` 封装 Codex App Server adapter、双向 JSON-RPC、原生 `requestUserInput` 和 Docker sandbox；API/service 不应散落 Codex 协议细节。
 - `services/runtime_paths.py` 是 runtime/data 文件路径事实来源。
 
 ## Rules

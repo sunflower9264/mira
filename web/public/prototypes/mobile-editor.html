@@ -1479,7 +1479,7 @@ Risk: output node source remains unchanged</div>
           <div class="title"><strong>系统设置</strong></div>
         </div>
         <div class="settings-tabs" data-settings-tabs>
-          <button class="active" data-settings-tab="agents">Agent 设置</button>
+          <button class="active" data-settings-tab="codex">Codex 设置</button>
           <button data-settings-tab="instructions">全局指令</button>
           <button data-settings-tab="prompts">提示词管理</button>
           <button data-settings-tab="skills">Skills</button>
@@ -1487,24 +1487,16 @@ Risk: output node source remains unchanged</div>
         </div>
       </header>
       <main class="main stack">
-        <div class="settings-panel stack" data-settings-panel="agents">
+        <div class="settings-panel stack" data-settings-panel="codex">
           <div class="metric-grid">
-            <div class="panel card"><h3>当前状态</h3><p>Claude Code 可用 · Codex 可用</p></div>
-            <div class="panel card"><h3>启用能力</h3><p>2 Agents · 2 Skills · 1 MCP</p></div>
+            <div class="panel card"><h3>当前状态</h3><p>Codex App Server 可用</p></div>
+            <div class="panel card"><h3>启用能力</h3><p>2 Skills · 1 MCP</p></div>
           </div>
           <div class="settings-list">
-            <div class="settings-item"><span class="settings-item-icon">C</span><div><strong>Claude Code</strong><span>已启用 · 可用 · settings.json</span></div><span class="toggle"></span></div>
             <div class="settings-item"><span class="settings-item-icon">X</span><div><strong>Codex</strong><span>已启用 · 可用 · config.toml + auth.json</span></div><span class="toggle"></span></div>
           </div>
           <div class="panel card">
-            <div class="panel-head"><div><h3>Claude Code 配置文件</h3><p>~/.claude/settings.json · 支持模型：claude-sonnet-4, claude-opus-4</p></div><button class="icon-button" data-toast="已模拟刷新 Agent 状态。">↻</button></div>
-            <div class="field"><label>settings.json</label><textarea>{
-  "model": "claude-sonnet-4",
-  "permissions": { "allow": ["Bash", "Read", "Edit"] }
-}</textarea></div>
-          </div>
-          <div class="panel card">
-            <div class="panel-head"><div><h3>Codex 配置文件</h3><p>~/.codex/config.toml · 支持模型：gpt-5.4, gpt-5.4-codex</p></div><button class="icon-button" data-toast="已模拟刷新 Agent 状态。">↻</button></div>
+            <div class="panel-head"><div><h3>Codex 配置文件</h3><p>~/.codex/config.toml · 支持模型：gpt-5.4, gpt-5.4-codex</p></div><button class="icon-button" data-toast="已模拟刷新 Codex 状态。">↻</button></div>
             <div class="field"><label>config.toml</label><textarea>model = "gpt-5.4"
 [mcp_servers.serena]
 command = "uvx"</textarea></div>
@@ -1515,10 +1507,6 @@ command = "uvx"</textarea></div>
         </div>
 
         <div class="settings-panel stack" data-settings-panel="instructions" hidden>
-          <div class="panel card">
-            <div class="panel-head"><div><h3>CLAUDE.md</h3><p>Claude Code 全局指令 · ~/.claude/CLAUDE.md</p></div></div>
-            <div class="field"><label>文件内容</label><textarea>你是 Mira 的运行期 Agent。严格遵守用户隔离、运行快照和工具权限。</textarea></div>
-          </div>
           <div class="panel card">
             <div class="panel-head"><div><h3>AGENTS.md</h3><p>Codex 全局指令 · ~/.codex/AGENTS.md</p></div></div>
             <div class="field"><label>文件内容</label><textarea>优先使用项目既有模式，修改前理解上下文，禁止泄漏 runtime 本地路径。</textarea></div>
@@ -1550,11 +1538,11 @@ command = "uvx"</textarea></div>
 
         <div class="settings-panel stack" data-settings-panel="mcp" hidden>
           <div class="panel card">
-            <div class="panel-head"><div><h3>HTTP MCP Server</h3><p>配置 HTTP server、作用 Agent、Headers、环境变量和规划阶段可用性。</p></div><button class="icon-button" data-open-sheet="mcp-editor">＋</button></div>
+            <div class="panel-head"><div><h3>HTTP MCP Server</h3><p>配置 HTTP server、Headers、环境变量和规划阶段可用性。</p></div><button class="icon-button" data-open-sheet="mcp-editor">＋</button></div>
           </div>
           <div class="settings-list">
-            <div class="settings-item"><span class="settings-item-icon">M</span><div><strong>serena</strong><span>已启用 · 规划可用 · Claude Code / Codex · 1 Header · 2 环境变量</span></div><button class="icon-button" data-open-sheet="mcp-editor">›</button></div>
-            <div class="settings-item"><span class="settings-item-icon">W</span><div><strong>web-search</strong><span>已禁用 · 规划不可用 · Codex · 0 Headers · 1 环境变量</span></div><button class="icon-button" data-open-sheet="mcp-editor">›</button></div>
+            <div class="settings-item"><span class="settings-item-icon">M</span><div><strong>serena</strong><span>已启用 · 规划可用 · 1 Header · 2 环境变量</span></div><button class="icon-button" data-open-sheet="mcp-editor">›</button></div>
+            <div class="settings-item"><span class="settings-item-icon">W</span><div><strong>web-search</strong><span>已禁用 · 规划不可用 · 0 Headers · 1 环境变量</span></div><button class="icon-button" data-open-sheet="mcp-editor">›</button></div>
           </div>
         </div>
       </main>
@@ -1569,7 +1557,7 @@ command = "uvx"</textarea></div>
         <header class="sheet-header"><strong>生成 Brief</strong><button class="icon-button" data-close-sheet>×</button></header>
         <div class="sheet-body">
           <div class="split-row">
-            <div class="field"><label>模型</label><select><option>Agent 默认模型</option><option>gpt-5.4</option></select></div>
+            <div class="field"><label>模型</label><select><option>Codex 默认模型</option><option>gpt-5.4</option></select></div>
             <div class="field"><label>推理等级</label><select><option>medium</option><option>high</option></select></div>
           </div>
           <div class="field"><label>标题</label><input value="生成 Brief" /></div>
@@ -1589,7 +1577,7 @@ command = "uvx"</textarea></div>
         <header class="sheet-header"><strong>添加节点</strong><button class="icon-button" data-close-sheet>×</button></header>
         <div class="sheet-body stack">
           <button class="option-card"><span class="option-icon">I</span><span><strong>用户输入</strong><span>一个 workflow 最多一个，当前已存在。</span></span></button>
-          <button class="option-card selected"><span class="option-icon">✦</span><span><strong>生成</strong><span>调用应用 Agent 产出文本、HTML 或文件。</span></span></button>
+          <button class="option-card selected"><span class="option-icon">✦</span><span><strong>生成</strong><span>调用 Codex 产出文本、HTML 或文件。</span></span></button>
           <button class="option-card"><span class="option-icon">?</span><span><strong>判断</strong><span>根据 LLM 判断选择分支。</span></span></button>
           <button class="option-card"><span class="option-icon">□</span><span><strong>输出</strong><span>最终 HTML 展示节点，当前已存在。</span></span></button>
           <button class="option-card"><span class="option-icon">＋</span><span><strong>素材</strong><span>文本、URL、文件或画板。</span></span></button>
@@ -1660,8 +1648,7 @@ command = "uvx"</textarea></div>
         <div class="sheet-handle"></div>
         <header class="sheet-header"><strong>运行设置</strong><button class="icon-button" data-close-sheet>×</button></header>
         <div class="sheet-body">
-          <div class="field"><label>Agent</label><select><option>Codex</option><option>Claude Code</option></select></div>
-          <div class="field"><label>统一模型</label><select><option>Agent 默认模型</option><option>gpt-5.4</option></select></div>
+          <div class="field"><label>统一模型</label><select><option>Codex 默认模型</option><option>gpt-5.4</option></select></div>
           <div class="field"><label>禁用 Tools</label><input value="web_search, shell_exec" /></div>
           <button class="primary-action" data-close-sheet data-toast="运行设置已模拟保存。">保存运行设置</button>
         </div>
@@ -1694,11 +1681,11 @@ command = "uvx"</textarea></div>
           </button>
           <button class="option-card" data-open-sheet="run-settings">
             <span class="option-icon">⚙</span>
-            <span><strong>运行设置</strong><span>调整本应用运行时 Agent、模型和 Tools。</span></span>
+            <span><strong>运行设置</strong><span>调整本应用运行时模型和 Tools。</span></span>
           </button>
           <button class="option-card" data-screen-target="settings">
             <span class="option-icon">G</span>
-            <span><strong>全局设置</strong><span>进入全局 Agent、Prompt、Skills、MCP 配置。</span></span>
+            <span><strong>全局设置</strong><span>进入全局 Codex、Prompt、Skills、MCP 配置。</span></span>
           </button>
         </div>
       </div>
@@ -1775,7 +1762,7 @@ command = "uvx"</textarea></div>
         <div class="sheet-body stack">
           <button class="option-card" data-screen-target="publish"><span class="option-icon">☁</span><span><strong>发布</strong><span>公开、仅运行或私有。</span></span></button>
           <button class="option-card" data-screen-target="versions"><span class="option-icon">↧</span><span><strong>历史版本</strong><span>创建快照、克隆版本。</span></span></button>
-          <button class="option-card" data-screen-target="settings"><span class="option-icon">⚙</span><span><strong>系统设置</strong><span>全局 Agent、Prompt、Skills、MCP。</span></span></button>
+          <button class="option-card" data-screen-target="settings"><span class="option-icon">⚙</span><span><strong>系统设置</strong><span>全局 Codex、Prompt、Skills、MCP。</span></span></button>
         </div>
       </div>
     </div>
@@ -1785,7 +1772,7 @@ command = "uvx"</textarea></div>
         <div class="sheet-handle"></div>
         <header class="sheet-header"><strong>克隆应用</strong><button class="icon-button" data-close-sheet>×</button></header>
         <div class="sheet-body stack">
-          <div class="notice neutral">克隆会创建当前用户草稿，并清空 graph 中的 agent_session_id。</div>
+          <div class="notice neutral">克隆会创建一份属于当前用户的独立草稿。</div>
           <button class="primary-action" data-screen-target="edit-canvas" data-toast="已创建静态草稿。">克隆并编辑</button>
         </div>
       </div>
@@ -1829,7 +1816,7 @@ command = "uvx"</textarea></div>
 - 生成前端页面视觉方案
 - 检查组件一致性</div>
           <div class="settings-item"><span class="settings-item-icon">E</span><div><strong>启用 Skill</strong><span>关闭后普通运行不会注入该技能包。</span></div><span class="toggle"></span></div>
-          <div class="settings-item"><span class="settings-item-icon">P</span><div><strong>规划阶段可用</strong><span>允许 NL compile、Prompt Assistant 和 ask_user preflight 使用。</span></div><span class="toggle"></span></div>
+          <div class="settings-item"><span class="settings-item-icon">P</span><div><strong>规划阶段可用</strong><span>允许 NL compile、Prompt Assistant 和运行期 Plan 使用。</span></div><span class="toggle"></span></div>
           <button class="primary-action" data-close-sheet data-toast="Skill 设置已模拟保存。">保存 Skill 设置</button>
           <button class="primary-action danger" data-close-sheet data-toast="Skill 已模拟删除。">删除 Skill</button>
         </div>
@@ -1843,8 +1830,7 @@ command = "uvx"</textarea></div>
         <div class="sheet-body stack">
           <div class="field"><label>名称</label><input value="serena" /></div>
           <div class="field"><label>HTTP URL</label><input value="http://localhost:9121/mcp" /></div>
-          <div class="field"><label>作用 Agent</label><select><option>Claude Code / Codex</option><option>Claude Code</option><option>Codex</option></select></div>
-          <div class="settings-item"><span class="settings-item-icon">P</span><div><strong>规划阶段可用</strong><span>允许 NL compile、Prompt Assistant 和 ask_user preflight 使用</span></div><span class="toggle"></span></div>
+          <div class="settings-item"><span class="settings-item-icon">P</span><div><strong>规划阶段可用</strong><span>允许 NL compile、Prompt Assistant 和运行期 Plan 使用</span></div><span class="toggle"></span></div>
           <div class="field"><label>Headers</label><input value="Authorization: Bearer ${SERENA_TOKEN}" /></div>
           <div class="field"><label>环境变量名</label><input value="SERENA_TOKEN, SERENA_WORKSPACE" /></div>
           <div class="settings-item"><span class="settings-item-icon">E</span><div><strong>启用 MCP</strong><span>关闭后普通运行不会注入该 HTTP server。</span></div><span class="toggle"></span></div>

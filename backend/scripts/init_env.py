@@ -1,6 +1,6 @@
 """初始化 backend/.env：从 .env.example 拷贝，并填充随机 secret。
 
-幂等：.env 已存在时只补齐缺失的 AGENT_CONFIG_SECRET，不覆盖现有 secret。
+幂等：.env 已存在时只补齐缺失的 CODEX_CONFIG_SECRET，不覆盖现有 secret。
 """
 
 from __future__ import annotations
@@ -30,13 +30,13 @@ def main() -> int:
     if ENV_PATH.exists():
         text = ENV_PATH.read_text(encoding="utf-8")
         updated = text
-        if "AGENT_CONFIG_SECRET=" not in updated:
-            updated = updated.rstrip() + f"\nAGENT_CONFIG_SECRET={_fernet_key()}\n"
+        if "CODEX_CONFIG_SECRET=" not in updated:
+            updated = updated.rstrip() + f"\nCODEX_CONFIG_SECRET={_fernet_key()}\n"
         else:
-            updated = updated.replace(f"AGENT_CONFIG_SECRET={PLACEHOLDER}", f"AGENT_CONFIG_SECRET={_fernet_key()}")
+            updated = updated.replace(f"CODEX_CONFIG_SECRET={PLACEHOLDER}", f"CODEX_CONFIG_SECRET={_fernet_key()}")
         if updated != text:
             ENV_PATH.write_text(updated, encoding="utf-8")
-            print(f"[init_env] Updated {ENV_PATH} with AGENT_CONFIG_SECRET")
+            print(f"[init_env] Updated {ENV_PATH} with CODEX_CONFIG_SECRET")
         return 0
     if not EXAMPLE_PATH.exists():
         print(f"[init_env] {EXAMPLE_PATH} not found", file=sys.stderr)

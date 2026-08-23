@@ -11,13 +11,12 @@ from app.db import SessionLocal
 from app.models import User
 from app.runtime.factory import get_runtime
 from app.services import runtime_config, skills_install
-from app.services.runtime_paths import node_workspace
+from app.services.runtime_paths import run_workspace
 from sqlalchemy import select
 
 
 async def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--provider", choices=["claude", "codex"], default="claude")
     parser.add_argument("--user")
     parser.add_argument("--username")
     parser.add_argument("--app", required=True)
@@ -41,13 +40,13 @@ async def main() -> None:
     async def on_chunk(chunk):
         print(chunk.model_dump(mode="json"))
 
-    result = await get_runtime(args.provider, user_id).execute(
+    result = await get_runtime(user_id).execute(
         prompt=args.prompt,
         session_id=args.session_id,
         allowed_tools=None,
         model=None,
         reasoning_effort="low",
-        cwd=node_workspace(user_id, args.app, args.node),
+        cwd=run_workspace(user_id, args.app, f"_smoke_{args.node}"),
         on_chunk=on_chunk,
         cancel_event=asyncio.Event(),
     )

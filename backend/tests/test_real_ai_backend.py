@@ -17,7 +17,7 @@ import pytest
 
 pytestmark = pytest.mark.skipif(
     os.getenv("MIRA_RUN_REAL_AI_BACKEND_TEST") != "1",
-    reason="set MIRA_RUN_REAL_AI_BACKEND_TEST=1 to call real Claude/Codex runtimes",
+    reason="set MIRA_RUN_REAL_AI_BACKEND_TEST=1 to call the real Codex runtime",
 )
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -29,7 +29,7 @@ REQUIRED_ENV = (
     "ADMIN_USERNAME",
     "ADMIN_PASSWORD",
     "JWT_SECRET",
-    "AGENT_CONFIG_SECRET",
+    "CODEX_CONFIG_SECRET",
     "MIRA_REAL_AI_SOURCE_DB",
 )
 
@@ -59,7 +59,6 @@ def real_ai_service(tmp_path_factory: pytest.TempPathFactory):
             "DATABASE_URL": f"sqlite+aiosqlite:///{db_path.as_posix()}",
             "DATA_DIR": str(data_dir),
             "RUNTIME_DIR": str(runtime_dir),
-            "RUNTIME_CALLBACK_BASE_URL": f"http://host.docker.internal:{port}/api/internal/runtime",
             "PYTHONPATH": str(BACKEND),
         }
     )
@@ -114,31 +113,27 @@ def real_ai_client(real_ai_service):
         yield client
 
 
-@pytest.mark.parametrize("agent_id,runtime", [("claude-code", "claude"), ("codex", "codex")])
-def test_real_ai_agent_status_smoke(real_ai_client: httpx.Client, agent_id: str, runtime: str) -> None:
-    response = real_ai_client.post(f"/api/settings/agents/{agent_id}/status")
+def test_real_ai_codex_status_smoke(real_ai_client: httpx.Client) -> None:
+    response = real_ai_client.post("/api/settings/codex/status")
     response.raise_for_status()
     body = response.json()
     assert body["installed"] is True
     assert body["runnable"] is True, body.get("error")
 
 
-@pytest.mark.parametrize("runtime", ["claude", "codex"])
-def test_real_ai_run_user_input_to_output(real_ai_client: httpx.Client, runtime: str) -> None:
-    graph = _simple_output_graph(runtime, marker=f"REAL_AI_{runtime.upper()}_SMOKE")
+def test_real_ai_run_user_input_to_output(real_ai_client: httpx.Client) -> None:
+    graph = _simple_output_graph(marker="REAL_AI_CODEX_SMOKE")
     _assert_no_node_format_instructions(graph)
-    app_id = _create_app(real_ai_client, graph, name=f"real-ai-{runtime}-smoke")
+    app_id = _create_app(real_ai_client, graph, name="real-ai-codex-smoke")
     run_id = _create_run(real_ai_client, app_id, {"n_input": {"value": "hello"}})
     final = _wait_for_status(real_ai_client, run_id, {"success"})
     by_id = _steps_by_id(final)
     assert by_id["n_out"]["status"] == "success"
-    assert f"REAL_AI_{runtime.upper()}_SMOKE" in by_id["n_out"]["output"]
+    assert "REAL_AI_CODEX_SMOKE" in by_id["n_out"]["output"]
 
 
-@pytest.mark.parametrize("runtime", ["claude", "codex"])
-def test_real_ai_run_generate_json_contract(real_ai_client: httpx.Client, runtime: str) -> None:
+def test_real_ai_run_generate_json_contract(real_ai_client: httpx.Client) -> None:
     graph = {
-        "agent": runtime,
         "tools": {"disabled_tool_ids": []},
         "nodes": [
             _input_node(),
@@ -149,7 +144,7 @@ def test_real_ai_run_generate_json_contract(real_ai_client: httpx.Client, runtim
                 "title": "JSON",
                 "prompt": (
                     "根据上游输入生成一个简短结果摘要，摘要内容必须精确包含 "
-                    f"REAL_AI_{runtime.upper()}_JSON。信息已经完整，请直接完成。"
+                    "REAL_AI_CODEX_JSON。信息已经完整，请直接完成。"
                 ),
                 "output_contract": {
                     "type": "json",
@@ -169,17 +164,16 @@ def test_real_ai_run_generate_json_contract(real_ai_client: httpx.Client, runtim
         ],
     }
     _assert_no_node_format_instructions(graph)
-    app_id = _create_app(real_ai_client, graph, name=f"real-ai-{runtime}-json")
+    app_id = _create_app(real_ai_client, graph, name="real-ai-codex-json")
     run_id = _create_run(real_ai_client, app_id, {"n_input": {"value": "json contract input"}})
     final = _wait_for_status(real_ai_client, run_id, {"success"})
     by_id = _steps_by_id(final)
     assert by_id["n_gen"]["output"]["summary"]
-    assert f"REAL_AI_{runtime.upper()}_JSON" in by_id["n_gen"]["output"]["summary"]
+    assert "REAL_AI_CODEX_JSON" in by_id["n_gen"]["output"]["summary"]
 
 
 def test_real_ai_run_artifact_contract_with_codex(real_ai_client: httpx.Client) -> None:
     graph = {
-        "agent": "codex",
         "tools": {"disabled_tool_ids": []},
         "nodes": [
             _input_node(),
@@ -219,9 +213,8 @@ def test_real_ai_run_artifact_contract_with_codex(real_ai_client: httpx.Client) 
     assert downloaded.text == "REAL_AI_ARTIFACT_OK"
 
 
-def test_real_ai_run_ask_user_preflight_with_claude(real_ai_client: httpx.Client) -> None:
+def test_real_ai_run_ask_user_plan_with_codex(real_ai_client: httpx.Client) -> None:
     graph = {
-        "agent": "claude",
         "tools": {"disabled_tool_ids": []},
         "nodes": [
             _input_node(),
@@ -231,7 +224,7 @@ def test_real_ai_run_ask_user_preflight_with_claude(real_ai_client: httpx.Client
                 "position": {"x": 260, "y": 0},
                 "title": "Ask",
                 "prompt": (
-                    "必须先调用 ask_user，询问用户更偏好简洁版还是详细版。"
+                    "必须先询问用户更偏好简洁版还是详细版。"
                     "拿到回答后输出包含 REAL_AI_ASK_RESUMED 的一句话。"
                 ),
             },
@@ -242,7 +235,7 @@ def test_real_ai_run_ask_user_preflight_with_claude(real_ai_client: httpx.Client
             {"id": "e2", "source": "n_gen", "target": "n_out"},
         ],
     }
-    app_id = _create_app(real_ai_client, graph, name="real-ai-claude-ask-user")
+    app_id = _create_app(real_ai_client, graph, name="real-ai-codex-ask-user")
     run_id = _create_run(real_ai_client, app_id, {"n_input": {"value": "ask user input"}})
     waiting = _wait_for_status(real_ai_client, run_id, {"waiting_for_user"})
     ask = _steps_by_id(waiting)["n_gen"]["input"]["ask_user"]
@@ -260,8 +253,8 @@ def test_real_ai_run_ask_user_preflight_with_claude(real_ai_client: httpx.Client
     assert "REAL_AI_ASK_RESUMED" in _steps_by_id(final)["n_gen"]["output"]
 
 
-def test_real_ai_prompt_assistant_with_claude(real_ai_client: httpx.Client) -> None:
-    graph = _simple_output_graph("claude", marker="REAL_AI_PROMPT_ASSISTANT")
+def test_real_ai_prompt_assistant_with_codex(real_ai_client: httpx.Client) -> None:
+    graph = _simple_output_graph(marker="REAL_AI_PROMPT_ASSISTANT")
     app_id = _create_app(real_ai_client, graph, name="real-ai-prompt-assistant")
     response = real_ai_client.post(
         "/api/prompt-assistant/generate",
@@ -269,7 +262,6 @@ def test_real_ai_prompt_assistant_with_claude(real_ai_client: httpx.Client) -> N
             "app_id": app_id,
             "graph": graph,
             "node_id": "n_out",
-            "agent": "claude",
             "user_request": "把当前 output 提示词改成简洁中文 HTML 展示，并保留 REAL_AI_PROMPT_ASSISTANT 标记。",
         },
     )
@@ -280,7 +272,7 @@ def test_real_ai_prompt_assistant_with_claude(real_ai_client: httpx.Client) -> N
 
 
 def test_real_ai_graph_layout_with_codex(real_ai_client: httpx.Client) -> None:
-    graph = _simple_output_graph("codex", marker="REAL_AI_LAYOUT")
+    graph = _simple_output_graph(marker="REAL_AI_LAYOUT")
     app_id = _create_app(real_ai_client, graph, name="real-ai-layout")
     response = real_ai_client.post(
         "/api/graph-layout/beautify",
@@ -295,7 +287,7 @@ def test_real_ai_graph_layout_with_codex(real_ai_client: httpx.Client) -> None:
 
 def test_real_ai_nlcompile_plan_and_apply_with_codex(real_ai_client: httpx.Client) -> None:
     for attempt in _effect_attempts():
-        graph = _simple_output_graph("codex", marker="REAL_AI_NLCOMPILE")
+        graph = _simple_output_graph(marker="REAL_AI_NLCOMPILE")
         app_id = _create_app(real_ai_client, graph, name=f"real-ai-nlcompile-{attempt}")
         response = real_ai_client.post(
             "/api/nlcompile",
@@ -322,7 +314,7 @@ def test_real_ai_nlcompile_builds_complete_graph_without_unneeded_question(
     real_ai_client: httpx.Client,
 ) -> None:
     for attempt in _effect_attempts():
-        graph = {"agent": "codex", "tools": {"disabled_tool_ids": []}, "nodes": [], "execution_edges": []}
+        graph = {"tools": {"disabled_tool_ids": []}, "nodes": [], "execution_edges": []}
         app_id = _create_app(real_ai_client, graph, name=f"real-ai-nlcompile-empty-{attempt}")
         response = real_ai_client.post(
             "/api/nlcompile",
@@ -357,7 +349,7 @@ def test_real_ai_nlcompile_builds_complete_graph_without_unneeded_question(
 
 def test_real_ai_nlcompile_asks_for_unresolved_delivery_choice(real_ai_client: httpx.Client) -> None:
     for attempt in _effect_attempts():
-        graph = {"agent": "codex", "tools": {"disabled_tool_ids": []}, "nodes": [], "execution_edges": []}
+        graph = {"tools": {"disabled_tool_ids": []}, "nodes": [], "execution_edges": []}
         app_id = _create_app(real_ai_client, graph, name=f"real-ai-nlcompile-ambiguous-{attempt}")
         response = real_ai_client.post(
             "/api/nlcompile",
@@ -396,7 +388,6 @@ def test_real_ai_prompt_assistant_preserves_long_prompt_with_codex(real_ai_clien
     for attempt in _effect_attempts():
         long_prompt = _long_prompt_fixture()
         graph = {
-            "agent": "codex",
             "tools": {"disabled_tool_ids": []},
             "nodes": [
                 _input_node(),
@@ -430,7 +421,6 @@ def test_real_ai_prompt_assistant_preserves_long_prompt_with_codex(real_ai_clien
                 "app_id": app_id,
                 "graph": graph,
                 "node_id": "n_gen",
-                "agent": "codex",
                 "user_request": "只把第一句改得更直接；其它段落、标记、示例和输出约束逐字保留。",
             },
         )
@@ -445,7 +435,6 @@ def test_real_ai_prompt_assistant_preserves_long_prompt_with_codex(real_ai_clien
 def test_real_ai_condition_uses_branch_labels_and_default(real_ai_client: httpx.Client) -> None:
     for attempt in _effect_attempts():
         graph = {
-            "agent": "codex",
             "tools": {"disabled_tool_ids": []},
             "nodes": [
                 _input_node(),
@@ -592,9 +581,8 @@ def _output_node(prompt: str, *, source: str = "n_input") -> dict[str, Any]:
     }
 
 
-def _simple_output_graph(runtime: str, *, marker: str) -> dict[str, Any]:
+def _simple_output_graph(*, marker: str) -> dict[str, Any]:
     return {
-        "agent": runtime,
         "tools": {"disabled_tool_ids": []},
         "nodes": [
             _input_node(),
@@ -683,7 +671,7 @@ async def main():
     async def on_chunk(_chunk):
         return None
 
-    result = await get_runtime("codex", user.id).execute(
+    result = await get_runtime(user.id).execute(
         prompt=prompt,
         session_id=None,
         allowed_tools=None,

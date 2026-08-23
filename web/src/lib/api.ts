@@ -8,12 +8,9 @@
 //   并跳转到 /login（避免在 /login 页面上死循环）。
 
 import type {
-  AgentConfigFile,
-  AgentConfigKind,
-  AgentKind,
-  AgentProviderId,
-  AgentProviderStatus,
-  AgentSetupState,
+  CodexConfigFile,
+  CodexSetupState,
+  CodexStatus,
   App,
   AppVersion,
   ConditionBranchOverride,
@@ -396,8 +393,7 @@ export async function cloneFromVersion(versionId: string): Promise<App> {
  * 响应体：planned plan 或 waiting_for_user decision request。
  *
  * 业务约束：
- *   - 必须至少存在一个已启用 Agent，否则返回 400：无可用 Agent，请先在设置中启用 Agent。
- *   - Agent 编译失败时返回 502，不做关键词识别。
+ *   - Codex 编译失败时返回 502，不做关键词识别。
  *   - plan_markdown 为后端生成的可读方案文档，前端用于弹窗确认渲染。
  *
  * applied_patches 元素形状（参见 types.ts GraphPatch）：
@@ -510,7 +506,6 @@ export async function beautifyGraphLayout(input: {
 export async function generatePromptAssistant(input: {
   app_id: string;
   generation_id?: string;
-  agent: AgentKind;
   graph: App['graph'];
   node_id: string;
   user_request: string;
@@ -569,7 +564,6 @@ export async function cancelPromptAssistant(generationId: string): Promise<void>
  *   inputs 的 key 是 user_input 节点的 id，value 是用户填写的字符串/文件 dataURL 等。
  * 响应体：{ run_id: string; graph: Graph }，graph 是本次 run 的执行快照。
  * 业务约束：
- *   - 必须至少存在一个已启用 Agent，否则返回 400：无可用 Agent，请先在设置中启用 Agent；
  *   - 后端创建 Run 记录（status='pending'，保存 graph 快照，steps 按快照节点生成占位）；
  *   - 真正的执行通过 SSE 推送（参见 lib/ws.ts），返回 run_id 供前端打开事件流。
  */
@@ -695,22 +689,7 @@ export async function resumeRun(
  * 响应体：MiraSettings（全局共享，普通用户只读）。
  * 普通用户返回的 mcp_servers[].headers[].value 会被脱敏为空字符串；管理员返回完整值。
  *
- * 后端首次返回时的默认值：
- *   {
- *     agents: [
- *       { id: 'claude-code', name: 'Claude Code', runtime: 'claude', enabled: false,
- *         supported_models: [],
- *         description: '通过 Claude Code CLI 执行生成、编辑和应用搭建任务。',
- *         status: { installed: false, runnable: null, checked_at: '<ISO>' } },
- *       { id: 'codex', name: 'Codex', runtime: 'codex', enabled: false,
- *         supported_models: [],
- *         description: '通过 Codex CLI 执行代码生成与自动化改动任务。',
- *         status: { installed: false, runnable: null, checked_at: '<ISO>' } },
- *     ],
- *     skills: [],
- *     mcp_servers: [],
- *     tools: [],
- *   }
+ * supported_models 是 Codex 可选模型的全局列表。
  */
 export async function getSettings(): Promise<MiraSettings> {
   return request<MiraSettings>('/api/settings');
@@ -775,71 +754,61 @@ export async function deleteMcpServer(serverId: string): Promise<void> {
 }
 
 /**
- * GET /api/settings/agents/:agent_id/config
- * 响应体：{ agent_id, path, content }；content 由后端从 DB 解密返回。
- * 仅管理员可调；普通用户调用返回 403。
- * agent_id 取值：'claude-code' | 'codex' | 'codex-auth'。
+ * GET /api/settings/codex/config
+ * 响应体：CodexConfigFile；content/auth 由后端从 DB 解密返回。
  */
-export async function getAgentConfig(agentId: AgentConfigKind): Promise<AgentConfigFile> {
-  return request<AgentConfigFile>(`/api/settings/agents/${agentId}/config`);
+export async function getCodexConfig(): Promise<CodexConfigFile> {
+  return request<CodexConfigFile>('/api/settings/codex/config');
 }
 
 /**
- * GET /api/settings/agents/setup-state
+ * GET /api/settings/codex/setup-state
  * 响应体：{ completed: boolean }。
- * 仅管理员可调。completed=true 表示已保存过 claude-code 配置，
- * 或已同时保存过 codex config.toml 与 auth.json。
+ * 仅管理员可调。completed=true 表示已同时保存过 Codex config.toml 与 auth.json。
  */
-export async function getAgentSetupState(): Promise<AgentSetupState> {
-  return request<AgentSetupState>('/api/settings/agents/setup-state');
+export async function getCodexSetupState(): Promise<CodexSetupState> {
+  return request<CodexSetupState>('/api/settings/codex/setup-state');
 }
 
 /**
- * PUT /api/settings/agents/:agent_id/config
- * 请求体：{ content: string, supported_models: string[], enabled?: boolean, auth_content?: string }
- * 仅管理员可调。Claude 校验 JSON，Codex 校验 TOML。
- * agent_id 只接受 'claude-code' | 'codex'；'codex-auth' 不再独立 PUT，
- * 写入合并到 codex 的 PUT，通过 options.authContent 传递 ~/.codex/auth.json 的新内容。
+ * PUT /api/settings/codex/config
+ * 请求体：{ content, auth_content, supported_models }。
  */
-export async function saveAgentConfig(
-  agentId: Exclude<AgentConfigKind, 'codex-auth'>,
+export async function saveCodexConfig(
   content: string,
-  options: { enabled?: boolean; authContent?: string; supportedModels: string[] },
-): Promise<AgentConfigFile> {
+  options: { authContent: string; supportedModels: string[] },
+): Promise<CodexConfigFile> {
   const body: Record<string, unknown> = { content, supported_models: options.supportedModels };
-  if (options?.enabled !== undefined) body.enabled = options.enabled;
-  if (options?.authContent !== undefined) body.auth_content = options.authContent;
-  return request<AgentConfigFile>(`/api/settings/agents/${agentId}/config`, {
+  body.auth_content = options.authContent;
+  return request<CodexConfigFile>('/api/settings/codex/config', {
     method: 'PUT',
     body,
   });
 }
 
 /**
- * POST /api/settings/agents/:agent_id/status
- * 响应体：AgentProviderStatus（实时探测 CLI / 配置，并执行一次真实短调用确认可用；不写 DB）。
- * 仅管理员可调；agent_id 取值：'claude-code' | 'codex'。
+ * POST /api/settings/codex/status
+ * 响应体：CodexStatus（实时探测 App Server / 配置，并执行一次真实短调用确认可用；不写 DB）。
+ * 仅管理员可调。
  */
-export async function refreshAgentStatus(agentId: AgentProviderId): Promise<AgentProviderStatus> {
-  return request<AgentProviderStatus>(`/api/settings/agents/${agentId}/status`, { method: 'POST' });
+export async function refreshCodexStatus(): Promise<CodexStatus> {
+  return request<CodexStatus>('/api/settings/codex/status', { method: 'POST' });
 }
 
 /**
- * GET /api/settings/instructions/:provider
- * 响应体：{ provider, path, content }
- * 仅管理员可调；provider 取值：'claude-code' | 'codex'。
+ * GET /api/settings/instructions
  */
-export async function getInstructionFile(provider: AgentProviderId): Promise<InstructionFile> {
-  return request<InstructionFile>(`/api/settings/instructions/${provider}`);
+export async function getInstructionFile(): Promise<InstructionFile> {
+  return request<InstructionFile>('/api/settings/instructions');
 }
 
 /**
- * PUT /api/settings/instructions/:provider
+ * PUT /api/settings/instructions
  * 请求体：{ content: string }
  * 仅管理员可调。内容按 plain text 原样保存。
  */
-export async function saveInstructionFile(provider: AgentProviderId, content: string): Promise<InstructionFile> {
-  return request<InstructionFile>(`/api/settings/instructions/${provider}`, {
+export async function saveInstructionFile(content: string): Promise<InstructionFile> {
+  return request<InstructionFile>('/api/settings/instructions', {
     method: 'PUT',
     body: { content },
   });

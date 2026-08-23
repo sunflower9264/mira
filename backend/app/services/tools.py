@@ -56,9 +56,9 @@ def tool_inventory(skills: Iterable[Skill], mcp_servers: Iterable[McpServerConfi
     return tools
 
 
-async def stamp_run_tools_snapshot(db: AsyncSession, graph: dict[str, Any], agent: str) -> dict[str, Any]:
+async def stamp_run_tools_snapshot(db: AsyncSession, graph: dict[str, Any]) -> dict[str, Any]:
     snapshot = dict(graph)
-    allowed = await allowed_tool_ids_for_graph(db, graph, agent)
+    allowed = await allowed_tool_ids_for_graph(db, graph)
     snapshot[RUNTIME_TOOLS_KEY] = {"allowed_tool_ids": sorted(allowed)}
     return snapshot
 
@@ -74,42 +74,37 @@ def strip_runtime_tools_snapshot(graph: dict[str, Any]) -> dict[str, Any]:
 async def runtime_tools_for_graph(
     db: AsyncSession,
     graph: dict[str, Any],
-    agent: str,
     *,
     trust_snapshot: bool = False,
 ) -> RuntimeToolConfig:
     allowed_ids = _snapshot_allowed_tool_ids(graph) if trust_snapshot else None
     if allowed_ids is None:
-        allowed_ids = await allowed_tool_ids_for_graph(db, graph, agent)
-    return await _runtime_tools_for_allowed_ids(db, allowed_ids, agent, planning_only=False)
+        allowed_ids = await allowed_tool_ids_for_graph(db, graph)
+    return await _runtime_tools_for_allowed_ids(db, allowed_ids, planning_only=False)
 
 
 async def planning_runtime_tools_for_graph(
     db: AsyncSession,
     graph: dict[str, Any],
-    agent: str,
     *,
     trust_snapshot: bool = False,
 ) -> RuntimeToolConfig:
     allowed_ids = _snapshot_allowed_tool_ids(graph) if trust_snapshot else None
     if allowed_ids is None:
-        allowed_ids = await allowed_tool_ids_for_graph(db, graph, agent)
-    return await _runtime_tools_for_allowed_ids(db, allowed_ids, agent, planning_only=True)
+        allowed_ids = await allowed_tool_ids_for_graph(db, graph)
+    return await _runtime_tools_for_allowed_ids(db, allowed_ids, planning_only=True)
 
 
 async def _runtime_tools_for_allowed_ids(
     db: AsyncSession,
     allowed_ids: set[str],
-    agent: str,
     *,
     planning_only: bool,
 ) -> RuntimeToolConfig:
-    provider_id = _provider_id_for_agent(agent)
     mcp_servers = [
         _runtime_mcp_server(server)
         for server in await _enabled_mcp_servers(db)
         if mcp_tool_id(server.id) in allowed_ids
-        and (provider_id is None or provider_id in server.provider_ids)
         and (not planning_only or server.planning_enabled)
     ]
     skills = [
@@ -120,13 +115,10 @@ async def _runtime_tools_for_allowed_ids(
     return RuntimeToolConfig(mcp_servers=mcp_servers, skills=skills)
 
 
-async def allowed_tool_ids_for_graph(db: AsyncSession, graph: dict[str, Any], agent: str) -> set[str]:
-    provider_id = _provider_id_for_agent(agent)
+async def allowed_tool_ids_for_graph(db: AsyncSession, graph: dict[str, Any]) -> set[str]:
     disabled = _disabled_tool_ids(graph)
     allowed: set[str] = set()
     for server in await _enabled_mcp_servers(db):
-        if provider_id is not None and provider_id not in server.provider_ids:
-            continue
         tool_id = mcp_tool_id(server.id)
         if tool_id not in disabled:
             allowed.add(tool_id)
@@ -188,11 +180,3 @@ def _snapshot_allowed_tool_ids(graph: dict[str, Any]) -> set[str] | None:
     if not isinstance(raw, list):
         return None
     return {item for item in raw if isinstance(item, str) and item}
-
-
-def _provider_id_for_agent(agent: str) -> str | None:
-    if agent == "claude":
-        return "claude-code"
-    if agent == "codex":
-        return "codex"
-    return None

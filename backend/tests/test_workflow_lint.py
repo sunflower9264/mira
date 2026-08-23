@@ -33,13 +33,11 @@ def _lint(auth_client, app_id: str, graph: dict) -> dict:
     return response.json()
 
 
-def test_workflow_lint_valid_graph_has_no_errors(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_workflow_lint_valid_graph_has_no_errors(auth_client):
     app_id = _create_app(auth_client)
     generate = _generate_node("n_gen")
     generate["ask_user_enabled"] = False
     graph = {
-        "agent": "claude",
         "nodes": [
             {
                 "id": "n_input",
@@ -63,13 +61,11 @@ def test_workflow_lint_valid_graph_has_no_errors(auth_client, enable_claude_agen
     assert body["summary"]["errors"] == 0
 
 
-def test_workflow_lint_rejects_non_boolean_ask_user_enabled(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_workflow_lint_rejects_non_boolean_ask_user_enabled(auth_client):
     app_id = _create_app(auth_client)
     gen = _generate_node("n_gen")
     gen["ask_user_enabled"] = "false"
     graph = {
-        "agent": "claude",
         "nodes": [gen, _output_node("n_out", "n_gen")],
         "execution_edges": [{"id": "e1", "source": "n_gen", "target": "n_out"}],
     }
@@ -81,13 +77,11 @@ def test_workflow_lint_rejects_non_boolean_ask_user_enabled(auth_client, enable_
     assert "ask_user_enabled_invalid" in error_codes
 
 
-def test_workflow_lint_rejects_ask_user_enabled_on_non_generate_node(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_workflow_lint_rejects_ask_user_enabled_on_non_generate_node(auth_client):
     app_id = _create_app(auth_client)
     output = _output_node("n_out", "n_gen")
     output["ask_user_enabled"] = False
     graph = {
-        "agent": "claude",
         "nodes": [_generate_node("n_gen"), output],
         "execution_edges": [{"id": "e1", "source": "n_gen", "target": "n_out"}],
     }
@@ -99,8 +93,7 @@ def test_workflow_lint_rejects_ask_user_enabled_on_non_generate_node(auth_client
     assert "ask_user_enabled_unsupported" in error_codes
 
 
-def test_workflow_lint_normalizes_stale_output_contract_fields(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_workflow_lint_normalizes_stale_output_contract_fields(auth_client):
     app_id = _create_app(auth_client)
     gen = _generate_node("n_gen")
     gen["output_contract"] = {
@@ -109,7 +102,6 @@ def test_workflow_lint_normalizes_stale_output_contract_fields(auth_client, enab
         "json_schema": {"type": "object", "additionalProperties": False},
     }
     graph = {
-        "agent": "claude",
         "nodes": [gen, _output_node("n_out", "n_gen")],
         "execution_edges": [{"id": "e1", "source": "n_gen", "target": "n_out"}],
     }
@@ -123,7 +115,6 @@ def test_workflow_lint_normalizes_stale_output_contract_fields(auth_client, enab
 def test_workflow_lint_reports_blocking_errors(auth_client):
     app_id = _create_app(auth_client)
     graph = {
-        "agent": "claude",
         "nodes": [
             _generate_node("n_gen", prompt=""),
             _output_node("n_out", "n_other"),
@@ -136,14 +127,11 @@ def test_workflow_lint_reports_blocking_errors(auth_client):
 
     assert body["ok"] is False
     assert "prompt_empty" in codes
-    assert "agent_disabled" in codes
 
 
-def test_workflow_lint_reports_unconnected_condition_branch_as_error(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_workflow_lint_reports_unconnected_condition_branch_as_error(auth_client):
     app_id = _create_app(auth_client)
     graph = {
-        "agent": "claude",
         "nodes": [
             {
                 "id": "n_cond",
@@ -173,11 +161,9 @@ def test_workflow_lint_reports_unconnected_condition_branch_as_error(auth_client
     assert "unstructured_generate_dependency" not in codes
 
 
-def test_workflow_lint_warns_about_prompt_hidden_file_channel(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_workflow_lint_warns_about_prompt_hidden_file_channel(auth_client):
     app_id = _create_app(auth_client)
     graph = {
-        "agent": "claude",
         "nodes": [
             _generate_node("n_gen", prompt="将结果写入 /workspace/handoff.json，供下游节点读取"),
             _output_node("n_out", "n_gen"),
@@ -192,11 +178,9 @@ def test_workflow_lint_warns_about_prompt_hidden_file_channel(auth_client, enabl
     assert "prompt_hidden_data_channel" in warning_codes
 
 
-def test_workflow_lint_does_not_warn_for_prompt_that_forbids_hidden_channels(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_workflow_lint_does_not_warn_for_prompt_that_forbids_hidden_channels(auth_client):
     app_id = _create_app(auth_client)
     graph = {
-        "agent": "claude",
         "nodes": [
             _generate_node("n_gen", prompt="不得读取固定 Workspace 路径，也不要创建 handoff、sidecar 或 manifest 文件"),
             _output_node("n_out", "n_gen"),
@@ -210,11 +194,9 @@ def test_workflow_lint_does_not_warn_for_prompt_that_forbids_hidden_channels(aut
     assert "prompt_hidden_data_channel" not in codes
 
 
-def test_workflow_lint_requires_output_for_non_empty_graph(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_workflow_lint_requires_output_for_non_empty_graph(auth_client):
     app_id = _create_app(auth_client)
     graph = {
-        "agent": "claude",
         "nodes": [_generate_node("n_gen")],
         "execution_edges": [],
     }
@@ -238,11 +220,9 @@ def test_workflow_lint_empty_graph_does_not_report_missing_terminal(auth_client)
     assert "missing_terminal_node" not in error_codes
 
 
-def test_workflow_lint_reports_singleton_node_errors(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_workflow_lint_reports_singleton_node_errors(auth_client):
     app_id = _create_app(auth_client)
     graph = {
-        "agent": "claude",
         "nodes": [
             {
                 "id": "n_input_a",
@@ -277,11 +257,9 @@ def test_workflow_lint_reports_singleton_node_errors(auth_client, enable_claude_
     assert "multiple_output_nodes" in codes
 
 
-def test_workflow_lint_reports_output_as_source(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_workflow_lint_reports_output_as_source(auth_client):
     app_id = _create_app(auth_client)
     graph = {
-        "agent": "claude",
         "tools": {"disabled_tool_ids": []},
         "nodes": [
             _generate_node("n_gen"),
@@ -311,11 +289,9 @@ def test_workflow_lint_requires_app_owner(auth_client, client):
     assert denied.status_code == 404
 
 
-def test_run_only_market_lint_uses_real_graph_but_hides_source(auth_client, client, enable_claude_agent):
-    enable_claude_agent()
+def test_run_only_market_lint_uses_real_graph_but_hides_source(auth_client, client):
     app_id = _create_app(auth_client)
     graph = {
-        "agent": "claude",
         "nodes": [
             {
                 "id": "n_input",

@@ -5,10 +5,7 @@ export type NodeType = 'user_input' | 'generate' | 'output' | 'asset' | 'conditi
 // Condition 节点的隐式 default 分支保留 key（cases 模式下作为兜底 handle）。
 // 用户禁止把这个值用作自定义 case key（后端 nlcompile._valid_new_node 也会拒绝）。
 export const CONDITION_DEFAULT_BRANCH_KEY = '__default__';
-export type AgentKind = 'claude' | 'codex';
-export type AppAgentKind = AgentKind | '';
-export type AgentProviderId = 'claude-code' | 'codex';
-export type ReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+export type ReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh';
 
 export interface DecisionOption {
   label: string;
@@ -54,7 +51,6 @@ export interface App {
 }
 
 export interface Graph {
-  agent?: AppAgentKind;
   tools?: {
     disabled_tool_ids?: string[];
   };
@@ -320,7 +316,6 @@ export interface RunStepTrace {
   node_title: string;
   node_type: 'generate' | 'condition' | 'output';
   status: Step['status'];
-  agent?: string | null;
   model?: string | null;
   reasoning_effort?: string | null;
   started_at?: string | null;
@@ -412,9 +407,9 @@ export interface NlCompilePlan {
   acceptance_criteria: string[];
 }
 
-export interface AgentProviderStatus {
+export interface CodexStatus {
   installed: boolean;
-  // runnable=null 表示尚未跑过真实 smoke；true/false 由 refresh_agent_status 写回。
+  // runnable=null 表示尚未跑过真实 smoke；true/false 由 Codex status probe 返回。
   runnable: boolean | null;
   identity?: string | null;
   method?: string | null;
@@ -422,41 +417,23 @@ export interface AgentProviderStatus {
   checked_at: string;
 }
 
-export interface AgentProviderConfig {
-  id: AgentProviderId;
-  name: string;
-  description: string;
-  runtime: AgentKind;
-  enabled: boolean;
-  supported_models: string[];
-  status?: AgentProviderStatus | null;
+export interface CodexAuthFile {
+  path: string;
+  content: string;
 }
 
-/**
- * 配置文件编辑入口支持的 kind，正文由后端加密存 DB，path 表示派生 runtime 文件位置：
- * - claude-code → ~/.claude/settings.json
- * - codex      → ~/.codex/config.toml
- * - codex-auth → ~/.codex/auth.json（仅 admin 维护，仅用于 GET；写入合并到 codex PUT 的 auth_content 字段）
- *
- * 注意 codex-auth 不属于 AgentProviderId（runtime 选择只用 claude-code / codex）。
- */
-export type AgentConfigKind = 'claude-code' | 'codex' | 'codex-auth';
-
-export interface AgentConfigFile {
-  agent_id: AgentConfigKind;
+export interface CodexConfigFile {
   path: string;
   content: string;
   settings?: MiraSettings;
-  // codex 保存时附带 auth.json 的最新解密元数据。
-  auth?: AgentConfigFile | null;
+  auth: CodexAuthFile;
 }
 
-export interface AgentSetupState {
+export interface CodexSetupState {
   completed: boolean;
 }
 
 export interface InstructionFile {
-  provider: AgentProviderId;
   path: string;
   content: string;
 }
@@ -496,7 +473,6 @@ export interface McpServerConfig {
   name: string;
   enabled: boolean;
   planning_enabled: boolean;
-  provider_ids: AgentProviderId[];
   url: string;
   headers: McpHeader[];
   env_var_names: string[];
@@ -511,7 +487,7 @@ export interface ToolConfig {
 }
 
 export interface MiraSettings {
-  agents: AgentProviderConfig[];
+  supported_models: string[];
   skills: SkillConfig[];
   mcp_servers: McpServerConfig[];
   tools: ToolConfig[];

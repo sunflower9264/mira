@@ -77,10 +77,9 @@ def _wait_for_terminal(auth_client, run_id: str, *, timeout: float = 6.0) -> dic
     raise AssertionError("run did not finish")
 
 
-def test_condition_binary_selects_true_branch(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_condition_binary_selects_true_branch(auth_client, configure_codex):
+    configure_codex()
     graph = {
-        "agent": "claude",
         "nodes": [
             _condition_node(
                 mode="binary",
@@ -109,10 +108,9 @@ def test_condition_binary_selects_true_branch(auth_client, enable_claude_agent):
     assert by_id["n_no"]["status"] == "skipped"
 
 
-def test_condition_rejects_non_exact_branch_key(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_condition_rejects_non_exact_branch_key(auth_client, configure_codex):
+    configure_codex()
     graph = {
-        "agent": "claude",
         "nodes": [
             _condition_node(
                 mode="binary",
@@ -139,11 +137,10 @@ def test_condition_rejects_non_exact_branch_key(auth_client, enable_claude_agent
     assert "branch key" in final["error"]
 
 
-def test_run_rejects_condition_branch_that_cannot_reach_output(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_run_rejects_condition_branch_that_cannot_reach_output(auth_client, configure_codex):
+    configure_codex()
     created = auth_client.post("/api/apps", json={"name": "Invalid condition route"}).json()
     graph = {
-        "agent": "claude",
         "nodes": [
             _condition_node(
                 mode="binary",
@@ -176,10 +173,9 @@ def test_run_rejects_condition_branch_that_cannot_reach_output(auth_client, enab
     assert "output" in started.json()["detail"]
 
 
-def test_condition_cases_unmatched_falls_back_to_default(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_condition_cases_unmatched_falls_back_to_default(auth_client, configure_codex):
+    configure_codex()
     graph = {
-        "agent": "claude",
         "nodes": [
             _condition_node(
                 mode="cases",
@@ -216,10 +212,9 @@ def test_condition_cases_unmatched_falls_back_to_default(auth_client, enable_cla
     assert '"label": "其它：以上分支均不匹配"' in condition_prompt
 
 
-def test_condition_cases_exact_match_runs_only_selected(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_condition_cases_exact_match_runs_only_selected(auth_client, configure_codex):
+    configure_codex()
     graph = {
-        "agent": "claude",
         "nodes": [
             _condition_node(
                 mode="cases",
@@ -253,12 +248,11 @@ def test_condition_cases_exact_match_runs_only_selected(auth_client, enable_clau
     assert "根据每项 `label` 的业务含义判断" in condition_prompt
 
 
-def test_condition_downstream_chain_is_fully_skipped(auth_client, enable_claude_agent):
+def test_condition_downstream_chain_is_fully_skipped(auth_client, configure_codex):
     """未选分支的整条下游（含传递闭包）都应该被 skip。"""
 
-    enable_claude_agent()
+    configure_codex()
     graph = {
-        "agent": "claude",
         "nodes": [
             _condition_node(
                 mode="binary",
@@ -286,10 +280,9 @@ def test_condition_downstream_chain_is_fully_skipped(auth_client, enable_claude_
     assert by_id["n_false_b"]["status"] == "skipped"
 
 
-def test_condition_merge_node_runs_when_reachable_from_selected_branch(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_condition_merge_node_runs_when_reachable_from_selected_branch(auth_client, configure_codex):
+    configure_codex()
     graph = {
-        "agent": "claude",
         "nodes": [
             _condition_node(
                 mode="binary",

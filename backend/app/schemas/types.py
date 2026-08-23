@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field
 
 from app.schemas.decision import DecisionGroup, DecisionRequestContext
 
@@ -37,52 +37,28 @@ class AppVersionOut(BaseModel):
     is_published: bool = False
 
 
-class AgentProviderStatus(BaseModel):
-    installed: bool
-    # runnable=None 表示尚未跑过真实 smoke；True/False 由 refresh_agent_status 填。
-    runnable: bool | None = None
-    identity: str | None = None
-    method: str | None = None
-    error: str | None = None
-    checked_at: str
-
-
-class AgentProviderConfig(BaseModel):
-    model_config = ConfigDict(extra="allow")
-
-    id: Literal["claude-code", "codex"]
-    name: str
-    description: str
-    runtime: Literal["claude", "codex"]
-    enabled: bool
-    supported_models: list[str] = Field(default_factory=list)
-    status: AgentProviderStatus | None = None
-
-
-class AgentConfigFile(BaseModel):
-    # codex-auth 是虚拟 id：实际对应 DB 中的 auth.json 正文，仅作为 GET 目标读取，
-    # 写入合并到 codex 的 PUT（见 AgentConfigSaveIn.auth_content）。
-    agent_id: Literal["claude-code", "codex", "codex-auth"]
+class CodexConfigContent(BaseModel):
     path: str
     content: str
-    # codex 保存时附带 auth.json 的最新解密元数据，方便前端刷新展示。
-    auth: "AgentConfigFile | None" = None
 
 
-class AgentSetupState(BaseModel):
+class CodexConfigFile(BaseModel):
+    path: str
+    content: str
+    auth: CodexConfigContent
+
+
+class CodexSetupState(BaseModel):
     completed: bool
 
 
-class AgentConfigSaveIn(BaseModel):
+class CodexConfigSaveIn(BaseModel):
     content: str
-    enabled: bool | None = None
-    supported_models: list[str] | None = None
-    # 仅 codex 使用：与 content 同步加密保存为 codex-auth 正文。
-    auth_content: str | None = None
+    auth_content: str
+    supported_models: list[str]
 
 
 class InstructionFile(BaseModel):
-    provider: Literal["claude-code", "codex"]
     path: str
     content: str
 
@@ -130,7 +106,6 @@ class McpServerConfig(BaseModel):
     name: str
     enabled: bool
     planning_enabled: bool = False
-    provider_ids: list[Literal["claude-code", "codex"]]
     url: str
     headers: list[McpHeader] = Field(default_factory=list)
     env_var_names: list[str] = Field(default_factory=list)
@@ -145,7 +120,7 @@ class ToolConfig(BaseModel):
 
 
 class MiraSettings(BaseModel):
-    agents: list[AgentProviderConfig]
+    supported_models: list[str] = Field(default_factory=list)
     skills: list[SkillConfig] = Field(default_factory=list)
     mcp_servers: list[McpServerConfig] = Field(default_factory=list)
     tools: list[ToolConfig] = Field(default_factory=list)

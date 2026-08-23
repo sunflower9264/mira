@@ -23,7 +23,6 @@ export function AppView({ readOnly = false }: { readOnly?: boolean }) {
   const loadedApp = useEditorStore((s) => s.app);
   const setMeta = useEditorStore((s) => s.setMeta);
   const flushSave = useEditorStore((s) => s.flushSave);
-  const setGraphAgent = useEditorStore((s) => s.setGraphAgent);
   const setGraph = useEditorStore((s) => s.setGraph);
   const resumeRun = useRunStore((s) => s.resume);
   const restoreActiveRun = useRunStore((s) => s.restoreActiveRun);
@@ -125,7 +124,6 @@ export function AppView({ readOnly = false }: { readOnly?: boolean }) {
           app={app}
           variant="app"
           failureErrorPlacement="top"
-          onAgentChange={readonly ? undefined : setGraphAgent}
           onToolsChange={readonly ? undefined : (disabledToolIds) => {
             setGraph({
               ...app.graph,

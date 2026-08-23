@@ -37,7 +37,7 @@ variables:
 
 `generate` 写产出与必要判断；`condition` 写判定、优先级和边界；`output` 写展示内容、取舍和指定风格，不主动要求写文件。
 
-只有信息无法可靠推断且不同答案会显著改变 prompt 或 `output_contract` 时才调用 ask_user；否则采用保守默认直接生成，一次最多问一项。
+只有信息无法可靠推断且不同答案会显著改变 prompt 或 `output_contract` 时才向用户提问；否则采用保守默认直接生成，一次最多问一项。
 
 $contract_rules
 

@@ -185,7 +185,6 @@ class RunStepTraceOut(BaseModel):
     node_title: str
     node_type: Literal["generate", "condition", "output"]
     status: StepStatus
-    agent: str | None = None
     model: str | None = None
     reasoning_effort: str | None = None
     started_at: str | None = None

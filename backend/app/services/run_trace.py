@@ -68,7 +68,6 @@ async def get_run_step_trace(db: AsyncSession, run_id: str, node_id: str, user_i
         node_title=str(node.get("title") or node_id),
         node_type=node_type,  # type: ignore[arg-type]
         status=step_out.status,
-        agent=str(graph.get("agent") or "") or None,
         model=str(node.get("model") or "") or None,
         reasoning_effort=str(node.get("reasoning_effort") or "") or None,
         started_at=step_out.started_at,

@@ -11,7 +11,7 @@ from typing import Any
 
 from app.db import SessionLocal
 from app.models import NlCompileSessionRow
-from app.runtime.base import AgentChunk, AgentExecutionResult, AgentProviderStatus, AskUserRequest
+from app.runtime.base import AgentChunk, AgentExecutionResult, AgentRuntimeStatus, AskUserRequest
 from app.runtime.factory import set_runtime_override
 from app.services import nlcompile as nlcompile_service
 from app.services.structured_output import (
@@ -87,8 +87,8 @@ class ScriptedRuntime:
         self.runtime_tools: list[Any] = []
         self.output_schemas: list[dict | None] = []
 
-    async def detect_status(self) -> AgentProviderStatus:
-        return AgentProviderStatus(
+    async def detect_status(self) -> AgentRuntimeStatus:
+        return AgentRuntimeStatus(
             installed=True,
             runnable=True,
             identity="scripted",
@@ -423,8 +423,8 @@ class AnswerAwareRuntime:
         self.assistant_prompts: list[str] = []
         self.prompts: list[str] = []
 
-    async def detect_status(self) -> AgentProviderStatus:
-        return AgentProviderStatus(
+    async def detect_status(self) -> AgentRuntimeStatus:
+        return AgentRuntimeStatus(
             installed=True,
             runnable=True,
             identity="answer-aware",
@@ -652,107 +652,6 @@ class ApplyAsksRuntime(ScriptedRuntime):
         )
 
 
-class AskUserToolFailureThenPlanRuntime(ScriptedRuntime):
-    async def execute(
-        self,
-        *,
-        prompt: str,
-        session_id: str | None,
-        allowed_tools: list[str] | None,
-        model: str | None,
-        reasoning_effort: str | None,
-        cwd: Path,
-        on_chunk,
-        cancel_event: asyncio.Event,
-        on_ask_user=None,
-        runtime_tools=None,
-        runtime_policy="execute",
-        output_schema=None,
-    ) -> AgentExecutionResult:
-        if "你是 Mira 工作流编辑器的 NL 编译方案助手" not in prompt:
-            return await super().execute(
-                prompt=prompt,
-                session_id=session_id,
-                allowed_tools=allowed_tools,
-                model=model,
-                reasoning_effort=reasoning_effort,
-                cwd=cwd,
-                on_chunk=on_chunk,
-                cancel_event=cancel_event,
-                on_ask_user=on_ask_user,
-                runtime_tools=runtime_tools,
-                runtime_policy=runtime_policy,
-                output_schema=output_schema,
-            )
-        self.call_count += 1
-        await on_chunk(AgentChunk(type="tool_result", text="user cancelled MCP tool call"))
-        text = _default_plan_response()
-        await on_chunk(AgentChunk(type="text", text=text))
-        return AgentExecutionResult(session_id=session_id, total_text=text, finished_with="done")
-
-
-class WaitingAskUserToolFailureRuntime(ReplayAwareRuntime):
-    async def execute(
-        self,
-        *,
-        prompt: str,
-        session_id: str | None,
-        allowed_tools: list[str] | None,
-        model: str | None,
-        reasoning_effort: str | None,
-        cwd: Path,
-        on_chunk,
-        cancel_event: asyncio.Event,
-        on_ask_user=None,
-        runtime_tools=None,
-        runtime_policy="execute",
-        output_schema=None,
-    ) -> AgentExecutionResult:
-        if "你是 Mira 工作流编辑器的 NL 编译方案助手" not in prompt or "用户问答历史" in prompt:
-            return await super().execute(
-                prompt=prompt,
-                session_id=session_id,
-                allowed_tools=allowed_tools,
-                model=model,
-                reasoning_effort=reasoning_effort,
-                cwd=cwd,
-                on_chunk=on_chunk,
-                cancel_event=cancel_event,
-                on_ask_user=on_ask_user,
-                runtime_tools=runtime_tools,
-                runtime_policy=runtime_policy,
-                output_schema=output_schema,
-            )
-        self.prompts.append(prompt)
-        self.call_count += 1
-        assert on_ask_user is not None
-        asyncio.create_task(
-            on_ask_user(
-                AskUserRequest(
-                    context={"title": "确认应用用途", "summary": "生成方案前需要确认这个应用主要服务哪类任务。"},
-                    groups=[
-                        {
-                            "id": "intent",
-                            "type": "single",
-                            "label": "选择用途",
-                            "options": _decision_options(["写作", "翻译", "总结"]),
-                        }
-                    ],
-                    tool_use_id=f"toolu_timeout_{self.call_count}",
-                )
-            )
-        )
-        await asyncio.sleep(0.05)
-        await on_chunk(
-            AgentChunk(
-                type="tool_result",
-                text="timed out",
-                raw={"type": "tool_result", "tool": "mcp__ask_user__ask_user", "output": "timed out"},
-            )
-        )
-        return AgentExecutionResult(session_id=session_id, total_text="", finished_with="done")
-
-
 def _create_app(client) -> str:
     response = client.post("/api/apps", json={"name": "NlCompile Demo"})
     assert response.status_code == 200, response.text
@@ -775,18 +674,18 @@ def _post_nlcompile_and_apply(client, payload: dict) -> Any:
     return applied
 
 
-def test_nlcompile_requires_enabled_agent(auth_client):
+def test_nlcompile_does_not_require_graph_agent(auth_client):
     app_id = _create_app(auth_client)
     response = auth_client.post(
         "/api/nlcompile",
-        json={"app_id": app_id, "instruction": "加一个生成节点", "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []}},
+        json={"app_id": app_id, "instruction": "加一个生成节点", "current_graph": {"nodes": [], "execution_edges": []}},
     )
-    assert response.status_code == 400
-    assert response.json()["detail"] == "无可用 Agent，请先在设置中启用 Agent"
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "planned"
 
 
-def test_nlcompile_plan_passes_planning_safe_mcp_tools(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_nlcompile_plan_passes_planning_safe_mcp_tools(auth_client, configure_codex):
+    configure_codex()
     app_id = _create_app(auth_client)
     assert auth_client.post(
         "/api/settings/mcp",
@@ -795,7 +694,6 @@ def test_nlcompile_plan_passes_planning_safe_mcp_tools(auth_client, enable_claud
             "name": "nl-plan-mcp",
             "enabled": True,
             "planning_enabled": True,
-            "provider_ids": ["claude-code", "codex"],
             "url": "http://localhost:9999/nl-plan",
             "headers": [],
             "env_var_names": [],
@@ -808,7 +706,6 @@ def test_nlcompile_plan_passes_planning_safe_mcp_tools(auth_client, enable_claud
             "name": "nl-execute-mcp",
             "enabled": True,
             "planning_enabled": False,
-            "provider_ids": ["claude-code", "codex"],
             "url": "http://localhost:9999/nl-execute",
             "headers": [],
             "env_var_names": [],
@@ -821,7 +718,6 @@ def test_nlcompile_plan_passes_planning_safe_mcp_tools(auth_client, enable_claud
             "name": "nl-disabled-mcp",
             "enabled": True,
             "planning_enabled": True,
-            "provider_ids": ["claude-code", "codex"],
             "url": "http://localhost:9999/nl-disabled",
             "headers": [],
             "env_var_names": [],
@@ -836,7 +732,6 @@ def test_nlcompile_plan_passes_planning_safe_mcp_tools(auth_client, enable_claud
                 "app_id": app_id,
                 "instruction": "加一个生成节点",
                 "current_graph": {
-                    "agent": "claude",
                     "tools": {"disabled_tool_ids": ["mcp:mcp_nl_disabled"]},
                     "_runtime_tools": {
                         "allowed_tool_ids": ["mcp:mcp_nl_plan", "mcp:mcp_nl_disabled"],
@@ -861,47 +756,6 @@ def test_nlcompile_plan_passes_planning_safe_mcp_tools(auth_client, enable_claud
             return row.graph_json
 
     assert "_runtime_tools" not in asyncio.run(stored_graph_json())
-
-
-def test_nlcompile_plan_rejects_internal_ask_user_tool_failure(auth_client, enable_claude_agent):
-    enable_claude_agent()
-    app_id = _create_app(auth_client)
-    set_runtime_override(AskUserToolFailureThenPlanRuntime())
-    try:
-        response = auth_client.post(
-            "/api/nlcompile",
-            json={
-                "app_id": app_id,
-                "instruction": "我不知道怎么改，给我几个方向",
-                "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
-            },
-        )
-    finally:
-        set_runtime_override(MockRuntime())
-
-    assert response.status_code == 502, response.text
-    assert response.json()["detail"] == "ask_user 工具调用失败，请检查 Agent MCP 配置后重试"
-
-
-def test_nlcompile_plan_rejects_claude_ask_user_permission_denial(auth_client, enable_claude_agent):
-    enable_claude_agent()
-    app_id = _create_app(auth_client)
-    error = "Claude requested permissions to use mcp__ask_user__ask_user, but you haven't granted them."
-    set_runtime_override(ScriptedRuntime(text="", finished_with="error", error=error))
-    try:
-        response = auth_client.post(
-            "/api/nlcompile",
-            json={
-                "app_id": app_id,
-                "instruction": "先问我几个问题再改",
-                "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
-            },
-        )
-    finally:
-        set_runtime_override(MockRuntime())
-
-    assert response.status_code == 502, response.text
-    assert response.json()["detail"] == "ask_user 工具调用失败，请检查 Agent MCP 配置后重试"
 
 
 def test_nlcompile_structured_schemas_require_effective_content():
@@ -938,8 +792,8 @@ def test_nlcompile_fallback_positions_only_fill_added_nodes_without_coordinates(
     assert graph["nodes"][2]["position"] == {"x": 420.0, "y": 40.0}
 
 
-def test_nlcompile_applies_valid_patches_and_renders_plan(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_nlcompile_applies_valid_patches_and_renders_plan(auth_client, configure_codex):
+    configure_codex()
     app_id = _create_app(auth_client)
     payload = json.dumps(
         {
@@ -968,7 +822,7 @@ def test_nlcompile_applies_valid_patches_and_renders_plan(auth_client, enable_cl
             {
                 "app_id": app_id,
                 "instruction": "加一个生成节点",
-                "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
+                "current_graph": {"nodes": [], "execution_edges": []},
             },
         )
     finally:
@@ -981,7 +835,7 @@ def test_nlcompile_applies_valid_patches_and_renders_plan(auth_client, enable_cl
     assert body["applied_patches"][0]["op"] == "add_node"
     new_nodes = body["new_graph"]["nodes"]
     assert len(new_nodes) == 1
-    assert body["new_graph"]["agent"] == "claude"
+    assert "agent" not in body["new_graph"]
     assert new_nodes[0]["id"] == "n_generate_demo"
     assert new_nodes[0]["position"] == {"x": 100.0, "y": 140.0}
     assert "agent" not in new_nodes[0]
@@ -989,13 +843,13 @@ def test_nlcompile_applies_valid_patches_and_renders_plan(auth_client, enable_cl
     assert runtime.assistant_call_count == 1
     assert runtime.layout_call_count == 1
     assert runtime.models[0] is None
-    assert runtime.reasoning_efforts[0] == "max"
+    assert runtime.reasoning_efforts[0] == "xhigh"
     assert runtime.models[1] is None
-    assert runtime.reasoning_efforts[1] == "max"
+    assert runtime.reasoning_efforts[1] == "xhigh"
     assert runtime.models[2] == "node-model"
-    assert runtime.reasoning_efforts[2] == "max"
+    assert runtime.reasoning_efforts[2] == "xhigh"
     assert runtime.models[3] is None
-    assert runtime.reasoning_efforts[3] == "max"
+    assert runtime.reasoning_efforts[3] == "xhigh"
     assert runtime.output_schemas[0] == NL_COMPILE_PLAN_OUTPUT_SCHEMA
     assert runtime.output_schemas[1] == NL_COMPILE_PATCH_OUTPUT_SCHEMA
     assert runtime.output_schemas[2] == PROMPT_ASSISTANT_OUTPUT_SCHEMA
@@ -1009,23 +863,23 @@ def test_nlcompile_applies_valid_patches_and_renders_plan(auth_client, enable_cl
     assert "加一个生成节点" in compile_prompt
     assert "goal_summary" in compile_prompt
     assert "新建 workflow、节点较多或结构调整较大本身都不是提问理由" in compile_prompt
-    assert "只有同时满足以下条件时才调用 ask_user" in compile_prompt
+    assert "只有同时满足以下条件时才向用户提问" in compile_prompt
     assert "可在应用每次运行时采集的信息应设计进 user_input" in compile_prompt
     assert "implementation_steps" in compile_prompt
     assert "expected_inputs" in compile_prompt
-    assert "需要提问时直接调用真实 ask_user 工具" in compile_prompt
-    assert "如果 ask_user 工具返回内部错误" in compile_prompt
-    assert "方案必须吸收 answers / text / attachments" in compile_prompt
-    # 协议拆分后，plan prompt 不得混入 preflight 的 JSON action 状态机。
+    assert "只有同时满足以下条件时才向用户提问" in compile_prompt
+    assert "用户补充的回答优先于原始假设" in compile_prompt
+    assert "方案必须完整吸收这些信息" in compile_prompt
+    # 原生 Plan prompt 不得混入旧 JSON action 状态机。
     assert '"action":"ask"' not in compile_prompt
-    assert "preflight 状态机" not in compile_prompt
+    assert "JSON action 状态机" not in compile_prompt
     assistant_prompt = runtime.prompts[2]
     assert "## 方案上下文" in assistant_prompt
     assert "原始用户指令：加一个生成节点" in assistant_prompt
     assert "按用户指令更新 Mira 画布" in assistant_prompt
     patch_prompt = runtime.prompts[1]
     assert "已确认方案" in patch_prompt
-    assert "graph patch 阶段禁止调用 ask_user" in patch_prompt
+    assert "graph patch 阶段禁止再次向用户提问" in patch_prompt
     assert "禁止冗余传递连线" in patch_prompt
     assert "只处理业务数据流，不判断画布视觉交叉" in patch_prompt
     assert "每个 properties 业务字段（含嵌套字段）" in patch_prompt
@@ -1034,20 +888,16 @@ def test_nlcompile_applies_valid_patches_and_renders_plan(auth_client, enable_cl
     assert "condition 分支边" in patch_prompt
     assert "asset drawing" in patch_prompt
     assert "禁止制造交叉连接" not in patch_prompt
-    assert "回答采纳规则" in compile_prompt
-    assert "可以聚焦追问" in compile_prompt
-    assert "2-3 个真实业务选项" in compile_prompt
-    assert "recommended" in compile_prompt
-    assert "以上都不是" in compile_prompt
-    assert "不得生成最终结果、写文件或触发业务副作用" in compile_prompt
-    assert "如果当前信息足够完成编辑，不要提问" not in compile_prompt
+    assert "回答采纳规则" not in compile_prompt
+    assert "request_user_input" not in compile_prompt
+    assert "planning/read-only 阶段不得执行修改、生成产物" in compile_prompt
 
 
 def test_nlcompile_initial_attachment_is_available_to_plan_and_apply_runtime(
     auth_client,
-    enable_claude_agent,
+    configure_codex,
 ):
-    enable_claude_agent()
+    configure_codex()
     app_id = _create_app(auth_client)
     upload = auth_client.post(
         "/api/uploads",
@@ -1081,7 +931,7 @@ def test_nlcompile_initial_attachment_is_available_to_plan_and_apply_runtime(
             json={
                 "app_id": app_id,
                 "instruction": "根据附件创建应用",
-                "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
+                "current_graph": {"nodes": [], "execution_edges": []},
                 "attachments": [{"id": upload_id, "name": "brief.txt"}],
             },
         )
@@ -1108,9 +958,9 @@ def test_nlcompile_initial_attachment_is_available_to_plan_and_apply_runtime(
 def test_nlcompile_initial_attachment_must_belong_to_current_user(
     client,
     auth_client,
-    enable_claude_agent,
+    configure_codex,
 ):
-    enable_claude_agent()
+    configure_codex()
     upload = auth_client.post(
         "/api/uploads",
         files={"file": ("private.txt", b"OWNER_ONLY", "text/plain")},
@@ -1127,7 +977,7 @@ def test_nlcompile_initial_attachment_must_belong_to_current_user(
         json={
             "app_id": created.json()["id"],
             "instruction": "读取附件",
-            "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
+            "current_graph": {"nodes": [], "execution_edges": []},
             "attachments": [{"id": upload.json()["id"], "name": "private.txt"}],
         },
     )
@@ -1136,8 +986,8 @@ def test_nlcompile_initial_attachment_must_belong_to_current_user(
     assert response.json()["detail"] == "附件不存在"
 
 
-def test_nlcompile_applies_real_structured_fields_for_all_node_types(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_nlcompile_applies_real_structured_fields_for_all_node_types(auth_client, configure_codex):
+    configure_codex()
     app_id = _create_app(auth_client)
     payload = json.dumps(
         {
@@ -1231,7 +1081,7 @@ def test_nlcompile_applies_real_structured_fields_for_all_node_types(auth_client
             {
                 "app_id": app_id,
                 "instruction": "创建一个带规范素材和质量判断的摘要应用",
-                "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
+                "current_graph": {"nodes": [], "execution_edges": []},
             },
         )
     finally:
@@ -1257,8 +1107,8 @@ def test_nlcompile_applies_real_structured_fields_for_all_node_types(auth_client
     assert runtime.layout_call_count == 1
 
 
-def test_nlcompile_repairs_malformed_plan_output_before_apply(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_nlcompile_repairs_malformed_plan_output_before_apply(auth_client, configure_codex):
+    configure_codex()
     app_id = _create_app(auth_client)
     patch_payload = json.dumps(
         {
@@ -1284,7 +1134,7 @@ def test_nlcompile_repairs_malformed_plan_output_before_apply(auth_client, enabl
             {
                 "app_id": app_id,
                 "instruction": "加一个生成节点",
-                "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
+                "current_graph": {"nodes": [], "execution_edges": []},
             },
         )
     finally:
@@ -1298,11 +1148,11 @@ def test_nlcompile_repairs_malformed_plan_output_before_apply(auth_client, enabl
     assert runtime.output_schemas[1] == NL_COMPILE_PLAN_OUTPUT_SCHEMA
     assert runtime.output_schemas[2] == NL_COMPILE_PATCH_OUTPUT_SCHEMA
     assert "校验失败原因" in runtime.prompts[1]
-    assert "不要调用 ask_user 或其它工具" in runtime.prompts[1]
+    assert "不要再向用户提问，也不要调用其它工具" in runtime.prompts[1]
 
 
-def test_nlcompile_repairs_plan_with_empty_required_sections(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_nlcompile_repairs_plan_with_empty_required_sections(auth_client, configure_codex):
+    configure_codex()
     app_id = _create_app(auth_client)
     incomplete_plan = json.dumps(
         {
@@ -1343,7 +1193,7 @@ def test_nlcompile_repairs_plan_with_empty_required_sections(auth_client, enable
             {
                 "app_id": app_id,
                 "instruction": "新增摘要生成节点",
-                "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
+                "current_graph": {"nodes": [], "execution_edges": []},
             },
         )
     finally:
@@ -1355,8 +1205,8 @@ def test_nlcompile_repairs_plan_with_empty_required_sections(auth_client, enable
     assert runtime.output_schemas[:2] == [NL_COMPILE_PLAN_OUTPUT_SCHEMA, NL_COMPILE_PLAN_OUTPUT_SCHEMA]
 
 
-def test_nlcompile_returns_graph_when_layout_beautify_fails(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_nlcompile_returns_graph_when_layout_beautify_fails(auth_client, configure_codex):
+    configure_codex()
     app_id = _create_app(auth_client)
     payload = json.dumps(
         {
@@ -1382,7 +1232,7 @@ def test_nlcompile_returns_graph_when_layout_beautify_fails(auth_client, enable_
             {
                 "app_id": app_id,
                 "instruction": "加一个生成节点",
-                "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
+                "current_graph": {"nodes": [], "execution_edges": []},
             },
         )
     finally:
@@ -1398,8 +1248,8 @@ def test_nlcompile_returns_graph_when_layout_beautify_fails(auth_client, enable_
     assert body["warnings"] == ["布局美化失败，已保留原布局：Agent 美化布局失败，请检查 Agent 配置或稍后重试"]
 
 
-def test_nlcompile_plan_markdown_shows_update_before_after(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_nlcompile_plan_markdown_shows_update_before_after(auth_client, configure_codex):
+    configure_codex()
     app_id = _create_app(auth_client)
     payload = json.dumps(
         {
@@ -1424,7 +1274,6 @@ def test_nlcompile_plan_markdown_shows_update_before_after(auth_client, enable_c
                 "app_id": app_id,
                 "instruction": "把草稿节点改成最终稿",
                 "current_graph": {
-                    "agent": "claude",
                     "nodes": [
                         {
                             "id": "n_generate_demo",
@@ -1451,8 +1300,8 @@ def test_nlcompile_plan_markdown_shows_update_before_after(auth_client, enable_c
     assert "生成最终稿" in plan
 
 
-def test_nlcompile_plan_markdown_renders_input_schema_readably(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_nlcompile_plan_markdown_renders_input_schema_readably(auth_client, configure_codex):
+    configure_codex()
     app_id = _create_app(auth_client)
     payload = json.dumps(
         {
@@ -1486,7 +1335,7 @@ def test_nlcompile_plan_markdown_renders_input_schema_readably(auth_client, enab
             {
                 "app_id": app_id,
                 "instruction": "新增阅读推荐输入",
-                "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
+                "current_graph": {"nodes": [], "execution_edges": []},
             },
         )
     finally:
@@ -1503,8 +1352,8 @@ def test_nlcompile_plan_markdown_renders_input_schema_readably(auth_client, enab
     assert '"kind"' not in plan
 
 
-def test_nlcompile_plan_markdown_renders_structured_updates_readably(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_nlcompile_plan_markdown_renders_structured_updates_readably(auth_client, configure_codex):
+    configure_codex()
     app_id = _create_app(auth_client)
     payload = json.dumps(
         {
@@ -1533,7 +1382,6 @@ def test_nlcompile_plan_markdown_renders_structured_updates_readably(auth_client
                 "app_id": app_id,
                 "instruction": "调整输入表单",
                 "current_graph": {
-                    "agent": "claude",
                     "nodes": [
                         {
                             "id": "n_input",
@@ -1561,8 +1409,8 @@ def test_nlcompile_plan_markdown_renders_structured_updates_readably(auth_client
     assert "```json" not in plan
 
 
-def test_nlcompile_plan_markdown_renders_branches_readably(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_nlcompile_plan_markdown_renders_branches_readably(auth_client, configure_codex):
+    configure_codex()
     app_id = _create_app(auth_client)
     payload = json.dumps(
         {
@@ -1593,7 +1441,7 @@ def test_nlcompile_plan_markdown_renders_branches_readably(auth_client, enable_c
             {
                 "app_id": app_id,
                 "instruction": "增加阅读方向判断",
-                "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
+                "current_graph": {"nodes": [], "execution_edges": []},
             },
         )
     finally:
@@ -1606,8 +1454,8 @@ def test_nlcompile_plan_markdown_renders_branches_readably(auth_client, enable_c
     assert "```json" not in plan
 
 
-def test_nlcompile_plan_markdown_shows_edge_titles(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_nlcompile_plan_markdown_shows_edge_titles(auth_client, configure_codex):
+    configure_codex()
     app_id = _create_app(auth_client)
     payload = json.dumps(
         {
@@ -1632,7 +1480,6 @@ def test_nlcompile_plan_markdown_shows_edge_titles(auth_client, enable_claude_ag
                 "app_id": app_id,
                 "instruction": "把输入连到生成",
                 "current_graph": {
-                    "agent": "claude",
                     "nodes": [
                         {
                             "id": "n_input",
@@ -1663,8 +1510,8 @@ def test_nlcompile_plan_markdown_shows_edge_titles(auth_client, enable_claude_ag
     assert "e_input_to_generate" in plan
 
 
-def test_nlcompile_plan_markdown_shows_remove_node_edge_impact(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_nlcompile_plan_markdown_shows_remove_node_edge_impact(auth_client, configure_codex):
+    configure_codex()
     app_id = _create_app(auth_client)
     payload = json.dumps({"patches": [{"op": "remove_node", "id": "n_generate"}]}, ensure_ascii=False)
     set_runtime_override(ScriptedRuntime(text=payload))
@@ -1675,7 +1522,6 @@ def test_nlcompile_plan_markdown_shows_remove_node_edge_impact(auth_client, enab
                 "app_id": app_id,
                 "instruction": "删除生成节点",
                 "current_graph": {
-                    "agent": "claude",
                     "nodes": [
                         {
                             "id": "n_input",
@@ -1712,8 +1558,8 @@ def test_nlcompile_plan_markdown_shows_remove_node_edge_impact(auth_client, enab
     assert "用户主题 (`n_input`) → 生成回答 (`n_generate`)" in plan
 
 
-def test_nlcompile_waiting_resume_returns_completed_plan(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_nlcompile_waiting_resume_returns_completed_plan(auth_client, configure_codex):
+    configure_codex()
     app_id = _create_app(auth_client)
     patch_text = json.dumps(
         {
@@ -1749,7 +1595,7 @@ def test_nlcompile_waiting_resume_returns_completed_plan(auth_client, enable_cla
         json={
             "app_id": app_id,
             "instruction": f"[[ask_user:{json.dumps(ask_payload, ensure_ascii=False)}]] [[respond:{patch_text}]]",
-            "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
+            "current_graph": {"nodes": [], "execution_edges": []},
         },
     )
     assert response.status_code == 200, response.text
@@ -1770,8 +1616,8 @@ def test_nlcompile_waiting_resume_returns_completed_plan(auth_client, enable_cla
     assert body["new_graph"]["nodes"][0]["id"] == "n_after_choice"
 
 
-def test_nlcompile_waiting_resume_with_none_option_continues_to_plan(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_nlcompile_waiting_resume_with_none_option_continues_to_plan(auth_client, configure_codex):
+    configure_codex()
     app_id = _create_app(auth_client)
     patch_text = json.dumps(
         {
@@ -1807,7 +1653,7 @@ def test_nlcompile_waiting_resume_with_none_option_continues_to_plan(auth_client
         json={
             "app_id": app_id,
             "instruction": f"[[ask_user:{json.dumps(ask_payload, ensure_ascii=False)}]] [[respond:{patch_text}]]",
-            "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
+            "current_graph": {"nodes": [], "execution_edges": []},
         },
     )
     assert response.status_code == 200, response.text
@@ -1827,8 +1673,8 @@ def test_nlcompile_waiting_resume_with_none_option_continues_to_plan(auth_client
     assert body["new_graph"]["nodes"][0]["id"] == "n_after_none"
 
 
-def test_nlcompile_waiting_resume_answers_drive_runtime_patch(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_nlcompile_waiting_resume_answers_drive_runtime_patch(auth_client, configure_codex):
+    configure_codex()
     app_id = _create_app(auth_client)
     runtime = AnswerAwareRuntime()
     set_runtime_override(runtime)
@@ -1843,7 +1689,7 @@ def test_nlcompile_waiting_resume_answers_drive_runtime_patch(auth_client, enabl
                 json={
                     "app_id": app_id,
                     "instruction": "根据用户选择创建对应节点",
-                    "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
+                    "current_graph": {"nodes": [], "execution_edges": []},
                 },
             )
             assert response.status_code == 200, response.text
@@ -1881,8 +1727,8 @@ def test_nlcompile_waiting_resume_answers_drive_runtime_patch(auth_client, enabl
         set_runtime_override(MockRuntime())
 
 
-def test_nlcompile_active_returns_planned_session_and_apply_rebuilds_from_db(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_nlcompile_active_returns_planned_session_and_apply_rebuilds_from_db(auth_client, configure_codex):
+    configure_codex()
     app_id = _create_app(auth_client)
     payload = json.dumps(
         {
@@ -1909,7 +1755,7 @@ def test_nlcompile_active_returns_planned_session_and_apply_rebuilds_from_db(aut
             json={
                 "app_id": app_id,
                 "instruction": "创建一个节点并测试恢复",
-                "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
+                "current_graph": {"nodes": [], "execution_edges": []},
             },
         )
         assert planned.status_code == 200, planned.text
@@ -1930,8 +1776,8 @@ def test_nlcompile_active_returns_planned_session_and_apply_rebuilds_from_db(aut
         set_runtime_override(MockRuntime())
 
 
-def test_nlcompile_active_returns_204_when_no_active_session(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_nlcompile_active_returns_204_when_no_active_session(auth_client, configure_codex):
+    configure_codex()
     app_id = _create_app(auth_client)
 
     active = auth_client.get(f"/api/apps/{app_id}/nlcompile/active")
@@ -1940,8 +1786,8 @@ def test_nlcompile_active_returns_204_when_no_active_session(auth_client, enable
     assert active.content == b""
 
 
-def test_nlcompile_resume_replays_from_db_after_memory_session_lost(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_nlcompile_resume_replays_from_db_after_memory_session_lost(auth_client, configure_codex):
+    configure_codex()
     app_id = _create_app(auth_client)
     runtime = ReplayAwareRuntime()
     set_runtime_override(runtime)
@@ -1951,7 +1797,7 @@ def test_nlcompile_resume_replays_from_db_after_memory_session_lost(auth_client,
             json={
                 "app_id": app_id,
                 "instruction": "根据用户选择创建对应节点",
-                "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
+                "current_graph": {"nodes": [], "execution_edges": []},
             },
         )
         assert response.status_code == 200, response.text
@@ -1978,56 +1824,8 @@ def test_nlcompile_resume_replays_from_db_after_memory_session_lost(auth_client,
         set_runtime_override(MockRuntime())
 
 
-def test_nlcompile_resume_after_waiting_tool_timeout_replays_from_db(auth_client, enable_claude_agent):
-    enable_claude_agent()
-    app_id = _create_app(auth_client)
-    runtime = WaitingAskUserToolFailureRuntime()
-    set_runtime_override(runtime)
-    try:
-        response = auth_client.post(
-            "/api/nlcompile",
-            json={
-                "app_id": app_id,
-                "instruction": "我不知道怎么改，给我几个方向",
-                "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
-            },
-        )
-        assert response.status_code == 200, response.text
-        waiting = response.json()
-        assert waiting["status"] == "waiting_for_user"
-        compile_id = waiting["compile_id"]
-
-        for _ in range(50):
-            if compile_id not in nlcompile_service._compile_sessions:
-                break
-            time.sleep(0.02)
-        assert compile_id not in nlcompile_service._compile_sessions
-
-        active = auth_client.get(f"/api/apps/{app_id}/nlcompile/active")
-        assert active.status_code == 200, active.text
-        assert active.json()["status"] == "waiting_for_user"
-        assert active.json()["compile_id"] == compile_id
-
-        resumed = auth_client.post(
-            f"/api/nlcompile/{compile_id}/resume",
-            json={
-                "answers": [{"group_id": "intent", "selected": ["以上都不是"]}],
-                "text": "行业是教育培训，需要解决招生线索转化低的问题。",
-            },
-        )
-        assert resumed.status_code == 200, resumed.text
-        planned = resumed.json()
-        assert planned["status"] == "planned"
-        assert "用户问答历史" in runtime.prompts[-1]
-        assert "选择用途 → 以上都不是" in runtime.prompts[-1]
-        assert "行业是教育培训，需要解决招生线索转化低的问题。" in runtime.prompts[-1]
-    finally:
-        nlcompile_service._compile_sessions.clear()
-        set_runtime_override(MockRuntime())
-
-
-def test_nlcompile_refine_reuses_history_and_updates_plan(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_nlcompile_refine_reuses_history_and_updates_plan(auth_client, configure_codex):
+    configure_codex()
     app_id = _create_app(auth_client)
     first_plan = json.dumps(
         {
@@ -2063,7 +1861,7 @@ def test_nlcompile_refine_reuses_history_and_updates_plan(auth_client, enable_cl
             json={
                 "app_id": app_id,
                 "instruction": "做一个摘要页面",
-                "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
+                "current_graph": {"nodes": [], "execution_edges": []},
             },
         )
         assert planned.status_code == 200, planned.text
@@ -2085,8 +1883,8 @@ def test_nlcompile_refine_reuses_history_and_updates_plan(auth_client, enable_cl
         set_runtime_override(MockRuntime())
 
 
-def test_nlcompile_refine_limit(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_nlcompile_refine_limit(auth_client, configure_codex):
+    configure_codex()
     app_id = _create_app(auth_client)
     plan_text = json.dumps(
         {
@@ -2109,7 +1907,7 @@ def test_nlcompile_refine_limit(auth_client, enable_claude_agent):
             json={
                 "app_id": app_id,
                 "instruction": "做一个可调整方案",
-                "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
+                "current_graph": {"nodes": [], "execution_edges": []},
             },
         )
         assert planned.status_code == 200, planned.text
@@ -2131,8 +1929,8 @@ def test_nlcompile_refine_limit(auth_client, enable_claude_agent):
         set_runtime_override(MockRuntime())
 
 
-def test_nlcompile_waiting_resume_with_text_returns_completed_plan(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_nlcompile_waiting_resume_with_text_returns_completed_plan(auth_client, configure_codex):
+    configure_codex()
     app_id = _create_app(auth_client)
     patch_text = json.dumps(
         {
@@ -2168,7 +1966,7 @@ def test_nlcompile_waiting_resume_with_text_returns_completed_plan(auth_client, 
         json={
             "app_id": app_id,
             "instruction": f"[[ask_user:{json.dumps(ask_payload, ensure_ascii=False)}]] [[respond:{patch_text}]]",
-            "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
+            "current_graph": {"nodes": [], "execution_edges": []},
         },
     )
     assert response.status_code == 200, response.text
@@ -2187,8 +1985,8 @@ def test_nlcompile_waiting_resume_with_text_returns_completed_plan(auth_client, 
     assert body["new_graph"]["nodes"][0]["id"] == "n_after_text"
 
 
-def test_nlcompile_cancel_running_session_returns_409(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_nlcompile_cancel_running_session_returns_409(auth_client, configure_codex):
+    configure_codex()
     app_id = _create_app(auth_client)
     compile_id = f"nlc_cancel_{uuid.uuid4().hex[:8]}"
 
@@ -2199,7 +1997,7 @@ def test_nlcompile_cancel_running_session_returns_409(auth_client, enable_claude
                 "app_id": app_id,
                 "compile_id": compile_id,
                 "instruction": '[[delay:5]] [[respond:{"patches":[]}]]',
-                "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
+                "current_graph": {"nodes": [], "execution_edges": []},
             },
         )
 
@@ -2214,8 +2012,8 @@ def test_nlcompile_cancel_running_session_returns_409(auth_client, enable_claude
     assert response.json()["detail"] == "编译已取消"
 
 
-def test_nlcompile_cancel_waiting_session_removes_resume(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_nlcompile_cancel_waiting_session_removes_resume(auth_client, configure_codex):
+    configure_codex()
     app_id = _create_app(auth_client)
     patch_text = json.dumps({"patches": []})
     ask_payload = {
@@ -2234,7 +2032,7 @@ def test_nlcompile_cancel_waiting_session_removes_resume(auth_client, enable_cla
         json={
             "app_id": app_id,
             "instruction": f"[[ask_user:{json.dumps(ask_payload, ensure_ascii=False)}]] [[respond:{patch_text}]]",
-            "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
+            "current_graph": {"nodes": [], "execution_edges": []},
         },
     )
     assert response.status_code == 200, response.text
@@ -2252,8 +2050,8 @@ def test_nlcompile_cancel_waiting_session_removes_resume(auth_client, enable_cla
     assert resumed.json()["detail"] == "编译会话不存在"
 
 
-def test_nlcompile_pre_cancelled_compile_id_does_not_start_runtime(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_nlcompile_pre_cancelled_compile_id_does_not_start_runtime(auth_client, configure_codex):
+    configure_codex()
     app_id = _create_app(auth_client)
     compile_id = f"nlc_precancel_{uuid.uuid4().hex[:8]}"
 
@@ -2265,7 +2063,7 @@ def test_nlcompile_pre_cancelled_compile_id_does_not_start_runtime(auth_client, 
             "app_id": app_id,
             "compile_id": compile_id,
             "instruction": '[[respond:{"patches":[]}]]',
-            "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
+            "current_graph": {"nodes": [], "execution_edges": []},
         },
     )
 
@@ -2273,8 +2071,8 @@ def test_nlcompile_pre_cancelled_compile_id_does_not_start_runtime(auth_client, 
     assert response.json()["detail"] == "编译已取消"
 
 
-def test_nlcompile_apply_owned_by_other_user_returns_404(client, auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_nlcompile_apply_owned_by_other_user_returns_404(client, auth_client, configure_codex):
+    configure_codex()
     app_id = _create_app(auth_client)
     patch_text = json.dumps(
         {
@@ -2299,7 +2097,7 @@ def test_nlcompile_apply_owned_by_other_user_returns_404(client, auth_client, en
             json={
                 "app_id": app_id,
                 "instruction": "添加一个生成节点",
-                "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
+                "current_graph": {"nodes": [], "execution_edges": []},
             },
         )
         assert planned.status_code == 200, planned.text
@@ -2319,8 +2117,8 @@ def test_nlcompile_apply_owned_by_other_user_returns_404(client, auth_client, en
         set_runtime_override(MockRuntime())
 
 
-def test_nlcompile_apply_rejects_ask_user(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_nlcompile_apply_rejects_ask_user(auth_client, configure_codex):
+    configure_codex()
     app_id = _create_app(auth_client)
     runtime = ApplyAsksRuntime(text=json.dumps({"patches": []}))
     set_runtime_override(runtime)
@@ -2330,7 +2128,7 @@ def test_nlcompile_apply_rejects_ask_user(auth_client, enable_claude_agent):
             json={
                 "app_id": app_id,
                 "instruction": "实施时不要再提问",
-                "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
+                "current_graph": {"nodes": [], "execution_edges": []},
             },
         )
         assert planned.status_code == 200, planned.text
@@ -2346,8 +2144,8 @@ def test_nlcompile_apply_rejects_ask_user(auth_client, enable_claude_agent):
     assert runtime.call_count == 2
 
 
-def test_nlcompile_rejects_empty_patches_after_repair_attempts(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_nlcompile_rejects_empty_patches_after_repair_attempts(auth_client, configure_codex):
+    configure_codex()
     app_id = _create_app(auth_client)
     runtime = ScriptedRuntime(text=json.dumps({"patches": []}))
     set_runtime_override(runtime)
@@ -2357,7 +2155,7 @@ def test_nlcompile_rejects_empty_patches_after_repair_attempts(auth_client, enab
             {
                 "app_id": app_id,
                 "instruction": "新增一个摘要生成节点",
-                "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
+                "current_graph": {"nodes": [], "execution_edges": []},
             },
         )
     finally:
@@ -2372,8 +2170,8 @@ def test_nlcompile_rejects_empty_patches_after_repair_attempts(auth_client, enab
     assert all("patches 不能为空" in prompt for prompt in runtime.prompts[2:])
 
 
-def test_nlcompile_rejects_invalid_patches_after_repair_attempts(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_nlcompile_rejects_invalid_patches_after_repair_attempts(auth_client, configure_codex):
+    configure_codex()
     app_id = _create_app(auth_client)
     payload = json.dumps(
         {
@@ -2409,7 +2207,7 @@ def test_nlcompile_rejects_invalid_patches_after_repair_attempts(auth_client, en
             {
                 "app_id": app_id,
                 "instruction": "新增两个 generate",
-                "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
+                "current_graph": {"nodes": [], "execution_edges": []},
             },
         )
     finally:
@@ -2424,11 +2222,10 @@ def test_nlcompile_rejects_invalid_patches_after_repair_attempts(auth_client, en
     assert "add_node.node 不符合节点类型约束" in runtime.prompts[2]
 
 
-def test_nlcompile_rejects_second_singleton_nodes(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_nlcompile_rejects_second_singleton_nodes(auth_client, configure_codex):
+    configure_codex()
     app_id = _create_app(auth_client)
     current_graph = {
-        "agent": "claude",
         "nodes": [
             {
                 "id": "n_input",
@@ -2494,11 +2291,10 @@ def test_nlcompile_rejects_second_singleton_nodes(auth_client, enable_claude_age
     assert "工作流只能有一个 output 节点" in runtime.prompts[2]
 
 
-def test_nlcompile_rejects_second_user_input_node(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_nlcompile_rejects_second_user_input_node(auth_client, configure_codex):
+    configure_codex()
     app_id = _create_app(auth_client)
     current_graph = {
-        "agent": "claude",
         "nodes": [
             {
                 "id": "n_input",
@@ -2546,8 +2342,8 @@ def test_nlcompile_rejects_second_user_input_node(auth_client, enable_claude_age
     assert "工作流只能有一个 user_input 节点" in runtime.prompts[2]
 
 
-def test_nlcompile_repairs_invalid_patch_on_second_attempt(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_nlcompile_repairs_invalid_patch_on_second_attempt(auth_client, configure_codex):
+    configure_codex()
     app_id = _create_app(auth_client)
     invalid = json.dumps(
         {
@@ -2588,7 +2384,7 @@ def test_nlcompile_repairs_invalid_patch_on_second_attempt(auth_client, enable_c
             {
                 "app_id": app_id,
                 "instruction": "新增一个 generate",
-                "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
+                "current_graph": {"nodes": [], "execution_edges": []},
             },
         )
     finally:
@@ -2605,8 +2401,8 @@ def test_nlcompile_repairs_invalid_patch_on_second_attempt(auth_client, enable_c
     assert "上一轮 Agent 输出" in runtime.prompts[2]
 
 
-def test_nlcompile_retries_when_prompt_assistant_fails(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_nlcompile_retries_when_prompt_assistant_fails(auth_client, configure_codex):
+    configure_codex()
     app_id = _create_app(auth_client)
     first = json.dumps(
         {
@@ -2650,7 +2446,7 @@ def test_nlcompile_retries_when_prompt_assistant_fails(auth_client, enable_claud
             {
                 "app_id": app_id,
                 "instruction": "新增一个 generate",
-                "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
+                "current_graph": {"nodes": [], "execution_edges": []},
             },
         )
     finally:
@@ -2666,8 +2462,8 @@ def test_nlcompile_retries_when_prompt_assistant_fails(auth_client, enable_claud
     assert body["new_graph"]["nodes"][0]["prompt"] == "修复后的提示词"
 
 
-def test_nlcompile_applies_prompt_assistant_output_contract(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_nlcompile_applies_prompt_assistant_output_contract(auth_client, configure_codex):
+    configure_codex()
     app_id = _create_app(auth_client)
     patch_text = json.dumps(
         {
@@ -2719,7 +2515,7 @@ def test_nlcompile_applies_prompt_assistant_output_contract(auth_client, enable_
             {
                 "app_id": app_id,
                 "instruction": "新增一个生成选题的节点",
-                "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
+                "current_graph": {"nodes": [], "execution_edges": []},
             },
         )
     finally:
@@ -2733,8 +2529,8 @@ def test_nlcompile_applies_prompt_assistant_output_contract(auth_client, enable_
     assert body["applied_patches"][0]["node"]["output_contract"] == output_contract
 
 
-def test_nlcompile_prunes_redundant_transitive_edge(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_nlcompile_prunes_redundant_transitive_edge(auth_client, configure_codex):
+    configure_codex()
     app_id = _create_app(auth_client)
     payload = json.dumps(
         {
@@ -2784,7 +2580,7 @@ def test_nlcompile_prunes_redundant_transitive_edge(auth_client, enable_claude_a
             {
                 "app_id": app_id,
                 "instruction": "新增三步串行生成节点",
-                "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
+                "current_graph": {"nodes": [], "execution_edges": []},
             },
         )
     finally:
@@ -2802,8 +2598,8 @@ def test_nlcompile_prunes_redundant_transitive_edge(auth_client, enable_claude_a
     assert body["warnings"] == ["已自动清理 1 条冗余连线"]
 
 
-def test_nlcompile_prunes_existing_redundant_edge_on_unrelated_patch(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_nlcompile_prunes_existing_redundant_edge_on_unrelated_patch(auth_client, configure_codex):
+    configure_codex()
     app_id = _create_app(auth_client)
     payload = json.dumps(
         {
@@ -2826,7 +2622,6 @@ def test_nlcompile_prunes_existing_redundant_edge_on_unrelated_patch(auth_client
                 "app_id": app_id,
                 "instruction": "只更新 B 节点标题",
                 "current_graph": {
-                    "agent": "claude",
                     "nodes": [
                         {
                             "id": "n_a",
@@ -2869,8 +2664,8 @@ def test_nlcompile_prunes_existing_redundant_edge_on_unrelated_patch(auth_client
     assert body["warnings"] == ["已自动清理 1 条冗余连线"]
 
 
-def test_nlcompile_repair_prompt_rejects_delete_edge_and_restates_protocol(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_nlcompile_repair_prompt_rejects_delete_edge_and_restates_protocol(auth_client, configure_codex):
+    configure_codex()
     app_id = _create_app(auth_client)
 
     def patch_payload(*, include_redundant: bool, delete_edge: bool = False) -> str:
@@ -2927,7 +2722,7 @@ def test_nlcompile_repair_prompt_rejects_delete_edge_and_restates_protocol(auth_
             {
                 "app_id": app_id,
                 "instruction": "新增三步串行生成节点",
-                "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
+                "current_graph": {"nodes": [], "execution_edges": []},
             },
         )
     finally:
@@ -2952,8 +2747,8 @@ def test_nlcompile_repair_prompt_rejects_delete_edge_and_restates_protocol(auth_
     assert body["warnings"] == ["已自动清理 1 条冗余连线"]
 
 
-def test_nlcompile_allows_parallel_upstreams_to_same_target(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_nlcompile_allows_parallel_upstreams_to_same_target(auth_client, configure_codex):
+    configure_codex()
     app_id = _create_app(auth_client)
     payload = json.dumps(
         {
@@ -3002,7 +2797,7 @@ def test_nlcompile_allows_parallel_upstreams_to_same_target(auth_client, enable_
             {
                 "app_id": app_id,
                 "instruction": "新增两个并行上游汇聚到一个节点",
-                "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
+                "current_graph": {"nodes": [], "execution_edges": []},
             },
         )
     finally:
@@ -3017,8 +2812,8 @@ def test_nlcompile_allows_parallel_upstreams_to_same_target(auth_client, enable_
     assert body["warnings"] == []
 
 
-def test_nlcompile_prune_keeps_condition_branch_edges(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_nlcompile_prune_keeps_condition_branch_edges(auth_client, configure_codex):
+    configure_codex()
     app_id = _create_app(auth_client)
     payload = json.dumps(
         {
@@ -3041,7 +2836,6 @@ def test_nlcompile_prune_keeps_condition_branch_edges(auth_client, enable_claude
                 "app_id": app_id,
                 "instruction": "只更新 B 节点标题",
                 "current_graph": {
-                    "agent": "claude",
                     "nodes": [
                         {
                             "id": "n_cond",
@@ -3085,8 +2879,8 @@ def test_nlcompile_prune_keeps_condition_branch_edges(auth_client, enable_claude
     assert body["warnings"] == []
 
 
-def test_nlcompile_prunes_redundant_transitive_execution_edge(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_nlcompile_prunes_redundant_transitive_execution_edge(auth_client, configure_codex):
+    configure_codex()
     app_id = _create_app(auth_client)
     payload = json.dumps(
         {
@@ -3109,7 +2903,6 @@ def test_nlcompile_prunes_redundant_transitive_execution_edge(auth_client, enabl
                 "app_id": app_id,
                 "instruction": "只更新 B 节点标题",
                 "current_graph": {
-                    "agent": "claude",
                     "nodes": [
                         {
                             "id": "n_a",
@@ -3151,8 +2944,8 @@ def test_nlcompile_prunes_redundant_transitive_execution_edge(auth_client, enabl
     assert body["warnings"] == ["已自动清理 1 条冗余连线"]
 
 
-def test_nlcompile_logs_invalid_patch_reason(auth_client, enable_claude_agent, monkeypatch):
-    enable_claude_agent()
+def test_nlcompile_logs_invalid_patch_reason(auth_client, configure_codex, monkeypatch):
+    configure_codex()
     app_id = _create_app(auth_client)
     logged: list[str] = []
 
@@ -3183,7 +2976,7 @@ def test_nlcompile_logs_invalid_patch_reason(auth_client, enable_claude_agent, m
             {
                 "app_id": app_id,
                 "instruction": "新增一个非法 generate",
-                "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
+                "current_graph": {"nodes": [], "execution_edges": []},
             },
         )
     finally:
@@ -3196,8 +2989,8 @@ def test_nlcompile_logs_invalid_patch_reason(auth_client, enable_claude_agent, m
     assert any("add_node.node 不符合节点类型约束" in item for item in logged)
 
 
-def test_nlcompile_retries_order_dependent_output_source_update(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_nlcompile_retries_order_dependent_output_source_update(auth_client, configure_codex):
+    configure_codex()
     app_id = _create_app(auth_client)
     output_prompt = (
         "基于上游生成代码和交付文档，整理最终交付结果。必须提供生成代码和文档相关文件的下载链接或可下载文件路径；"
@@ -3257,7 +3050,6 @@ def test_nlcompile_retries_order_dependent_output_source_update(auth_client, ena
                 "app_id": app_id,
                 "instruction": "输出文档，拆成一个节点，在最终输出前，拆分对应的提示词",
                 "current_graph": {
-                    "agent": "claude",
                     "nodes": [
                         {
                             "id": "n_input_industry",
@@ -3323,8 +3115,8 @@ def test_nlcompile_retries_order_dependent_output_source_update(auth_client, ena
     assert "e_generated_docs_to_output" in edge_ids
 
 
-def test_nlcompile_soft_copyright_replaces_manual_supplement_nodes_with_ai(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_nlcompile_soft_copyright_replaces_manual_supplement_nodes_with_ai(auth_client, configure_codex):
+    configure_codex()
     app_id = _create_app(auth_client)
     instruction = "删除用户补充公司主体信息，删除测试账号补充，由ai生成"
     payload = json.dumps(
@@ -3382,7 +3174,6 @@ def test_nlcompile_soft_copyright_replaces_manual_supplement_nodes_with_ai(auth_
                 "app_id": app_id,
                 "instruction": instruction,
                 "current_graph": {
-                    "agent": "claude",
                     "nodes": [
                         {
                             "id": "n_input",
@@ -3465,8 +3256,8 @@ def test_nlcompile_soft_copyright_replaces_manual_supplement_nodes_with_ai(auth_
     assert runtime.output_schemas[1] == NL_COMPILE_PATCH_OUTPUT_SCHEMA
 
 
-def test_nlcompile_rejects_invalid_condition_edge_handle(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_nlcompile_rejects_invalid_condition_edge_handle(auth_client, configure_codex):
+    configure_codex()
     app_id = _create_app(auth_client)
     payload = json.dumps(
         {
@@ -3492,7 +3283,6 @@ def test_nlcompile_rejects_invalid_condition_edge_handle(auth_client, enable_cla
                 "app_id": app_id,
                 "instruction": "连到错误分支",
                 "current_graph": {
-                    "agent": "claude",
                     "nodes": [
                         {
                             "id": "n_cond",
@@ -3523,8 +3313,8 @@ def test_nlcompile_rejects_invalid_condition_edge_handle(auth_client, enable_cla
     assert runtime.call_count == 4
 
 
-def test_nlcompile_accepts_markdown_codeblock(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_nlcompile_accepts_markdown_codeblock(auth_client, configure_codex):
+    configure_codex()
     app_id = _create_app(auth_client)
     inner = json.dumps(
         {
@@ -3550,7 +3340,7 @@ def test_nlcompile_accepts_markdown_codeblock(auth_client, enable_claude_agent):
             {
                 "app_id": app_id,
                 "instruction": "尝试删除一条不存在的连线",
-                "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
+                "current_graph": {"nodes": [], "execution_edges": []},
             },
         )
     finally:
@@ -3562,8 +3352,8 @@ def test_nlcompile_accepts_markdown_codeblock(auth_client, enable_claude_agent):
     assert body["new_graph"]["nodes"][0]["id"] == "n_from_codeblock"
 
 
-def test_nlcompile_runtime_failure_returns_502(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_nlcompile_runtime_failure_returns_502(auth_client, configure_codex):
+    configure_codex()
     app_id = _create_app(auth_client)
     set_runtime_override(ScriptedRuntime(text="", finished_with="error", error="boom"))
     try:
@@ -3572,7 +3362,7 @@ def test_nlcompile_runtime_failure_returns_502(auth_client, enable_claude_agent)
             json={
                 "app_id": app_id,
                 "instruction": "随便",
-                "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
+                "current_graph": {"nodes": [], "execution_edges": []},
             },
         )
     finally:
@@ -3582,8 +3372,8 @@ def test_nlcompile_runtime_failure_returns_502(auth_client, enable_claude_agent)
     assert response.json()["detail"] == "Agent 编译失败，请检查 Agent 配置或稍后重试"
 
 
-def test_nlcompile_unparseable_output_returns_502(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_nlcompile_unparseable_output_returns_502(auth_client, configure_codex):
+    configure_codex()
     app_id = _create_app(auth_client)
     set_runtime_override(ScriptedRuntime(text="not json at all"))
     try:
@@ -3592,7 +3382,7 @@ def test_nlcompile_unparseable_output_returns_502(auth_client, enable_claude_age
             {
                 "app_id": app_id,
                 "instruction": "随便",
-                "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
+                "current_graph": {"nodes": [], "execution_edges": []},
             },
         )
     finally:
@@ -3601,21 +3391,21 @@ def test_nlcompile_unparseable_output_returns_502(auth_client, enable_claude_age
     assert response.status_code == 502
 
 
-def test_nlcompile_app_not_found_returns_404(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_nlcompile_app_not_found_returns_404(auth_client, configure_codex):
+    configure_codex()
     response = auth_client.post(
         "/api/nlcompile",
         json={
             "app_id": "app_does_not_exist",
             "instruction": "随便",
-            "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
+            "current_graph": {"nodes": [], "execution_edges": []},
         },
     )
     assert response.status_code == 404
 
 
-def test_nlcompile_app_owned_by_other_user_returns_404(client, auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_nlcompile_app_owned_by_other_user_returns_404(client, auth_client, configure_codex):
+    configure_codex()
     app_id = _create_app(auth_client)
 
     # 创建一个普通用户，用它的 token 访问 admin 的 app。
@@ -3626,7 +3416,7 @@ def test_nlcompile_app_owned_by_other_user_returns_404(client, auth_client, enab
         json={
             "app_id": app_id,
             "instruction": "随便",
-            "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
+            "current_graph": {"nodes": [], "execution_edges": []},
         },
     )
     assert response.status_code == 404
@@ -3634,7 +3424,6 @@ def test_nlcompile_app_owned_by_other_user_returns_404(client, auth_client, enab
 
 def test_slim_graph_for_prompt_strips_layout_and_truncates_assets():
     graph = {
-        "agent": "claude",
         "viewport": {"x": 1, "y": 2, "zoom": 0.5},
         "nodes": [
             {
@@ -3655,7 +3444,7 @@ def test_slim_graph_for_prompt_strips_layout_and_truncates_assets():
         ],
         "execution_edges": [{"id": "e1", "source": "n_asset", "target": "n_generate"}],
     }
-    prompt = nlcompile_service.build_plan_prompt("改一下", graph, "$graph_json|$instruction", "PROTO")
+    prompt = nlcompile_service.build_plan_prompt("改一下", graph, "$graph_json|$instruction")
     assert '"position"' not in prompt
     assert '"viewport"' not in prompt
     assert '"width"' not in prompt

@@ -7,7 +7,7 @@ from pathlib import Path
 
 from app.db import SessionLocal
 from app.models import App
-from app.runtime.base import AgentChunk, AgentExecutionResult, AgentProviderStatus
+from app.runtime.base import AgentChunk, AgentExecutionResult, AgentRuntimeStatus
 from app.runtime.factory import set_runtime_override
 from app.services.admin import ADMIN_USER_ID
 from app.services.runtime_paths import run_workspace
@@ -42,7 +42,6 @@ OUTPUT_FROM_INPUT_NODE = {
 
 def _user_input_output_graph() -> dict:
     return {
-        "agent": "claude",
         "nodes": [USER_INPUT_NODE, OUTPUT_FROM_INPUT_NODE],
         "execution_edges": [{"id": "e_out", "source": "n_input", "target": "n_out"}],
     }
@@ -53,8 +52,8 @@ class PromptCaptureRuntime:
         self.prompts: list[str] = []
         self.workspaces: list[Path] = []
 
-    async def detect_status(self) -> AgentProviderStatus:
-        return AgentProviderStatus(
+    async def detect_status(self) -> AgentRuntimeStatus:
+        return AgentRuntimeStatus(
             installed=True,
             runnable=True,
             identity="prompt-capture",
@@ -119,10 +118,9 @@ def _wait_for_terminal(auth_client, run_id: str, *, timeout: float = 5.0) -> dic
     raise AssertionError(f"run {run_id} did not finish within {timeout}s")
 
 
-def test_create_run_with_simple_input_asset_graph(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_create_run_with_simple_input_asset_graph(auth_client, configure_codex):
+    configure_codex()
     graph = {
-        "agent": "claude",
         "nodes": [
             USER_INPUT_NODE,
             ASSET_NODE,
@@ -147,8 +145,8 @@ def test_create_run_with_simple_input_asset_graph(auth_client, enable_claude_age
     assert all(step["status"] == "success" for step in final["steps"])
 
 
-def test_create_run_rejects_unknown_input_key(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_create_run_rejects_unknown_input_key(auth_client, configure_codex):
+    configure_codex()
     graph = _user_input_output_graph()
     app_id = _build_app(auth_client, graph=graph)
     response = auth_client.post(
@@ -173,11 +171,10 @@ def test_create_run_rejects_non_empty_graph_without_output(auth_client):
     assert response.json()["detail"] == "工作流必须包含 output 节点"
 
 
-def test_create_run_revalidates_stored_asset_upload_owner(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_create_run_revalidates_stored_asset_upload_owner(auth_client, configure_codex):
+    configure_codex()
     created = auth_client.post("/api/apps", json={"name": "Stored Missing Asset Run"}).json()
     graph = {
-        "agent": "claude",
         "nodes": [
             {
                 "id": "n_asset",
@@ -213,7 +210,6 @@ def test_create_run_revalidates_stored_asset_upload_owner(auth_client, enable_cl
 
 def test_patch_app_rejects_cyclic_graph(auth_client):
     graph = {
-        "agent": "claude",
         "nodes": [
             {
                 "id": "n_gen_a",
@@ -241,90 +237,9 @@ def test_patch_app_rejects_cyclic_graph(auth_client):
     assert "环路" in response.json()["detail"]
 
 
-def test_create_run_requires_enabled_agent_for_generate_graph(auth_client):
-    graph = {
-        "agent": "claude",
-        "nodes": [
-            {
-                "id": "n_gen",
-                "type": "generate",
-                "position": {"x": 0, "y": 0},
-                "title": "Gen",
-                "prompt": "hi",
-            },
-            {
-                "id": "n_out",
-                "type": "output",
-                "position": {"x": 200, "y": 0},
-                "title": "Output",
-                "prompt": "render",
-            },
-        ],
-        "execution_edges": [{"id": "e_out", "source": "n_gen", "target": "n_out"}],
-    }
-    app_id = _build_app(auth_client, graph=graph)
-    response = auth_client.post("/api/runs", json={"app_id": app_id, "inputs": {}})
-    assert response.status_code == 400
-    assert response.json()["detail"] == "无可用 Agent，请先在设置中启用 Agent"
 
-
-def test_create_run_requires_graph_agent_for_generate_graph(auth_client, enable_claude_agent):
-    enable_claude_agent()
-    graph = {
-        "nodes": [
-            {
-                "id": "n_gen",
-                "type": "generate",
-                "position": {"x": 0, "y": 0},
-                "title": "Gen",
-                "prompt": "hi",
-            },
-            {
-                "id": "n_out",
-                "type": "output",
-                "position": {"x": 200, "y": 0},
-                "title": "Output",
-                "prompt": "render",
-            },
-        ],
-        "execution_edges": [{"id": "e_out", "source": "n_gen", "target": "n_out"}],
-    }
-    app_id = _build_app(auth_client, graph=graph)
-    response = auth_client.post("/api/runs", json={"app_id": app_id, "inputs": {}})
-    assert response.status_code == 400
-    assert response.json()["detail"] == "应用必须选择 Agent"
-
-
-def test_create_run_rejects_disabled_graph_agent(auth_client, enable_claude_agent):
-    enable_claude_agent()
-    graph = {
-        "agent": "codex",
-        "nodes": [
-            {
-                "id": "n_gen",
-                "type": "generate",
-                "position": {"x": 0, "y": 0},
-                "title": "Gen",
-                "prompt": "hi",
-            },
-            {
-                "id": "n_out",
-                "type": "output",
-                "position": {"x": 200, "y": 0},
-                "title": "Output",
-                "prompt": "render",
-            },
-        ],
-        "execution_edges": [{"id": "e_out", "source": "n_gen", "target": "n_out"}],
-    }
-    app_id = _build_app(auth_client, graph=graph)
-    response = auth_client.post("/api/runs", json={"app_id": app_id, "inputs": {}})
-    assert response.status_code == 400
-    assert "未启用" in response.json()["detail"]
-
-
-def test_runtime_prompt_uses_staged_upload_path_for_input_attachment(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_runtime_prompt_uses_staged_upload_path_for_input_attachment(auth_client, configure_codex):
+    configure_codex()
     runtime = PromptCaptureRuntime()
     set_runtime_override(runtime)
     try:
@@ -335,7 +250,6 @@ def test_runtime_prompt_uses_staged_upload_path_for_input_attachment(auth_client
         assert upload.status_code == 200, upload.text
         upload_id = upload.json()["id"]
         graph = {
-            "agent": "claude",
             "nodes": [
                 USER_INPUT_NODE,
                 {
@@ -389,8 +303,8 @@ def test_runtime_prompt_uses_staged_upload_path_for_input_attachment(auth_client
         set_runtime_override(MockRuntime())
 
 
-def test_non_owner_can_run_run_only_app_with_file_asset(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_non_owner_can_run_run_only_app_with_file_asset(auth_client, configure_codex):
+    configure_codex()
     runtime = PromptCaptureRuntime()
     set_runtime_override(runtime)
     try:
@@ -402,7 +316,6 @@ def test_non_owner_can_run_run_only_app_with_file_asset(auth_client, enable_clau
         upload_id = upload.json()["id"]
         app = auth_client.post("/api/apps", json={"name": "Run Only File Asset"}).json()
         graph = {
-            "agent": "claude",
             "nodes": [
                 {
                     "id": "n_asset",
@@ -460,8 +373,8 @@ def test_non_owner_can_run_run_only_app_with_file_asset(auth_client, enable_clau
         set_runtime_override(MockRuntime())
 
 
-def test_non_owner_can_run_public_app_with_drawing_asset(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_non_owner_can_run_public_app_with_drawing_asset(auth_client, configure_codex):
+    configure_codex()
     runtime = PromptCaptureRuntime()
     set_runtime_override(runtime)
     try:
@@ -473,7 +386,6 @@ def test_non_owner_can_run_public_app_with_drawing_asset(auth_client, enable_cla
         upload_id = upload.json()["id"]
         app = auth_client.post("/api/apps", json={"name": "Public Drawing Asset"}).json()
         graph = {
-            "agent": "claude",
             "nodes": [
                 {
                     "id": "n_asset",
@@ -528,8 +440,8 @@ def test_non_owner_can_run_public_app_with_drawing_asset(auth_client, enable_cla
         set_runtime_override(MockRuntime())
 
 
-def test_get_run_404_for_other_user(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_get_run_404_for_other_user(auth_client, configure_codex):
+    configure_codex()
     graph = _user_input_output_graph()
     app_id = _build_app(auth_client, graph=graph)
     run = auth_client.post(
@@ -545,8 +457,8 @@ def test_get_run_404_for_other_user(auth_client, enable_claude_agent):
     assert response.json()["detail"] == "运行记录不存在"
 
 
-def test_list_run_summaries_omits_heavy_run_detail(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_list_run_summaries_omits_heavy_run_detail(auth_client, configure_codex):
+    configure_codex()
     graph = _user_input_output_graph()
     app_id = _build_app(auth_client, graph=graph)
     run = auth_client.post(
@@ -566,8 +478,8 @@ def test_list_run_summaries_omits_heavy_run_detail(auth_client, enable_claude_ag
     assert "recovery" not in summary
 
 
-def test_public_app_run_history_is_isolated_per_runner(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_public_app_run_history_is_isolated_per_runner(auth_client, configure_codex):
+    configure_codex()
     admin_auth = auth_client.headers["Authorization"]
     graph = _user_input_output_graph()
     app_id = _build_app(auth_client, graph=graph)
@@ -608,8 +520,8 @@ def test_public_app_run_history_is_isolated_per_runner(auth_client, enable_claud
     assert auth_client.get(f"/api/runs/{runner_run_id}").status_code == 404
 
 
-def test_delete_run_only_after_terminal(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_delete_run_only_after_terminal(auth_client, configure_codex):
+    configure_codex()
     graph = _user_input_output_graph()
     app_id = _build_app(auth_client, graph=graph)
     run = auth_client.post(
@@ -626,8 +538,8 @@ def test_delete_run_only_after_terminal(auth_client, enable_claude_agent):
     assert not workspace.exists()
 
 
-def test_delete_app_cleans_run_input_uploads(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_delete_app_cleans_run_input_uploads(auth_client, configure_codex):
+    configure_codex()
     graph = _user_input_output_graph()
     app_id = _build_app(auth_client, graph=graph)
     upload = auth_client.post(
@@ -660,8 +572,8 @@ def test_delete_app_cleans_run_input_uploads(auth_client, enable_claude_agent):
     assert resolve_upload(ADMIN_USER_ID, upload_id) is None
 
 
-def test_delete_public_app_with_other_user_runs_archives_and_keeps_history(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_delete_public_app_with_other_user_runs_archives_and_keeps_history(auth_client, configure_codex):
+    configure_codex()
     admin_auth = auth_client.headers["Authorization"]
     graph = _user_input_output_graph()
     app_id = _build_app(auth_client, graph=graph)
@@ -747,9 +659,9 @@ def test_delete_public_app_with_other_user_runs_archives_and_keeps_history(auth_
     assert auth_client.post("/api/runs", json={"app_id": app_id, "inputs": {"n_input": "x"}}).status_code == 404
 
 
-def test_delete_run_rejected_when_not_terminal(auth_client, monkeypatch, enable_claude_agent):
+def test_delete_run_rejected_when_not_terminal(auth_client, monkeypatch, configure_codex):
     """通过把 orchestrator schedule 改成 no-op，让 run 永远停在 pending。"""
-    enable_claude_agent()
+    configure_codex()
 
     from app.api import runs as runs_api
 
@@ -767,8 +679,8 @@ def test_delete_run_rejected_when_not_terminal(auth_client, monkeypatch, enable_
     assert response.json()["detail"] == "只能删除已结束的运行"
 
 
-def test_run_attachments_404_for_unknown_upload(auth_client, enable_claude_agent):
-    enable_claude_agent()
+def test_run_attachments_404_for_unknown_upload(auth_client, configure_codex):
+    configure_codex()
     graph = _user_input_output_graph()
     app_id = _build_app(auth_client, graph=graph)
     response = auth_client.post(
@@ -784,10 +696,10 @@ def test_run_attachments_404_for_unknown_upload(auth_client, enable_claude_agent
     assert response.json()["detail"] == "附件不存在"
 
 
-def test_run_inputs_too_large(auth_client, monkeypatch, enable_claude_agent):
+def test_run_inputs_too_large(auth_client, monkeypatch, configure_codex):
     from app.config import get_settings
 
-    enable_claude_agent()
+    configure_codex()
     monkeypatch.setattr(get_settings(), "max_input_size_bytes", 8)
     graph = _user_input_output_graph()
     app_id = _build_app(auth_client, graph=graph)

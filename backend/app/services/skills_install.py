@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import Skill
 from app.schemas import RuntimeSkillConfig
 
-from .runtime_paths import claude_home, codex_home
+from .runtime_paths import codex_home
 
 
 MD5_MARKER = ".mira_skill_md5"
@@ -21,7 +21,6 @@ async def sync_global_skills(db: AsyncSession) -> None:
     Skills 是 App run 级 Tool，不能继续全局暴露给所有 Agent 调用。
     具体 run 会通过 ``sync_runtime_skills`` 同步到 scoped HOME。
     """
-    _sync_skill_dir([], claude_home() / ".claude" / "skills")
     _sync_skill_dir([], codex_home() / ".agents" / "skills")
 
 

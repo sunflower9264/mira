@@ -4,7 +4,6 @@ import { useEditorStore } from '../../stores/useEditorStore';
 import { useSettingsStore } from '../../stores/useSettingsStore';
 import { showCaughtError, showErrorDialog } from '../../stores/useErrorDialogStore';
 import type {
-  AppAgentKind,
   ArtifactContractKind,
   AssetNode,
   ConditionBranch,
@@ -24,11 +23,10 @@ import { CONDITION_DEFAULT_BRANCH_KEY } from '../../types';
 import { cancelPromptAssistant, fetchUploadBlob, generatePromptAssistant, resumePromptAssistant, uploadFile, type PromptAssistantResponse } from '../../lib/api';
 import { uuid } from '../../lib/utils';
 import {
-  defaultReasoningEffortForAgent,
-  isAgentEnabled,
-  reasoningEffortOptionsForAgent,
-  supportedModelsForAgent,
-} from '../../lib/agentOptions';
+  defaultReasoningEffort,
+  reasoningEffortOptions,
+  supportedModels,
+} from '../../lib/modelOptions';
 import { SelectDropdown } from '../common/SelectDropdown';
 import { LoadingOverlay } from '../common/LoadingOverlay';
 import { completeDecisionAnswers, DecisionPromptPanel } from '../common/DecisionPromptPanel';
@@ -56,7 +54,6 @@ const TEXT_EDIT_HISTORY_OPTS = { skipHistory: true } as const;
 
 export function StepTab() {
   const nodes = useEditorStore((s) => s.app?.graph.nodes ?? EMPTY_NODES);
-  const appAgent = useEditorStore((s) => s.app?.graph.agent ?? '');
   const selectedId = useEditorStore((s) => s.selectedId);
   const selectedIds = useEditorStore((s) => s.selectedIds);
   const patchNode = useEditorStore((s) => s.patchNode);
@@ -80,13 +77,13 @@ export function StepTab() {
     case 'user_input':
       return <UserInputEditor node={selectedNode} patchNode={patchNode} />;
     case 'generate':
-      return <GenerateEditor node={selectedNode} appAgent={appAgent} patchNode={patchNode} />;
+      return <GenerateEditor node={selectedNode} patchNode={patchNode} />;
     case 'output':
-      return <OutputEditor node={selectedNode} appAgent={appAgent} patchNode={patchNode} />;
+      return <OutputEditor node={selectedNode} patchNode={patchNode} />;
     case 'asset':
       return <AssetEditor node={selectedNode} patchNode={patchNode} />;
     case 'condition':
-      return <ConditionEditor node={selectedNode} appAgent={appAgent} patchNode={patchNode} />;
+      return <ConditionEditor node={selectedNode} patchNode={patchNode} />;
   }
 }
 
@@ -122,11 +119,9 @@ function UserInputEditor({
 
 function GenerateEditor({
   node,
-  appAgent,
   patchNode,
 }: {
   node: GenerateNode;
-  appAgent: AppAgentKind;
   patchNode: PatchNode;
 }) {
   const settings = useSettingsStore((s) => s.settings);
@@ -135,9 +130,8 @@ function GenerateEditor({
   const generatingPrompt = useEditorStore((s) => s.promptAssistantGenerations[node.id] != null);
   const updatePrompt = (prompt: string, opts?: PromptChangeOptions) =>
     patchNode(node.id, { prompt } as Partial<WorkflowNode>, { ...TEXT_EDIT_HISTORY_OPTS, ...opts });
-  const modelOptions = useMemo(() => supportedModelsForAgent(settings, appAgent), [settings, appAgent]);
-  const reasoningEffortOptions = useMemo(() => reasoningEffortOptionsForAgent(appAgent), [appAgent]);
-  const hasSelectedAgent = useMemo(() => isAgentEnabled(settings, appAgent), [settings, appAgent]);
+  const modelOptions = useMemo(() => supportedModels(settings), [settings]);
+  const effortOptions = useMemo(() => reasoningEffortOptions(), []);
 
   useEffect(() => {
     if (!settings) void loadSettings().catch(() => undefined);
@@ -156,16 +150,14 @@ function GenerateEditor({
             value={node.model ?? ''}
             options={modelOptions}
             onChange={(model) => patchNode(node.id, { model } as Partial<WorkflowNode>)}
-            disabled={!hasSelectedAgent}
+            disabled={modelOptions.length === 0}
           />
         </Field>
         <Field label="推理等级">
           <SelectDropdown
-            value={node.reasoning_effort ?? defaultReasoningEffortForAgent(appAgent) ?? ''}
-            options={reasoningEffortOptions}
+            value={node.reasoning_effort ?? defaultReasoningEffort()}
+            options={effortOptions}
             onChange={(reasoning_effort) => patchNode(node.id, { reasoning_effort: reasoning_effort as ReasoningEffort } as Partial<WorkflowNode>)}
-            disabled={!hasSelectedAgent || reasoningEffortOptions.length === 0}
-            emptyLabel="没有可用推理等级。"
           />
         </Field>
         <OutputContractField
@@ -189,7 +181,7 @@ function GenerateEditor({
         />
         运行前允许追问
       </label>
-      {settings && !hasSelectedAgent && <div className="text-xs text-red-600">请先在应用页选择已启用 Agent。</div>}
+      {settings && modelOptions.length === 0 && <div className="text-xs text-red-600">请先在设置中填写支持模型。</div>}
       <PromptField
         editorRef={promptEditorRef}
         node={node}
@@ -203,11 +195,9 @@ function GenerateEditor({
 
 function OutputEditor({
   node,
-  appAgent,
   patchNode,
 }: {
   node: OutputNode;
-  appAgent: AppAgentKind;
   patchNode: PatchNode;
 }) {
   const settings = useSettingsStore((s) => s.settings);
@@ -215,9 +205,8 @@ function OutputEditor({
   const promptEditorRef = useRef<PromptTokenEditorHandle>(null);
   const updatePrompt = (prompt: string, opts?: PromptChangeOptions) =>
     patchNode(node.id, { prompt } as Partial<WorkflowNode>, { ...TEXT_EDIT_HISTORY_OPTS, ...opts });
-  const modelOptions = useMemo(() => supportedModelsForAgent(settings, appAgent), [settings, appAgent]);
-  const reasoningEffortOptions = useMemo(() => reasoningEffortOptionsForAgent(appAgent), [appAgent]);
-  const hasSelectedAgent = useMemo(() => isAgentEnabled(settings, appAgent), [settings, appAgent]);
+  const modelOptions = useMemo(() => supportedModels(settings), [settings]);
+  const effortOptions = useMemo(() => reasoningEffortOptions(), []);
 
   useEffect(() => {
     if (!settings) void loadSettings().catch(() => undefined);
@@ -236,21 +225,19 @@ function OutputEditor({
             value={node.model ?? ''}
             options={modelOptions}
             onChange={(model) => patchNode(node.id, { model } as Partial<WorkflowNode>)}
-            disabled={!hasSelectedAgent}
+            disabled={modelOptions.length === 0}
           />
         </Field>
         <Field label="推理等级">
           <SelectDropdown
-            value={node.reasoning_effort ?? defaultReasoningEffortForAgent(appAgent) ?? ''}
-            options={reasoningEffortOptions}
+            value={node.reasoning_effort ?? defaultReasoningEffort()}
+            options={effortOptions}
             onChange={(reasoning_effort) => patchNode(node.id, { reasoning_effort: reasoning_effort as ReasoningEffort } as Partial<WorkflowNode>)}
-            disabled={!hasSelectedAgent || reasoningEffortOptions.length === 0}
-            emptyLabel="没有可用推理等级。"
           />
         </Field>
         <PromptToolInsertField node={node} editorRef={promptEditorRef} />
       </div>
-      {settings && !hasSelectedAgent && <div className="text-xs text-red-600">请先在应用页选择已启用 Agent。</div>}
+      {settings && modelOptions.length === 0 && <div className="text-xs text-red-600">请先在设置中填写支持模型。</div>}
       <PromptField editorRef={promptEditorRef} node={node} value={node.prompt ?? ''} onChange={updatePrompt} nodeLabel={node.title || '输出'} />
     </EditorShell>
   );
@@ -332,19 +319,16 @@ function AssetEditor({
 
 function ConditionEditor({
   node,
-  appAgent,
   patchNode,
 }: {
   node: ConditionNode;
-  appAgent: AppAgentKind;
   patchNode: PatchNode;
 }) {
   const settings = useSettingsStore((s) => s.settings);
   const loadSettings = useSettingsStore((s) => s.load);
   const promptEditorRef = useRef<PromptTokenEditorHandle>(null);
-  const modelOptions = useMemo(() => supportedModelsForAgent(settings, appAgent), [settings, appAgent]);
-  const reasoningEffortOptions = useMemo(() => reasoningEffortOptionsForAgent(appAgent), [appAgent]);
-  const hasSelectedAgent = useMemo(() => isAgentEnabled(settings, appAgent), [settings, appAgent]);
+  const modelOptions = useMemo(() => supportedModels(settings), [settings]);
+  const effortOptions = useMemo(() => reasoningEffortOptions(), []);
 
   useEffect(() => {
     if (!settings) void loadSettings().catch(() => undefined);
@@ -397,16 +381,14 @@ function ConditionEditor({
           value={node.model ?? ''}
           options={modelOptions}
           onChange={(model) => patchNode(node.id, { model } as Partial<WorkflowNode>)}
-          disabled={!hasSelectedAgent}
+          disabled={modelOptions.length === 0}
         />
       </Field>
       <Field label="推理等级">
         <SelectDropdown
-          value={node.reasoning_effort ?? defaultReasoningEffortForAgent(appAgent) ?? ''}
-          options={reasoningEffortOptions}
+          value={node.reasoning_effort ?? defaultReasoningEffort()}
+          options={effortOptions}
           onChange={(reasoning_effort) => patchNode(node.id, { reasoning_effort: reasoning_effort as ReasoningEffort } as Partial<WorkflowNode>)}
-          disabled={!hasSelectedAgent || reasoningEffortOptions.length === 0}
-          emptyLabel="没有可用推理等级。"
         />
       </Field>
       <PromptToolInsertField node={node} editorRef={promptEditorRef} />
@@ -421,7 +403,7 @@ function ConditionEditor({
       onTitleChange={(title) => patchNode(node.id, { title } as Partial<WorkflowNode>, TEXT_EDIT_HISTORY_OPTS)}
     >
       {renderHeaderControls}
-      {settings && !hasSelectedAgent && <div className="text-xs text-red-600">请先在应用页选择已启用 Agent。</div>}
+      {settings && modelOptions.length === 0 && <div className="text-xs text-red-600">请先在设置中填写支持模型。</div>}
       {node.mode === 'cases' && (
         <BranchListEditor branches={node.branches} onChange={updateBranches} onTextChange={updateBranchText} />
       )}
@@ -834,13 +816,8 @@ function PromptField({
   const generatePrompt = async () => {
     if (promptGeneration) return;
     const appId = app?.id;
-    const agent = app?.graph.agent;
     if (!appId) {
       setLocalError('应用尚未加载完成。');
-      return;
-    }
-    if (!agent) {
-      setLocalError('请先在应用页选择已启用 Agent。');
       return;
     }
     const generationId = `pa_${uuid()}`;
@@ -859,7 +836,6 @@ function PromptField({
       const result = await generatePromptAssistant({
         app_id: appId,
         generation_id: generationId,
-        agent,
         graph: app.graph,
         node_id: node.id,
         user_request: requestText,

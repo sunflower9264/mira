@@ -11,8 +11,8 @@ const Login = lazy(() => import('./pages/Login').then((m) => ({ default: m.Login
 const MobileHome = lazy(() => import('./pages/mobile/MobileHome').then((m) => ({ default: m.MobileHome })));
 const MobileAuth = lazy(() => import('./pages/mobile/MobileAuth').then((m) => ({ default: m.MobileAuth })));
 const MobileRun = lazy(() => import('./pages/mobile/MobileRun').then((m) => ({ default: m.MobileRun })));
-const AdminAgentOnboarding = lazy(() =>
-  import('./components/settings/AdminAgentOnboarding').then((m) => ({ default: m.AdminAgentOnboarding })),
+const AdminCodexOnboarding = lazy(() =>
+  import('./components/settings/AdminCodexOnboarding').then((m) => ({ default: m.AdminCodexOnboarding })),
 );
 
 function PageLoading() {
@@ -39,24 +39,24 @@ function DeviceRouteGate({ children }: { children: ReactElement }) {
 function RequireAuth({ children, loginPath = '/login' }: { children: ReactElement; loginPath?: string }) {
   const user = useAuthStore((s) => s.user);
   if (!user) return <Navigate to={loginPath} replace />;
-  return <AdminAgentSetupGate>{children}</AdminAgentSetupGate>;
+  return <AdminCodexSetupGate>{children}</AdminCodexSetupGate>;
 }
 
-function AdminAgentSetupGate({ children }: { children: ReactElement }) {
+function AdminCodexSetupGate({ children }: { children: ReactElement }) {
   const user = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
-  const agentSetupState = useSettingsStore((s) => s.agentSetupState);
-  const loadingAgentSetupState = useSettingsStore((s) => s.loadingAgentSetupState);
-  const loadAgentSetupState = useSettingsStore((s) => s.loadAgentSetupState);
+  const codexSetupState = useSettingsStore((s) => s.codexSetupState);
+  const loadingCodexSetupState = useSettingsStore((s) => s.loadingCodexSetupState);
+  const loadCodexSetupState = useSettingsStore((s) => s.loadCodexSetupState);
   const [error, setError] = useState('');
 
   useEffect(() => {
     if (user?.is_admin !== true) return;
     setError('');
-    void loadAgentSetupState(true).catch((e) => {
-      setError(e instanceof Error ? e.message : '读取 Agent 初始化状态失败');
+    void loadCodexSetupState(true).catch((e) => {
+      setError(e instanceof Error ? e.message : '读取 Codex 初始化状态失败');
     });
-  }, [loadAgentSetupState, user?.is_admin]);
+  }, [loadCodexSetupState, user?.is_admin]);
 
   if (user?.is_admin !== true) return children;
 
@@ -64,7 +64,7 @@ function AdminAgentSetupGate({ children }: { children: ReactElement }) {
     return (
       <div className="flex min-h-full items-center justify-center bg-[#f6f4ef] px-6">
         <div className="w-full max-w-md rounded-2xl border border-amber-200 bg-white p-6 shadow-[0_16px_50px_rgba(0,0,0,0.06)]">
-          <div className="text-sm font-semibold text-black">无法读取 Agent 初始化状态</div>
+          <div className="text-sm font-semibold text-black">无法读取 Codex 初始化状态</div>
           <p className="mt-2 text-sm leading-6 text-black/60">{error}</p>
           <button
             type="button"
@@ -78,16 +78,16 @@ function AdminAgentSetupGate({ children }: { children: ReactElement }) {
     );
   }
 
-  if (loadingAgentSetupState || !agentSetupState) {
+  if (loadingCodexSetupState || !codexSetupState) {
     return (
       <div className="flex min-h-full items-center justify-center bg-[#f6f4ef] px-6 text-sm text-black/55">
-        正在检查 Agent 初始化状态...
+        正在检查 Codex 初始化状态...
       </div>
     );
   }
 
-  if (!agentSetupState.completed) {
-    return withSuspense(<AdminAgentOnboarding onCompleted={() => undefined} />);
+  if (!codexSetupState.completed) {
+    return withSuspense(<AdminCodexOnboarding onCompleted={() => undefined} />);
   }
 
   return children;

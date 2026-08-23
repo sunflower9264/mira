@@ -23,14 +23,12 @@ from app.services.graph_inputs import prepare_planning_graph
 from app.services.output_contracts import validate_output_contract_config
 from app.services.prompts import get_prompt_content, render_prompt
 from app.services.prompt_contracts import (
-    append_prompt_assistant_ask_user_rules,
     build_structured_repair_prompt,
     max_attempts_for,
     output_schema_for,
 )
-from app.services.reasoning_effort import normalize_reasoning_effort_for_agent
+from app.services.reasoning_effort import normalize_reasoning_effort
 from app.services.runtime_paths import prompt_assistant_workspace
-from app.services.settings import NO_ENABLED_AGENT_DETAIL, settings_out
 from app.services.structured_output import parse_structured_json_object
 from app.services.tools import RuntimeToolConfig, planning_runtime_tools_for_graph
 from app.services.uploads import resolve_upload
@@ -62,7 +60,6 @@ class PromptAssistantSession:
     response_future: asyncio.Future[dict[str, Any]]
     cancel_event: asyncio.Event
     prompt: str
-    agent: str
     model: str | None
     reasoning_effort: str | None
     graph: dict[str, Any]
@@ -141,33 +138,19 @@ async def generate_prompt_assistant(
         raise HTTPException(status_code=409, detail="提示词生成会话已存在")
 
     graph = prepare_planning_graph(payload.graph)
-    graph_agent = str(graph.get("agent") or "").strip()
-    if not graph_agent:
-        raise HTTPException(status_code=400, detail="应用未配置 Agent")
-    if graph_agent != payload.agent:
-        raise HTTPException(status_code=400, detail="应用 Agent 已变更，请刷新后重试")
-
-    settings = await settings_out(db, reveal_keys=True)
-    agent = next((item for item in settings.agents if item.enabled and item.runtime == payload.agent), None)
-    if not agent:
-        raise HTTPException(status_code=400, detail=NO_ENABLED_AGENT_DETAIL)
-
     await runtime_config.write_configs(db)
     template = await get_prompt_content(db, "prompt_assistant")
-    ask_user_protocol = await get_prompt_content(db, "ask_user_protocol")
     prompt = build_prompt_assistant_prompt(
         graph=graph,
         node_id=payload.node_id,
         user_request=payload.user_request,
         template=template,
     )
-    prompt = append_prompt_assistant_ask_user_rules(prompt, ask_user_protocol)
     row = PromptAssistantGenerationRow(
         id=generation_id,
         user_id=user_id,
         app_id=app.id,
         status="running",
-        agent=payload.agent,
         prompt_json=_json_dumps({"prompt": prompt, "graph": graph}),
         model=(payload.model or "").strip() or None,
         reasoning_effort=(payload.reasoning_effort or "").strip() or None,
@@ -191,13 +174,9 @@ async def _start_prompt_assistant_session_from_row(
     graph = prepare_planning_graph(payload.get("graph")) if isinstance(payload.get("graph"), dict) else {}
     if not prompt or not graph:
         raise HTTPException(status_code=502, detail="提示词生成会话缺少可恢复上下文")
-    settings = await settings_out(db, reveal_keys=True)
-    agent = next((item for item in settings.agents if item.enabled and item.runtime == row.agent), None)
-    if not agent:
-        raise HTTPException(status_code=400, detail=NO_ENABLED_AGENT_DETAIL)
     await runtime_config.write_configs(db)
-    runtime = get_runtime(row.agent, row.user_id)
-    planning_runtime_tools = await planning_runtime_tools_for_graph(db, graph, row.agent)
+    runtime = get_runtime(row.user_id)
+    planning_runtime_tools = await planning_runtime_tools_for_graph(db, graph)
     session = PromptAssistantSession(
         id=row.id,
         user_id=row.user_id,
@@ -205,7 +184,6 @@ async def _start_prompt_assistant_session_from_row(
         response_future=asyncio.get_running_loop().create_future(),
         cancel_event=asyncio.Event(),
         prompt=prompt,
-        agent=row.agent,
         model=row.model,
         reasoning_effort=row.reasoning_effort,
         graph=graph,
@@ -271,7 +249,6 @@ async def _run_prompt_assistant_session(
         generated = await run_prompt_assistant(
             runtime=runtime,
             user_id=session.user_id,
-            agent=session.agent,
             prompt=session.prompt,
             model=session.model,
             reasoning_effort=session.reasoning_effort,
@@ -444,7 +421,6 @@ async def run_prompt_assistant(
     *,
     runtime: object,
     user_id: str,
-    agent: str,
     prompt: str,
     model: str | None,
     reasoning_effort: str | None,
@@ -461,7 +437,6 @@ async def run_prompt_assistant(
         result_text = await _execute_prompt_assistant_once(
             runtime=runtime,
             user_id=user_id,
-            agent=agent,
             prompt=current_prompt,
             model=model,
             reasoning_effort=reasoning_effort,
@@ -492,7 +467,6 @@ async def _execute_prompt_assistant_once(
     *,
     runtime: object,
     user_id: str,
-    agent: str,
     prompt: str,
     model: str | None,
     reasoning_effort: str | None,
@@ -512,7 +486,7 @@ async def _execute_prompt_assistant_once(
         session_id=None,
         allowed_tools=None,
         model=(model or "").strip() or None,
-        reasoning_effort=normalize_reasoning_effort_for_agent(agent, reasoning_effort),
+        reasoning_effort=normalize_reasoning_effort(reasoning_effort),
         cwd=prompt_assistant_workspace(user_id),
         on_chunk=on_chunk,
         cancel_event=cancel_event,
@@ -521,10 +495,7 @@ async def _execute_prompt_assistant_once(
         runtime_policy=runtime_policy,
         output_schema=output_schema_for("prompt_assistant"),
     )
-    if on_ask_user is None:
-        result = await execute_coro
-    else:
-        result = await execute_coro
+    result = await execute_coro
     if cancel_event.is_set() or result.finished_with == "cancelled":
         raise HTTPException(status_code=409, detail=_CANCELLED_DETAIL)
     if result.finished_with != "done":

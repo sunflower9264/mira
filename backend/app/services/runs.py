@@ -32,11 +32,9 @@ from app.schemas.decision import DecisionGroup
 from app.schemas import RunInputValue, RunOut, RunResumeIn, RunSummaryOut
 from app.services.apps import EMPTY_GRAPH, can_run_app, get_owned_app_or_404, get_visible_app_or_404, graph_for_viewer, should_redact_app_source
 from app.services.graph_validation import (
-    AGENT_NODE_TYPES,
     GraphValidationError,
     topological_order,
     user_input_node_ids,
-    validate_graph_agent_enabled,
 )
 from app.services.graph_inputs import prepare_executable_graph
 from app.services.decision_prompts import validate_decision_answers
@@ -45,7 +43,6 @@ from app.services.run_serializer import run_to_out, run_to_summary_out
 from app.services.runtime_paths import clone_run_scoped_homes, run_workspace, run_workspace_path
 from app.services.workspace_tree import WorkspaceTree, remove_tree
 from app.services.workflow_data import copy_reused_output_envelope
-from app.services.settings import NO_ENABLED_AGENT_DETAIL, settings_out
 from app.services.tools import stamp_run_tools_snapshot
 from app.services.uploads import resolve_upload, delete_upload
 from app.utils import display_now, dumps, loads, new_id, now_utc
@@ -184,18 +181,7 @@ async def create_run_record(
     except GraphValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
 
-    needs_agent = any(node.get("type") in AGENT_NODE_TYPES for node in graph.get("nodes", []))
-    if needs_agent:
-        settings = await settings_out(db)
-        enabled_agents = {agent.runtime for agent in settings.agents if agent.enabled}
-        if not enabled_agents:
-            raise HTTPException(status_code=400, detail=NO_ENABLED_AGENT_DETAIL)
-        try:
-            validate_graph_agent_enabled(graph, enabled_agents)
-        except GraphValidationError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from None
-
-    graph_snapshot = await stamp_run_tools_snapshot(db, graph, graph.get("agent", ""))
+    graph_snapshot = await stamp_run_tools_snapshot(db, graph)
     inputs = normalize_run_inputs(raw_inputs, user_input_node_ids(graph))
     inputs_payload = serialize_run_inputs(inputs)
     inputs_json = dumps(inputs_payload)
@@ -288,17 +274,6 @@ async def create_rerun_from_record(
         condition_branch_override,
     )
 
-    needs_agent = any(current.get("type") in AGENT_NODE_TYPES for current in graph.get("nodes", []))
-    if needs_agent:
-        settings = await settings_out(db)
-        enabled_agents = {agent.runtime for agent in settings.agents if agent.enabled}
-        if not enabled_agents:
-            raise HTTPException(status_code=400, detail=NO_ENABLED_AGENT_DETAIL)
-        try:
-            validate_graph_agent_enabled(graph, enabled_agents)
-        except GraphValidationError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from None
-
     input_node_ids = user_input_node_ids(graph)
     loaded_inputs = loads(source_run.inputs_json, {}) or {}
     execution_plan = compile_execution_plan(graph)
@@ -340,7 +315,7 @@ async def create_rerun_from_record(
         raise HTTPException(status_code=409, detail="来源运行的 workspace checkpoint 已失效")
 
     graph_snapshot = _graph_with_condition_branch_override(graph, branch_test) if branch_test else graph
-    graph_snapshot = await stamp_run_tools_snapshot(db, graph_snapshot, graph_snapshot.get("agent", ""))
+    graph_snapshot = await stamp_run_tools_snapshot(db, graph_snapshot)
     run = Run(
         id=new_id("run"),
         app_id=app.id,
@@ -571,8 +546,8 @@ async def submit_resume(
 ) -> AskUserResult:
     """校验 POST /api/runs/{id}/resume 请求体并返回打包好的 AskUserResult。
 
-    本函数只打包 AskUserResult；调用方随后把它持久化到 waiting step，
-    并重新调度同一个 run 继续 preflight。
+    本函数只打包 AskUserResult；调用方校验当前 waiting request 后，
+    直接完成仍在运行的原生提问 Future。
 
     校验顺序：
     1. run 归属当前用户 → 否则 404；
@@ -582,7 +557,7 @@ async def submit_resume(
     5. ``text`` 长度 ≤ ``max_resume_text_bytes`` → 否则 400。
 
     ``answers`` 是否匹配 ask_user.groups、node_id / tool_use_id 是否匹配
-    由 ``submit_persisted_resume`` 基于 step.input 中的 waiting request 校验。
+    由 ``validate_live_resume`` 基于 step.input 中的 waiting request 校验。
     """
 
     run = (
@@ -654,22 +629,6 @@ async def mark_active_runs_interrupted(db: AsyncSession) -> int:
                 select(Step).where(Step.run_id == run.id).order_by(Step.ordering.asc(), Step.id.asc())
             )
         ).scalars().all()
-        if run.status == "waiting_for_user":
-            now = now_utc()
-            changed_waiting = False
-            waiting_step = next((step for step in steps if step.status == "waiting_for_user"), None)
-            for step in steps:
-                if step.status == "running":
-                    step.status = "interrupted"
-                    step.finished_at = now
-                    step.error = "后端进程重启，并行节点已暂停"
-                    changed_waiting = True
-            if changed_waiting:
-                run.recovery_reason = run.recovery_reason or "后端进程重启，并行节点已暂停"
-                if run.resume_from_node_id is None and waiting_step is not None:
-                    run.resume_from_node_id = waiting_step.node_id
-                changed += 1
-            continue
         resume_step = _first_unfinished_step(list(steps))
         now = now_utc()
         run.status = "interrupted"
@@ -677,7 +636,7 @@ async def mark_active_runs_interrupted(db: AsyncSession) -> int:
         run.recovery_reason = "后端进程重启，运行已暂停"
         run.resume_from_node_id = resume_step.node_id if resume_step else None
         for step in steps:
-            if step.status == "running":
+            if step.status in {"running", "waiting_for_user"}:
                 step.status = "interrupted"
                 step.finished_at = now
                 step.error = "后端进程重启，节点已暂停"
@@ -696,14 +655,13 @@ async def touch_run_heartbeat(run_id: str) -> None:
         await db.commit()
 
 
-async def submit_persisted_resume(
+async def validate_live_resume(
     db: AsyncSession,
     user_id: str,
     run_id: str,
     payload: RunResumeIn,
     result: AskUserResult,
-    ask_user_groups: list[DecisionGroup] | None,
-) -> bool:
+) -> None:
     run = (
         await db.execute(select(Run).where(Run.id == run_id, Run.owner_id == user_id))
     ).scalar_one_or_none()
@@ -721,82 +679,15 @@ async def submit_persisted_resume(
     ask = _ask_user_payload(step)
     if not ask or ask.get("tool_use_id") != payload.tool_use_id:
         raise HTTPException(status_code=409, detail="ask_user 已失效，请重新发起运行")
+    groups_payload = ask.get("groups")
+    try:
+        groups = [DecisionGroup.model_validate(item) for item in groups_payload]
+    except Exception:  # noqa: BLE001
+        raise HTTPException(status_code=409, detail="当前没有等待该节点的输入") from None
     if result.answers:
-        if ask_user_groups is None:
-            raise HTTPException(status_code=409, detail="当前没有等待该节点的输入")
-        answer_error = validate_decision_answers(ask_user_groups, result.answers)
+        answer_error = validate_decision_answers(groups, result.answers)
         if answer_error:
             raise HTTPException(status_code=400, detail=answer_error)
-
-    merged = loads(step.input_json, {}) or {}
-    if not isinstance(merged, dict):
-        merged = {}
-    resume_payload = result.model_dump(exclude_none=True)
-    preflight = merged.get("ask_user_preflight")
-    if not isinstance(preflight, dict):
-        preflight = {}
-    history = preflight.get("history")
-    if not isinstance(history, list):
-        history = []
-    current_request = preflight.get("current_request")
-    if not isinstance(current_request, dict):
-        current_request = ask
-    history.append({"request": current_request, "response": resume_payload})
-    preflight["history"] = history
-    preflight.pop("current_request", None)
-    preflight.pop("final", None)
-    merged["ask_user_preflight"] = preflight
-    merged["resume"] = resume_payload
-    merged["recovery_resume"] = True
-    merged.pop("ask_user", None)
-    step.input_json = dumps(merged)
-    step.status = "interrupted"
-    step.finished_at = None
-    step.error = None
-    run.status = "running"
-    run.resume_from_node_id = step.node_id
-    run.heartbeat_at = now_utc()
-    run.recovery_reason = "用户已提交中断期间的补充输入"
-    running_step = (
-        await db.execute(
-            select(Step.id)
-            .where(Step.run_id == run_id, Step.status == "running")
-            .limit(1)
-        )
-    ).scalar_one_or_none()
-    await db.commit()
-    return running_step is None
-
-
-async def resume_groups_for_waiting_step(
-    db: AsyncSession, run_id: str, node_id: str
-) -> list[DecisionGroup] | None:
-    """读出 waiting step 当前 ask_user.groups，用于 resume 校验 answers。
-
-    找不到 step / 没有 ask_user 记录时返回 None，让 orchestrator 走通用 409；
-    返回 list[DecisionGroup] 才会触发严格的 answers 校验。
-    """
-
-    step = (
-        await db.execute(
-            select(Step).where(Step.run_id == run_id, Step.node_id == node_id)
-        )
-    ).scalar_one_or_none()
-    if step is None:
-        return None
-    payload = loads(step.input_json, {}) or {}
-    if not isinstance(payload, dict):
-        return None
-    ask = payload.get("ask_user")
-    if not isinstance(ask, dict):
-        return None
-    groups = ask.get("groups")
-    if not isinstance(groups, list):
-        return None
-    try:
-        return [DecisionGroup.model_validate(item) for item in groups]
-    except Exception:  # noqa: BLE001
-        return None
 
 
 def _first_unfinished_step(steps: list[Step]) -> Step | None:

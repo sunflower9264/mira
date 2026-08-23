@@ -5,7 +5,6 @@
     "description": "测试用 gallery 模板。",
     "cover": "upl_tpl_book_recs_cover",
     "graph": {
-      "agent": "claude",
       "nodes": [
         {
           "id": "n_input_books",
@@ -42,7 +41,6 @@
     "description": "测试并行等待和恢复。",
     "cover": "upl_tpl_parallel_ask_demo_cover",
     "graph": {
-      "agent": "claude",
       "nodes": [
         {
           "id": "n_parallel_input",

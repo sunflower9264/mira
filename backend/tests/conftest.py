@@ -36,7 +36,7 @@ def client(tmp_path, monkeypatch):
         Path(__file__).parent / "fixtures" / "gallery.json",
     )
     monkeypatch.setenv("JWT_SECRET", "test-secret-for-mira-backend-tests-32-bytes")
-    monkeypatch.setenv("AGENT_CONFIG_SECRET", "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=")
+    monkeypatch.setenv("CODEX_CONFIG_SECRET", "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=")
     monkeypatch.setenv("ADMIN_USERNAME", TEST_ADMIN_USERNAME)
     monkeypatch.setenv("ADMIN_PASSWORD", TEST_ADMIN_PASSWORD)
     monkeypatch.setenv("DATABASE_URL", f"sqlite+aiosqlite:///{db_path.as_posix()}")
@@ -71,11 +71,15 @@ def auth_client(client):
 
 
 @pytest.fixture
-def enable_claude_agent(auth_client):
+def configure_codex(auth_client):
     def _enable() -> None:
         response = auth_client.put(
-            "/api/settings/agents/claude-code/config",
-            json={"content": "{}\n", "enabled": True, "supported_models": ["test-model"]},
+            "/api/settings/codex/config",
+            json={
+                "content": "\n",
+                "auth_content": "{}\n",
+                "supported_models": ["test-model"],
+            },
         )
         assert response.status_code == 200, response.text
 
