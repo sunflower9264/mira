@@ -1,5 +1,6 @@
 import hashlib
 import os
+import shutil
 from pathlib import Path
 
 from app.config import get_settings
@@ -59,11 +60,23 @@ def codex_home() -> Path:
     return path
 
 
-def scoped_runtime_home(provider: str, cwd: Path) -> Path:
-    digest = hashlib.sha256(str(cwd.resolve()).encode("utf-8")).hexdigest()[:20]
+def scoped_runtime_home(provider: str, cwd: Path, *, session_scope: str | None = None) -> Path:
+    scope = session_scope.strip() if isinstance(session_scope, str) and session_scope.strip() else str(cwd.resolve())
+    digest = hashlib.sha256(scope.encode("utf-8")).hexdigest()[:20]
     path = runtime_dir() / "homes" / "_scoped" / digest / provider
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def clone_run_scoped_homes(source_run_id: str, target_run_id: str) -> None:
+    source_scope = f"run:{source_run_id}"
+    target_scope = f"run:{target_run_id}"
+    placeholder = runtime_dir()
+    for provider in ("claude_home", "codex_home"):
+        source = scoped_runtime_home(provider, placeholder, session_scope=source_scope)
+        target = scoped_runtime_home(provider, placeholder, session_scope=target_scope)
+        if source.is_dir():
+            shutil.copytree(source, target, symlinks=True, dirs_exist_ok=True)
 
 
 def node_workspace(user_id: str, app_id: str, node_id: str) -> Path:
@@ -88,25 +101,6 @@ def run_workspaces_root_path() -> Path:
     """Return the run workspace collection root without creating it."""
 
     return get_settings().runtime_dir.resolve() / "workspaces"
-
-
-def run_step_workspace(
-    user_id: str,
-    app_id: str,
-    run_id: str,
-    node_id: str,
-    attempt: int,
-) -> Path:
-    safe_node_id = _safe_runtime_segment(node_id)
-    safe_attempt = max(1, int(attempt))
-    path = run_workspace(user_id, app_id, run_id) / "nodes" / safe_node_id / f"attempt-{safe_attempt}" / "work"
-    path.mkdir(parents=True, exist_ok=True)
-    return path
-
-
-def _safe_runtime_segment(value: str) -> str:
-    safe = "".join(char if char.isalnum() or char in {"_", "-"} else "_" for char in value).strip("._")
-    return safe or hashlib.sha256(value.encode("utf-8")).hexdigest()[:20]
 
 
 def nlcompile_workspace(user_id: str) -> Path:

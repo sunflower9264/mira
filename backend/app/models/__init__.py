@@ -4,7 +4,7 @@ from .app_version import AppVersion
 from .nlcompile_session import NlCompileSessionRow
 from .prompt_assistant_generation import PromptAssistantGenerationRow
 from .prompt_template import PromptTemplate
-from .run import Run, RunEvent, Step, StepLog
+from .run import Run, RunAgentBranch, RunAgentOperation, RunEvent, RunWorkspaceCheckpoint, Step, StepLog
 from .settings import SettingsRow
 from .skill import Skill
 from .user import User
@@ -17,7 +17,10 @@ __all__ = [
     "PromptAssistantGenerationRow",
     "PromptTemplate",
     "Run",
+    "RunAgentBranch",
+    "RunAgentOperation",
     "RunEvent",
+    "RunWorkspaceCheckpoint",
     "Step",
     "StepLog",
     "SettingsRow",

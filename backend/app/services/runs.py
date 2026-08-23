@@ -9,7 +9,6 @@
 from __future__ import annotations
 
 import logging
-import shutil
 from pathlib import Path
 from typing import Any
 
@@ -19,7 +18,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.db import SessionLocal
-from app.models import App, Run, RunEvent, Step, StepLog
+from app.models import (
+    App,
+    Run,
+    RunAgentBranch,
+    RunEvent,
+    RunWorkspaceCheckpoint,
+    Step,
+    StepLog,
+)
 from app.runtime.base import AskUserAttachment, AskUserResult
 from app.schemas.decision import DecisionGroup
 from app.schemas import RunInputValue, RunOut, RunResumeIn, RunSummaryOut
@@ -33,8 +40,10 @@ from app.services.graph_validation import (
 )
 from app.services.graph_inputs import prepare_executable_graph
 from app.services.decision_prompts import validate_decision_answers
+from app.services.execution_plan import compile_execution_plan
 from app.services.run_serializer import run_to_out, run_to_summary_out
-from app.services.runtime_paths import run_workspace, run_workspace_path
+from app.services.runtime_paths import clone_run_scoped_homes, run_workspace, run_workspace_path
+from app.services.workspace_tree import WorkspaceTree, remove_tree
 from app.services.workflow_data import copy_reused_output_envelope, visible_output
 from app.services.settings import NO_ENABLED_AGENT_DETAIL, settings_out
 from app.services.tools import stamp_run_tools_snapshot
@@ -292,13 +301,19 @@ async def create_rerun_from_record(
 
     input_node_ids = user_input_node_ids(graph)
     loaded_inputs = loads(source_run.inputs_json, {}) or {}
-    effective_inputs = raw_inputs
-    if effective_inputs is None:
-        effective_inputs = (
-            {key: value for key, value in loaded_inputs.items() if key in input_node_ids}
-            if isinstance(loaded_inputs, dict)
-            else {}
-        )
+    execution_plan = compile_execution_plan(graph)
+    rerun_node_ids = set(execution_plan.descendant_ids({node_id}))
+    effective_inputs = (
+        {key: value for key, value in loaded_inputs.items() if key in input_node_ids}
+        if isinstance(loaded_inputs, dict)
+        else {}
+    )
+    if raw_inputs is not None:
+        for key, value in raw_inputs.items():
+            if key not in input_node_ids:
+                raise HTTPException(status_code=400, detail=f"输入节点不存在：{key}")
+            if key in rerun_node_ids:
+                effective_inputs[key] = value
     inputs = normalize_run_inputs(effective_inputs, input_node_ids)
     inputs_payload = serialize_run_inputs(inputs)
     inputs_json = dumps(inputs_payload)
@@ -307,13 +322,10 @@ async def create_rerun_from_record(
     for value in inputs.values():
         attachments_meta(user_id, value)
 
-    changed_input_node_ids = _changed_input_node_ids(
-        input_node_ids,
-        inputs_payload,
-        loaded_inputs if isinstance(loaded_inputs, dict) else {},
-    ) if raw_inputs is not None else set()
-    rerun_start_node_id = _rerun_start_node_id(graph, ordered, node_id, changed_input_node_ids)
-    reusable_node_ids = _ancestor_node_ids(graph, rerun_start_node_id)
+    if source_run.runtime_version < 2:
+        raise HTTPException(status_code=409, detail="旧架构运行没有 workspace checkpoint，只支持只读历史")
+    rerun_start_node_id = node_id
+    frozen_node_ids = set(execution_plan.ordered_node_ids) - rerun_node_ids
     source_steps = (
         await db.execute(
             select(Step)
@@ -322,28 +334,12 @@ async def create_rerun_from_record(
         )
     ).scalars().all()
     source_steps_by_node = {step.node_id: step for step in source_steps}
-    for reusable_node_id in reusable_node_ids:
-        source_step = source_steps_by_node.get(reusable_node_id)
-        if source_step is None or source_step.status not in {"success", "skipped"}:
-            raise HTTPException(
-                status_code=409,
-                detail=f"节点 {reusable_node_id} 的历史结果不可复用，请从更早节点重新执行",
-            )
-
-    frozen_skipped_node_ids = _frozen_condition_skipped_node_ids(
-        graph,
-        ordered,
-        reusable_node_ids,
-        source_steps_by_node,
-    )
-    if rerun_start_node_id in frozen_skipped_node_ids:
-        raise HTTPException(status_code=409, detail="冻结 condition 分支未选择该节点，请从 condition 节点重新执行")
-    for reusable_node_id in reusable_node_ids - frozen_skipped_node_ids:
-        if source_steps_by_node[reusable_node_id].status == "skipped":
-            raise HTTPException(
-                status_code=409,
-                detail=f"节点 {reusable_node_id} 在当前 Graph 的冻结分支中需要执行，请从更早节点重新执行",
-            )
+    source_cut_step = source_steps_by_node.get(node_id)
+    if source_cut_step is None or not source_cut_step.pre_checkpoint_id:
+        raise HTTPException(status_code=409, detail="来源运行在该节点前没有可复用的 workspace checkpoint")
+    source_cut_checkpoint = await db.get(RunWorkspaceCheckpoint, source_cut_step.pre_checkpoint_id)
+    if source_cut_checkpoint is None or source_cut_checkpoint.run_id != source_run.id:
+        raise HTTPException(status_code=409, detail="来源运行的 workspace checkpoint 已失效")
 
     graph_snapshot = _graph_with_condition_branch_override(graph, branch_test) if branch_test else graph
     graph_snapshot = await stamp_run_tools_snapshot(db, graph_snapshot, graph_snapshot.get("agent", ""))
@@ -378,7 +374,7 @@ async def create_rerun_from_record(
             run_id=run.id,
             node_id=current_node_id,
             ordering=index,
-            status="skipped" if current_node_id in frozen_skipped_node_ids else "pending",
+            status="checkpoint_reused" if current_node_id in frozen_node_ids else "pending",
             attempt=0,
             input_json="null",
             output_json=None,
@@ -387,10 +383,23 @@ async def create_rerun_from_record(
         new_steps_by_node[current_node_id] = step
 
     try:
-        for reusable_node_id in reusable_node_ids:
-            source_step = source_steps_by_node[reusable_node_id]
-            target_step = new_steps_by_node[reusable_node_id]
-            if reusable_node_id in frozen_skipped_node_ids:
+        checkpoint_maps = await _clone_checkpoint_state(
+            db,
+            source_run=source_run,
+            target_run=run,
+            cut_checkpoint=source_cut_checkpoint,
+            frozen_node_ids=frozen_node_ids,
+            source_steps_by_node=source_steps_by_node,
+        )
+        branch_id_map, checkpoint_id_map = checkpoint_maps
+        clone_run_scoped_homes(source_run.id, run.id)
+        for frozen_node_id in frozen_node_ids:
+            source_step = source_steps_by_node.get(frozen_node_id)
+            target_step = new_steps_by_node[frozen_node_id]
+            if source_step is None:
+                target_step.branch_id = branch_id_map.get(source_cut_checkpoint.branch_id or "")
+                continue
+            if source_step.status not in {"success", "skipped"}:
                 continue
             target_step.status = source_step.status
             target_step.attempt = source_step.attempt
@@ -400,7 +409,7 @@ async def create_rerun_from_record(
                 source_workspace=source_workspace,
                 target_workspace=target_workspace,
                 target_run_id=run.id,
-                target_node_id=reusable_node_id,
+                target_node_id=frozen_node_id,
                 target_step_id=target_step.id,
             )
             target_step.started_at = source_step.started_at
@@ -410,12 +419,13 @@ async def create_rerun_from_record(
             target_step.reused_from_run_id = source_run.id
             target_step.reused_from_step_id = source_step.id
             target_step.failure_kind = source_step.failure_kind
+            target_step.branch_id = branch_id_map.get(source_step.branch_id or "")
+            target_step.pre_checkpoint_id = checkpoint_id_map.get(source_step.pre_checkpoint_id or "")
+            target_step.post_checkpoint_id = checkpoint_id_map.get(source_step.post_checkpoint_id or "")
     except (OSError, ValueError) as exc:
         await db.rollback()
         try:
-            shutil.rmtree(target_workspace)
-        except FileNotFoundError:
-            pass
+            remove_tree(target_workspace)
         except OSError:
             logger.warning("failed to clean rejected rerun workspace: %s", target_workspace, exc_info=True)
         raise HTTPException(
@@ -559,9 +569,7 @@ async def delete_run_record(db: AsyncSession, run_id: str, user_id: str) -> None
     await db.delete(run)
     await db.commit()
     try:
-        shutil.rmtree(workspace)
-    except FileNotFoundError:
-        pass
+        remove_tree(workspace)
     except OSError:
         logger.warning("failed to delete run workspace: %s", workspace, exc_info=True)
     for upload_id in upload_ids:
@@ -815,24 +823,7 @@ def _first_unfinished_step(steps: list[Step]) -> Step | None:
 
 
 def _ancestor_node_ids(graph: dict[str, Any], node_id: str) -> set[str]:
-    parents_by_node: dict[str, list[str]] = {}
-    for edge in graph.get("edges", []):
-        if not isinstance(edge, dict):
-            continue
-        source = edge.get("source")
-        target = edge.get("target")
-        if isinstance(source, str) and isinstance(target, str):
-            parents_by_node.setdefault(target, []).append(source)
-
-    ancestors: set[str] = set()
-    stack = list(parents_by_node.get(node_id, []))
-    while stack:
-        current = stack.pop()
-        if current in ancestors:
-            continue
-        ancestors.add(current)
-        stack.extend(parents_by_node.get(current, []))
-    return ancestors
+    return set(compile_execution_plan(graph).ancestor_ids(node_id))
 
 
 def _frozen_condition_skipped_node_ids(
@@ -842,6 +833,7 @@ def _frozen_condition_skipped_node_ids(
     source_steps_by_node: dict[str, Step],
 ) -> set[str]:
     skipped: set[str] = set()
+    execution_plan = compile_execution_plan(graph)
     for node in ordered_nodes:
         node_id = node.get("id")
         if (
@@ -865,30 +857,10 @@ def _frozen_condition_skipped_node_ids(
                 detail=f"condition 节点 {node_id} 的冻结分支在当前 Graph 中未连接，请从该节点重新执行",
             )
         all_targets = _condition_branch_target_node_ids(graph, node_id, None)
-        chosen_reachable = _reachable_node_ids(graph, chosen_targets)
-        unchosen_reachable = _reachable_node_ids(graph, all_targets - chosen_targets)
+        chosen_reachable = set(execution_plan.descendant_ids(chosen_targets))
+        unchosen_reachable = set(execution_plan.descendant_ids(all_targets - chosen_targets))
         skipped.update(unchosen_reachable - chosen_reachable)
     return skipped
-
-
-def _reachable_node_ids(graph: dict[str, Any], start_ids: set[str]) -> set[str]:
-    children: dict[str, set[str]] = {}
-    for edge in graph.get("edges", []):
-        if not isinstance(edge, dict):
-            continue
-        source = edge.get("source")
-        target = edge.get("target")
-        if isinstance(source, str) and isinstance(target, str):
-            children.setdefault(source, set()).add(target)
-    reachable: set[str] = set()
-    stack = list(start_ids)
-    while stack:
-        current = stack.pop()
-        if current in reachable:
-            continue
-        reachable.add(current)
-        stack.extend(children.get(current, set()))
-    return reachable
 
 
 def _copy_reused_output_workspace_files(
@@ -914,6 +886,127 @@ def _copy_reused_output_workspace_files(
         target_step_id=target_step_id,
     )
     return dumps(copied)
+
+
+async def _clone_checkpoint_state(
+    db: AsyncSession,
+    *,
+    source_run: Run,
+    target_run: Run,
+    cut_checkpoint: RunWorkspaceCheckpoint,
+    frozen_node_ids: set[str],
+    source_steps_by_node: dict[str, Step],
+) -> tuple[dict[str, str], dict[str, str]]:
+    source_branches = (
+        await db.execute(
+            select(RunAgentBranch)
+            .where(RunAgentBranch.run_id == source_run.id)
+            .order_by(RunAgentBranch.created_at.asc(), RunAgentBranch.id.asc())
+        )
+    ).scalars().all()
+    source_checkpoints = (
+        await db.execute(
+            select(RunWorkspaceCheckpoint)
+            .where(RunWorkspaceCheckpoint.run_id == source_run.id)
+            .order_by(RunWorkspaceCheckpoint.created_at.asc(), RunWorkspaceCheckpoint.id.asc())
+        )
+    ).scalars().all()
+    branches_by_id = {branch.id: branch for branch in source_branches}
+    checkpoints_by_id = {checkpoint.id: checkpoint for checkpoint in source_checkpoints}
+    required_checkpoint_ids = {cut_checkpoint.id}
+    required_branch_ids: set[str] = set()
+    for node_id in frozen_node_ids:
+        step = source_steps_by_node.get(node_id)
+        if step is None:
+            continue
+        if step.pre_checkpoint_id:
+            required_checkpoint_ids.add(step.pre_checkpoint_id)
+        if step.post_checkpoint_id:
+            required_checkpoint_ids.add(step.post_checkpoint_id)
+        if step.branch_id:
+            required_branch_ids.add(step.branch_id)
+    changed = True
+    while changed:
+        changed = False
+        for checkpoint_id in tuple(required_checkpoint_ids):
+            checkpoint = checkpoints_by_id.get(checkpoint_id)
+            if checkpoint is not None and checkpoint.branch_id and checkpoint.branch_id not in required_branch_ids:
+                required_branch_ids.add(checkpoint.branch_id)
+                changed = True
+        for branch_id in tuple(required_branch_ids):
+            branch = branches_by_id.get(branch_id)
+            if branch is None:
+                raise ValueError(f"来源 checkpoint branch 不存在：{branch_id}")
+            if branch.parent_branch_id and branch.parent_branch_id not in required_branch_ids:
+                required_branch_ids.add(branch.parent_branch_id)
+                changed = True
+            if branch.base_checkpoint_id and branch.base_checkpoint_id not in required_checkpoint_ids:
+                required_checkpoint_ids.add(branch.base_checkpoint_id)
+                changed = True
+
+    source_root = run_workspace(source_run.owner_id, source_run.app_id, source_run.id)
+    target_root = run_workspace(target_run.owner_id, target_run.app_id, target_run.id)
+    target_tree = WorkspaceTree(target_root)
+    checkpoint_id_map: dict[str, str] = {}
+    for checkpoint in source_checkpoints:
+        if checkpoint.id not in required_checkpoint_ids:
+            continue
+        source_snapshot = (source_root / checkpoint.snapshot_relpath).resolve()
+        try:
+            source_snapshot.relative_to(source_root.resolve())
+        except ValueError as exc:
+            raise ValueError("来源 checkpoint 路径越界") from exc
+        checkpoint_id = new_id("checkpoint")
+        target_snapshot, digest = target_tree.clone_checkpoint_from(source_snapshot, checkpoint_id)
+        cloned = RunWorkspaceCheckpoint(
+            id=checkpoint_id,
+            run_id=target_run.id,
+            step_id=None,
+            node_id=checkpoint.node_id,
+            branch_id=None,
+            kind="rerun_base" if checkpoint.id == cut_checkpoint.id else checkpoint.kind,
+            snapshot_relpath=target_snapshot.relative_to(target_root).as_posix(),
+            tree_hash=digest,
+            provider_session_id=checkpoint.provider_session_id,
+            output_digest=checkpoint.output_digest,
+            created_at=checkpoint.created_at,
+        )
+        db.add(cloned)
+        checkpoint_id_map[checkpoint.id] = checkpoint_id
+
+    branch_id_map = {branch_id: new_id("branch") for branch_id in required_branch_ids}
+    for branch in source_branches:
+        if branch.id not in required_branch_ids:
+            continue
+        branch_checkpoints = [
+            checkpoint
+            for checkpoint in source_checkpoints
+            if checkpoint.id in required_checkpoint_ids and checkpoint.branch_id == branch.id
+        ]
+        latest = branch_checkpoints[-1] if branch_checkpoints else None
+        target_branch_id = branch_id_map[branch.id]
+        if latest is None:
+            workspace = target_tree.create_empty_branch(target_branch_id)
+        else:
+            workspace = target_tree.fork_branch(checkpoint_id_map[latest.id], target_branch_id)
+        target_branch = RunAgentBranch(
+            id=target_branch_id,
+            run_id=target_run.id,
+            parent_branch_id=branch_id_map.get(branch.parent_branch_id or ""),
+            fork_node_id=branch.fork_node_id,
+            base_checkpoint_id=checkpoint_id_map.get(branch.base_checkpoint_id or ""),
+            provider_session_id=None,
+            fork_from_session_id=latest.provider_session_id if latest is not None else None,
+            workspace_relpath=workspace.relative_to(target_root).as_posix(),
+            state="active",
+        )
+        db.add(target_branch)
+        for checkpoint in branch_checkpoints:
+            cloned = await db.get(RunWorkspaceCheckpoint, checkpoint_id_map[checkpoint.id])
+            if cloned is not None:
+                cloned.branch_id = target_branch_id
+    await db.flush()
+    return branch_id_map, checkpoint_id_map
 
 
 def _validate_condition_branch_override(
@@ -981,12 +1074,12 @@ def _condition_branch_target_node_ids(
     branch_key: str | None,
 ) -> set[str]:
     targets: set[str] = set()
-    for edge in graph.get("edges", []):
+    for edge in graph.get("execution_edges", []):
         if not isinstance(edge, dict):
             continue
         if edge.get("source") != condition_id:
             continue
-        if branch_key is not None and edge.get("source_handle") != branch_key:
+        if branch_key is not None and edge.get("branch_key") != branch_key:
             continue
         target = edge.get("target")
         if isinstance(target, str):

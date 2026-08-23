@@ -59,7 +59,7 @@ export interface Graph {
     disabled_tool_ids?: string[];
   };
   nodes: WorkflowNode[];
-  edges: WorkflowEdge[];
+  execution_edges: ExecutionEdge[];
   viewport?: { x: number; y: number; zoom: number };
 }
 
@@ -137,7 +137,6 @@ export interface GenerateNode extends NodeBase {
   model?: string;
   reasoning_effort?: ReasoningEffort;
   ask_user_enabled?: boolean;
-  agent_session_id?: string;
   output_contract?: NodeOutputContract;
 }
 
@@ -146,8 +145,6 @@ export interface OutputNode extends NodeBase {
   prompt: string;
   model?: string;
   reasoning_effort?: ReasoningEffort;
-  agent_session_id?: string;
-  source_node_id: string;
 }
 
 export interface UploadRef {
@@ -185,7 +182,7 @@ export interface DrawingAssetNode extends NodeBase {
 export type AssetNode = TextAssetNode | UrlAssetNode | FileAssetNode | DrawingAssetNode;
 
 export interface ConditionBranch {
-  key: string; // 用作 edge.source_handle 与 LLM 输出匹配；binary 模式固定 'true'/'false'
+  key: string; // 用作 edge.branch_key 与 LLM 输出匹配；binary 模式固定 'true'/'false'
   label?: string;
 }
 
@@ -208,7 +205,6 @@ export interface ConditionNode extends NodeBase {
   prompt: string;
   model?: string;
   reasoning_effort?: ReasoningEffort;
-  agent_session_id?: string;
   branches: ConditionBranch[]; // binary 时固定 [{key:'true'},{key:'false'}]
 }
 
@@ -219,11 +215,11 @@ export type WorkflowNode =
   | AssetNode
   | ConditionNode;
 
-export interface WorkflowEdge {
+export interface ExecutionEdge {
   id: string;
   source: string;
   target: string;
-  source_handle?: string;
+  branch_key?: string;
 }
 
 export type FailureKind = 'runtime' | 'contract' | 'routing' | 'integrity' | 'internal';
@@ -262,10 +258,9 @@ export type RunSummary = Pick<
 
 export interface Step {
   node_id: string;
-  status: 'pending' | 'running' | 'waiting_for_user' | 'interrupted' | 'success' | 'failed' | 'skipped' | 'cancelled';
+  status: 'pending' | 'running' | 'waiting_for_user' | 'interrupted' | 'success' | 'checkpoint_reused' | 'failed' | 'skipped' | 'cancelled';
   input: unknown;
   output: unknown;
-  agent_session_id?: string;
   started_at?: string;
   finished_at?: string;
   duration_ms?: number;
@@ -328,7 +323,6 @@ export interface RunStepTrace {
   agent?: string | null;
   model?: string | null;
   reasoning_effort?: string | null;
-  agent_session_id?: string | null;
   started_at?: string | null;
   finished_at?: string | null;
   duration_ms?: number | null;
@@ -404,7 +398,7 @@ export type GraphPatch =
   | { op: 'add_node'; node: WorkflowNode }
   | { op: 'remove_node'; id: string }
   | { op: 'update_node'; id: string; patch: Partial<WorkflowNode> }
-  | { op: 'add_edge'; edge: WorkflowEdge }
+  | { op: 'add_edge'; edge: ExecutionEdge }
   | { op: 'remove_edge'; id: string };
 
 export interface NlCompilePlan {

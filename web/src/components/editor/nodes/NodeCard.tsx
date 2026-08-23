@@ -3,6 +3,8 @@
 
 import type { ReactNode } from 'react';
 import { Handle, Position } from '@xyflow/react';
+import { useEditorStore } from '../../../stores/useEditorStore';
+import { useRunStore } from '../../../stores/useRunStore';
 
 const HEADER_HANDLE_TOP_PX = 14;
 
@@ -31,8 +33,12 @@ export function NodeShell({
   showTargetHandle = true,
   children,
 }: NodeShellProps) {
+  const appId = useEditorStore((state) => state.app?.id);
+  const running = useRunStore(
+    (state) => state.mode === 'live' && state.appId === appId && state.steps[id]?.status === 'running',
+  );
   return (
-    <div className={`mira-node ${selected ? 'selected' : ''}`} data-node-id={id}>
+    <div className={`mira-node ${selected ? 'selected' : ''} ${running ? 'running' : ''}`} data-node-id={id}>
       {showTargetHandle && (
         <Handle
           id="target"

@@ -163,7 +163,11 @@ async def test_docker_sandbox_runner_mounts_paths_and_rewrites_output(tmp_path):
     uploads = tmp_path / "uploads"
     for path in (workspace, home, uploads):
         path.mkdir(parents=True)
-    path_map = RuntimePathMap(workspace_host=workspace, home_host=home, uploads_host=uploads)
+    path_map = RuntimePathMap(
+        workspace_host=workspace,
+        home_host=home,
+        uploads_host=uploads,
+    )
     prompt_path = home / ".mira" / "calls" / "call_test" / "prompt.txt"
     runner = DockerSandboxRunner(client=client)
     lines: list[str] = []
@@ -192,6 +196,7 @@ async def test_docker_sandbox_runner_mounts_paths_and_rewrites_output(tmp_path):
     assert kwargs["volumes"][str(workspace)]["bind"] == "/workspace"
     assert kwargs["volumes"][str(home)]["bind"] == "/home/mira"
     assert kwargs["volumes"][str(uploads)]["mode"] == "ro"
+    assert all(volume["bind"] != "/mnt/results" for volume in kwargs["volumes"].values())
     assert client.containers.container.removed is True
     assert "/home/mira/.mira/calls/call_test/prompt.txt" in " ".join(kwargs["command"])
     assert prompt_path.read_text(encoding="utf-8") == "use /workspace/input.txt"

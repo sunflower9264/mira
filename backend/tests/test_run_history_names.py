@@ -18,10 +18,9 @@ def _user_input_graph() -> dict:
                 "position": {"x": 200, "y": 0},
                 "title": "Output",
                 "prompt": "render [[respond:<section>ok</section>]]",
-                "source_node_id": "n_input",
             },
         ],
-        "edges": [{"id": "e_out", "source": "n_input", "target": "n_out"}],
+        "execution_edges": [{"id": "e_out", "source": "n_input", "target": "n_out"}],
     }
 
 
@@ -43,10 +42,9 @@ def _no_user_input_graph() -> dict:
                 "position": {"x": 200, "y": 0},
                 "title": "Output",
                 "prompt": "render [[respond:<section>ok</section>]]",
-                "source_node_id": "n_asset",
             }
         ],
-        "edges": [{"id": "e_out", "source": "n_asset", "target": "n_out"}],
+        "execution_edges": [{"id": "e_out", "source": "n_asset", "target": "n_out"}],
     }
 
 

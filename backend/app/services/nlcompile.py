@@ -22,6 +22,7 @@ from app.runtime.base import AgentChunk, AskUserAttachment, AskUserRequest, AskU
 from app.runtime.factory import get_runtime
 from app.schemas.requests import NlCompileRefineIn, NlCompileResumeIn
 from app.services.decision_prompts import append_ask_user_none_option, validate_ask_request_groups, validate_decision_answers
+from app.services.execution_plan import ExecutionPlanError, compile_execution_plan
 from app.services.graph_validation import (
     GraphValidationError,
     topological_order,
@@ -169,8 +170,8 @@ def _plan_from_row(row: NlCompileSessionRow) -> dict[str, Any] | None:
 
 
 def _graph_from_row(row: NlCompileSessionRow) -> dict[str, Any]:
-    graph = _json_loads(row.graph_json, {"nodes": [], "edges": []})
-    return prepare_planning_graph(graph) if isinstance(graph, dict) else {"nodes": [], "edges": []}
+    graph = _json_loads(row.graph_json, {"nodes": [], "execution_edges": []})
+    return prepare_planning_graph(graph) if isinstance(graph, dict) else {"nodes": [], "execution_edges": []}
 
 
 async def _get_compile_row(db: AsyncSession, user_id: str, compile_id: str) -> NlCompileSessionRow:
@@ -931,7 +932,7 @@ async def _compile_completed_result(
 
     new_graph: dict[str, Any] = {
         "nodes": [dict(node) for node in current_graph.get("nodes", [])],
-        "edges": [dict(edge) for edge in current_graph.get("edges", [])],
+        "execution_edges": [dict(edge) for edge in current_graph.get("execution_edges", [])],
     }
     if "agent" in current_graph:
         new_graph["agent"] = current_graph["agent"]
@@ -1365,7 +1366,7 @@ _GRAPH_LAYOUT_FIELDS = {"position", "width", "height", "measured", "selected", "
 
 def _slim_graph_for_prompt(graph: dict[str, Any]) -> dict[str, Any]:
     """只影响发给 LLM 的 graph 文本：剔除布局字段、截断素材长文；真实 graph 不变。"""
-    slim = {key: value for key, value in graph.items() if key not in {"nodes", "edges", "viewport"}}
+    slim = {key: value for key, value in graph.items() if key not in {"nodes", "execution_edges", "viewport"}}
     nodes: list[dict[str, Any]] = []
     for node in graph.get("nodes", []):
         if not isinstance(node, dict):
@@ -1376,7 +1377,7 @@ def _slim_graph_for_prompt(graph: dict[str, Any]) -> dict[str, Any]:
             slim_node["content"] = content[:_ASSET_CONTENT_PROMPT_LIMIT] + "…（素材内容已截断）"
         nodes.append(slim_node)
     slim["nodes"] = nodes
-    slim["edges"] = list(graph.get("edges", []))
+    slim["execution_edges"] = list(graph.get("execution_edges", []))
     return slim
 
 
@@ -1588,9 +1589,9 @@ def _normalize_structured_patch(patch: dict[str, Any]) -> dict[str, Any]:
             "source": patch.get("edge_source"),
             "target": patch.get("edge_target"),
         }
-        source_handle = patch.get("edge_source_handle")
-        if isinstance(source_handle, str) and source_handle:
-            edge["source_handle"] = source_handle
+        branch_key = patch.get("edge_branch_key")
+        if isinstance(branch_key, str) and branch_key:
+            edge["branch_key"] = branch_key
         return {"op": "add_edge", "edge": edge}
     if op == "remove_edge":
         return {"op": "remove_edge", "id": patch.get("id")}
@@ -1659,7 +1660,7 @@ def _plan_list(value: Any) -> list[str]:
 
 def _apply_patch(graph: dict[str, Any], patch: dict[str, Any]) -> bool:
     nodes = graph.setdefault("nodes", [])
-    edges = graph.setdefault("edges", [])
+    edges = graph.setdefault("execution_edges", [])
     op = patch.get("op")
     if op == "add_node" and patch.get("node"):
         if patch["node"].get("id") in _node_ids(graph):
@@ -1677,12 +1678,12 @@ def _apply_patch(graph: dict[str, Any], patch: dict[str, Any]) -> bool:
         return False
     if op == "remove_edge" and patch.get("id"):
         before = len(edges)
-        graph["edges"] = [edge for edge in edges if edge.get("id") != patch["id"]]
-        return len(graph["edges"]) != before
+        graph["execution_edges"] = [edge for edge in edges if edge.get("id") != patch["id"]]
+        return len(graph["execution_edges"]) != before
     if op == "remove_node" and patch.get("id"):
         before = len(nodes)
         graph["nodes"] = [node for node in nodes if node.get("id") != patch["id"]]
-        graph["edges"] = [
+        graph["execution_edges"] = [
             edge
             for edge in edges
             if edge.get("source") != patch["id"] and edge.get("target") != patch["id"]
@@ -1729,7 +1730,7 @@ def _patch_validation_error(graph: dict[str, Any], patch: dict[str, Any]) -> str
     if op == "add_edge":
         return _new_edge_validation_error(graph, patch.get("edge"))
     if op == "remove_edge":
-        return None if any(edge.get("id") == patch.get("id") for edge in graph.get("edges", [])) else "remove_edge.id 不存在"
+        return None if any(edge.get("id") == patch.get("id") for edge in graph.get("execution_edges", [])) else "remove_edge.id 不存在"
     if op == "delete_edge":
         return "patch.op 不支持；删除连线只能使用 remove_edge"
     return "patch.op 不支持"
@@ -1737,11 +1738,7 @@ def _patch_validation_error(graph: dict[str, Any], patch: dict[str, Any]) -> str
 
 def _can_retry_patch(patch: dict[str, Any], reason: str | None) -> bool:
     if patch.get("op") == "update_node":
-        return reason in {
-            "update_node.id 不存在",
-            "output 节点没有上游连线时 source_node_id 必须为空",
-            "output 节点 source_node_id 必须指向一个上游节点",
-        }
+        return reason == "update_node.id 不存在"
     if patch.get("op") == "add_edge":
         return reason in {"add_edge.edge.source 不存在", "add_edge.edge.target 不存在"}
     return False
@@ -1858,7 +1855,7 @@ def _new_edge_validation_error(graph: dict[str, Any], edge: Any) -> str | None:
     edge_id = edge.get("id")
     if not isinstance(edge_id, str) or not edge_id:
         return "add_edge.edge.id 缺失或格式非法"
-    if any(existing.get("id") == edge_id for existing in graph.get("edges", [])):
+    if any(existing.get("id") == edge_id for existing in graph.get("execution_edges", [])):
         return "add_edge.edge.id 已存在"
     source = _node_by_id(graph, edge.get("source"))
     target = _node_by_id(graph, edge.get("target"))
@@ -1873,19 +1870,19 @@ def _new_edge_validation_error(graph: dict[str, Any], edge: Any) -> str | None:
     if target.get("type") in {"user_input", "asset"}:
         return "user_input 和 asset 节点不能作为连线终点"
     if source.get("type") == "condition":
-        handle = edge.get("source_handle")
+        handle = edge.get("branch_key")
         if not isinstance(handle, str) or handle not in _condition_handles(source):
-            return "condition 出边 source_handle 无效"
-        for existing in graph.get("edges", []):
+            return "condition 出边 branch_key 无效"
+        for existing in graph.get("execution_edges", []):
             if (
                 existing.get("source") == edge.get("source")
-                and existing.get("source_handle") == handle
+                and existing.get("branch_key") == handle
             ):
                 return "同一个 condition 分支最多只能连接一条出边"
     else:
-        if "source_handle" in edge:
-            return "非 condition 出边不能包含 source_handle"
-        for existing in graph.get("edges", []):
+        if "branch_key" in edge:
+            return "非 condition 出边不能包含 branch_key"
+        for existing in graph.get("execution_edges", []):
             if existing.get("source") == edge.get("source") and existing.get("target") == edge.get("target"):
                 return "连线重复"
     return _candidate_topology_error(graph, {"op": "add_edge", "edge": edge})
@@ -1934,9 +1931,9 @@ def _prune_nlcompile_redundant_edges(
         return []
 
     redundant_edge_id_set = set(redundant_edge_ids)
-    graph["edges"] = [
+    graph["execution_edges"] = [
         edge
-        for edge in graph.get("edges", [])
+        for edge in graph.get("execution_edges", [])
         if not (isinstance(edge, dict) and edge.get("id") in redundant_edge_id_set)
     ]
     _sync_applied_patches_for_pruned_edges(applied_patches, redundant_edge_ids)
@@ -1971,8 +1968,8 @@ def _nlcompile_redundant_edge_ids(graph: dict[str, Any]) -> list[str]:
         for node in graph.get("nodes", [])
         if isinstance(node, dict) and isinstance(node.get("id"), str)
     }
-    edges: list[tuple[str, str, str]] = []
-    for edge in graph.get("edges", []):
+    redundant_edge_ids: list[str] = []
+    for edge in graph.get("execution_edges", []):
         if not isinstance(edge, dict):
             continue
         source_id = edge.get("source")
@@ -1983,44 +1980,21 @@ def _nlcompile_redundant_edge_ids(graph: dict[str, Any]) -> list[str]:
         source_node = nodes.get(source_id)
         if not source_node or source_node.get("type") == "condition":
             continue
-        target_node = nodes.get(target_id)
-        if target_node and target_node.get("type") == "output" and target_node.get("source_node_id") == source_id:
+        candidate = {
+            **graph,
+            "execution_edges": [
+                current
+                for current in graph.get("execution_edges", [])
+                if not (isinstance(current, dict) and current.get("id") == edge_id)
+            ],
+        }
+        try:
+            plan = compile_execution_plan(candidate)
+        except ExecutionPlanError:
             continue
-        edges.append((source_id, target_id, edge_id))
-
-    redundant_edge_ids: list[str] = []
-    for index, (source_id, target_id, edge_id) in enumerate(edges):
-        path = _path_without_edge(edges, index, source_id, target_id)
-        if path:
+        if target_id in plan.descendant_ids({source_id}):
             redundant_edge_ids.append(edge_id)
     return redundant_edge_ids
-
-
-def _path_without_edge(
-    edges: list[tuple[str, str, str]],
-    skip_index: int,
-    source_id: str,
-    target_id: str,
-) -> list[str] | None:
-    adjacency: dict[str, list[str]] = {}
-    for index, (source, target, _edge_id) in enumerate(edges):
-        if index == skip_index:
-            continue
-        adjacency.setdefault(source, []).append(target)
-
-    queue: list[tuple[str, list[str]]] = [(source_id, [source_id])]
-    visited = {source_id}
-    while queue:
-        current, path = queue.pop(0)
-        for next_id in adjacency.get(current, []):
-            if next_id in visited:
-                continue
-            next_path = [*path, next_id]
-            if next_id == target_id:
-                return next_path
-            visited.add(next_id)
-            queue.append((next_id, next_path))
-    return None
 
 
 def _condition_handles(node: dict[str, Any]) -> set[str]:
@@ -2098,7 +2072,7 @@ def render_plan_markdown(
             node.get("id"): node for node in new_graph.get("nodes", []) if node.get("id")
         }
         original_edges_by_id = {
-            edge.get("id"): edge for edge in original_graph.get("edges", []) if edge.get("id")
+            edge.get("id"): edge for edge in original_graph.get("execution_edges", []) if edge.get("id")
         }
         for index, patch in enumerate(applied_patches, start=1):
             _append_patch_details(
@@ -2112,7 +2086,7 @@ def render_plan_markdown(
             )
 
     new_node_count = len(new_graph.get("nodes", []))
-    new_edge_count = len(new_graph.get("edges", []))
+    new_edge_count = len(new_graph.get("execution_edges", []))
     parts.append("")
     parts.append(f"应用后画布包含 {new_node_count} 个节点 / {new_edge_count} 条连线。")
     return "\n".join(parts).strip() + "\n"
@@ -2143,7 +2117,7 @@ def _append_patch_details(
             _append_node_basics(parts, original)
         affected_edges = [
             edge
-            for edge in original_graph.get("edges", [])
+            for edge in original_graph.get("execution_edges", [])
             if edge.get("source") == node_id or edge.get("target") == node_id
         ]
         parts.append(f"- 同时移除关联连线：{len(affected_edges)} 条")
@@ -2168,8 +2142,8 @@ def _append_patch_details(
         edge = patch.get("edge") or {}
         parts.append(f"### {index}. 新增连线")
         parts.append(f"- {_edge_label(edge, new_nodes)}")
-        if edge.get("source_handle"):
-            parts.append(f"- 分支 handle：`{edge.get('source_handle')}`")
+        if edge.get("branch_key"):
+            parts.append(f"- 分支 handle：`{edge.get('branch_key')}`")
         parts.append("")
         return
     if op == "remove_edge":
@@ -2275,8 +2249,6 @@ def _output_contract_block(contract: dict[str, Any]) -> str:
     output_type = contract.get("type")
     if output_type:
         lines.append(f"- 输出类型：{_output_contract_type_label(output_type)}")
-    if output_type == "json" and isinstance(contract.get("json_schema"), dict):
-        lines.append(f"- JSON Schema：{_compact_json(contract.get('json_schema'), 800)}")
     artifact_kind = contract.get("artifact_kind")
     if isinstance(artifact_kind, str) and artifact_kind:
         lines.append(f"- 文件类型：{_artifact_kind_label(artifact_kind)}")
@@ -2285,7 +2257,7 @@ def _output_contract_block(contract: dict[str, Any]) -> str:
 
 def _output_contract_type_label(value: Any) -> str:
     labels = {
-        "json": "结构化 JSON",
+        "json": "结构化数据（由 AI 自动维护）",
         "html": "HTML",
         "artifact": "文件产物引用",
     }
@@ -2397,7 +2369,7 @@ def _field_label(field: Any) -> str:
         "required": "是否必填",
         "size": "大小",
         "source": "来源节点",
-        "source_handle": "分支 handle",
+        "branch_key": "分支 handle",
         "target": "目标节点",
         "url": "链接",
         "width": "宽度",

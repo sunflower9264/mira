@@ -17,7 +17,7 @@ import type {
   OutputNode,
   RunStepTrace,
   Step,
-  WorkflowEdge,
+  ExecutionEdge,
   WorkflowNode,
 } from '../../types';
 import { CONDITION_DEFAULT_BRANCH_KEY } from '../../types';
@@ -57,6 +57,7 @@ const STEP_LABEL: Record<Step['status'], string> = {
   waiting_for_user: '等待用户',
   interrupted: '已中断',
   success: '成功',
+  checkpoint_reused: '检查点复用',
   failed: '失败',
   skipped: '已跳过',
   cancelled: '已取消',
@@ -77,7 +78,7 @@ function runSummaryLabel(status: RunUiStatus, done: number, total: number): stri
   }
 }
 
-function orderNodesByGraph(nodes: WorkflowNode[], edges: WorkflowEdge[]): WorkflowNode[] {
+function orderNodesByGraph(nodes: WorkflowNode[], edges: ExecutionEdge[]): WorkflowNode[] {
   if (nodes.length <= 1) return nodes;
 
   const indexById = new Map(nodes.map((node, index) => [node.id, index]));
@@ -159,8 +160,8 @@ export function ConsoleTab() {
   const [trace, setTrace] = useState<RunStepTrace | null>(null);
 
   const orderedNodes = useMemo(
-    () => orderNodesByGraph(nodes, graph?.edges ?? []),
-    [nodes, graph?.edges],
+    () => orderNodesByGraph(nodes, graph?.execution_edges ?? []),
+    [nodes, graph?.execution_edges],
   );
 
   const stats = useMemo(() => {
@@ -454,7 +455,7 @@ function ConditionBranchTestPanel({
     (candidate): candidate is ConditionNode => candidate.id === node.id && candidate.type === 'condition',
   ) ?? null;
   const options = currentNode && currentGraph
-    ? conditionBranchOptions(currentNode, currentGraph.edges)
+    ? conditionBranchOptions(currentNode, currentGraph.execution_edges)
     : [];
   return (
     <LogSection title="分支测试">
@@ -498,7 +499,7 @@ interface ConditionBranchOption {
   connected: boolean;
 }
 
-function conditionBranchOptions(node: ConditionNode, edges: WorkflowEdge[]): ConditionBranchOption[] {
+function conditionBranchOptions(node: ConditionNode, edges: ExecutionEdge[]): ConditionBranchOption[] {
   const branches: ConditionBranch[] = node.mode === 'binary'
     ? [{ key: 'true' }, { key: 'false' }]
     : node.branches;
@@ -517,8 +518,8 @@ function conditionBranchOptions(node: ConditionNode, edges: WorkflowEdge[]): Con
   return options;
 }
 
-function conditionBranchConnected(edges: WorkflowEdge[], nodeId: string, branchKey: string): boolean {
-  return edges.some((edge) => edge.source === nodeId && edge.source_handle === branchKey);
+function conditionBranchConnected(edges: ExecutionEdge[], nodeId: string, branchKey: string): boolean {
+  return edges.some((edge) => edge.source === nodeId && edge.branch_key === branchKey);
 }
 
 function conditionResultFromStep(step?: Step): ConditionResult | null {
@@ -680,7 +681,6 @@ function TraceMetaGrid({ trace }: { trace: RunStepTrace }) {
     ['Agent', trace.agent || '未配置'],
     ['模型', trace.model || '默认'],
     ['推理等级', trace.reasoning_effort || '默认'],
-    ['Session', trace.agent_session_id || '无'],
     ['耗时', formatDuration(trace.duration_ms ?? 0)],
     ['开始', trace.started_at ? formatTime(trace.started_at) : '未开始'],
   ];

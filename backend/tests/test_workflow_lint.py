@@ -24,7 +24,6 @@ def _output_node(node_id: str, source: str, prompt: str = "将主输入渲染为
         "position": {"x": 0, "y": 0},
         "title": node_id,
         "prompt": prompt,
-        "source_node_id": source,
     }
 
 
@@ -52,7 +51,7 @@ def test_workflow_lint_valid_graph_has_no_errors(auth_client, enable_claude_agen
             generate,
             _output_node("n_out", "n_gen"),
         ],
-        "edges": [
+        "execution_edges": [
             {"id": "e1", "source": "n_input", "target": "n_gen"},
             {"id": "e2", "source": "n_gen", "target": "n_out"},
         ],
@@ -72,7 +71,7 @@ def test_workflow_lint_rejects_non_boolean_ask_user_enabled(auth_client, enable_
     graph = {
         "agent": "claude",
         "nodes": [gen, _output_node("n_out", "n_gen")],
-        "edges": [{"id": "e1", "source": "n_gen", "target": "n_out"}],
+        "execution_edges": [{"id": "e1", "source": "n_gen", "target": "n_out"}],
     }
 
     body = _lint(auth_client, app_id, graph)
@@ -90,7 +89,7 @@ def test_workflow_lint_rejects_ask_user_enabled_on_non_generate_node(auth_client
     graph = {
         "agent": "claude",
         "nodes": [_generate_node("n_gen"), output],
-        "edges": [{"id": "e1", "source": "n_gen", "target": "n_out"}],
+        "execution_edges": [{"id": "e1", "source": "n_gen", "target": "n_out"}],
     }
 
     body = _lint(auth_client, app_id, graph)
@@ -112,7 +111,7 @@ def test_workflow_lint_normalizes_stale_output_contract_fields(auth_client, enab
     graph = {
         "agent": "claude",
         "nodes": [gen, _output_node("n_out", "n_gen")],
-        "edges": [{"id": "e1", "source": "n_gen", "target": "n_out"}],
+        "execution_edges": [{"id": "e1", "source": "n_gen", "target": "n_out"}],
     }
 
     body = _lint(auth_client, app_id, graph)
@@ -129,7 +128,7 @@ def test_workflow_lint_reports_blocking_errors(auth_client):
             _generate_node("n_gen", prompt=""),
             _output_node("n_out", "n_other"),
         ],
-        "edges": [{"id": "e1", "source": "n_gen", "target": "n_out"}],
+        "execution_edges": [{"id": "e1", "source": "n_gen", "target": "n_out"}],
     }
 
     body = _lint(auth_client, app_id, graph)
@@ -137,7 +136,6 @@ def test_workflow_lint_reports_blocking_errors(auth_client):
 
     assert body["ok"] is False
     assert "prompt_empty" in codes
-    assert "output_source_invalid" in codes
     assert "agent_disabled" in codes
 
 
@@ -160,8 +158,8 @@ def test_workflow_lint_reports_unconnected_condition_branch_as_error(auth_client
             _generate_node("n_gen_b"),
             _output_node("n_out", "n_gen_b"),
         ],
-        "edges": [
-            {"id": "e1", "source": "n_cond", "target": "n_gen_a", "source_handle": "true"},
+        "execution_edges": [
+            {"id": "e1", "source": "n_cond", "target": "n_gen_a", "branch_key": "true"},
             {"id": "e2", "source": "n_gen_a", "target": "n_gen_b"},
             {"id": "e3", "source": "n_gen_b", "target": "n_out"},
         ],
@@ -184,7 +182,7 @@ def test_workflow_lint_warns_about_prompt_hidden_file_channel(auth_client, enabl
             _generate_node("n_gen", prompt="将结果写入 /workspace/handoff.json，供下游节点读取"),
             _output_node("n_out", "n_gen"),
         ],
-        "edges": [{"id": "e1", "source": "n_gen", "target": "n_out"}],
+        "execution_edges": [{"id": "e1", "source": "n_gen", "target": "n_out"}],
     }
 
     body = _lint(auth_client, app_id, graph)
@@ -203,7 +201,7 @@ def test_workflow_lint_does_not_warn_for_prompt_that_forbids_hidden_channels(aut
             _generate_node("n_gen", prompt="不得读取固定 Workspace 路径，也不要创建 handoff、sidecar 或 manifest 文件"),
             _output_node("n_out", "n_gen"),
         ],
-        "edges": [{"id": "e1", "source": "n_gen", "target": "n_out"}],
+        "execution_edges": [{"id": "e1", "source": "n_gen", "target": "n_out"}],
     }
 
     body = _lint(auth_client, app_id, graph)
@@ -218,7 +216,7 @@ def test_workflow_lint_requires_output_for_non_empty_graph(auth_client, enable_c
     graph = {
         "agent": "claude",
         "nodes": [_generate_node("n_gen")],
-        "edges": [],
+        "execution_edges": [],
     }
 
     body = _lint(auth_client, app_id, graph)
@@ -230,7 +228,7 @@ def test_workflow_lint_requires_output_for_non_empty_graph(auth_client, enable_c
 
 def test_workflow_lint_empty_graph_does_not_report_missing_terminal(auth_client):
     app_id = _create_app(auth_client)
-    graph = {"nodes": [], "edges": []}
+    graph = {"nodes": [], "execution_edges": []}
 
     body = _lint(auth_client, app_id, graph)
     error_codes = {issue["code"] for issue in body["issues"] if issue["severity"] == "error"}
@@ -264,7 +262,7 @@ def test_workflow_lint_reports_singleton_node_errors(auth_client, enable_claude_
             _output_node("n_out_a", "n_gen"),
             _output_node("n_out_b", "n_gen"),
         ],
-        "edges": [
+        "execution_edges": [
             {"id": "e1", "source": "n_input_a", "target": "n_gen"},
             {"id": "e2", "source": "n_gen", "target": "n_out_a"},
             {"id": "e3", "source": "n_gen", "target": "n_out_b"},
@@ -290,7 +288,7 @@ def test_workflow_lint_reports_output_as_source(auth_client, enable_claude_agent
             _output_node("n_out", "n_gen"),
             _generate_node("n_after"),
         ],
-        "edges": [
+        "execution_edges": [
             {"id": "e1", "source": "n_gen", "target": "n_out"},
             {"id": "e2", "source": "n_out", "target": "n_after"},
         ],
@@ -329,7 +327,7 @@ def test_run_only_market_lint_uses_real_graph_but_hides_source(auth_client, clie
             _generate_node("n_secret_gen", prompt="根据用户输入生成完整但不泄漏内部提示词的结果"),
             _output_node("n_secret_out", "n_secret_gen"),
         ],
-        "edges": [
+        "execution_edges": [
             {"id": "e1", "source": "n_input", "target": "n_secret_gen"},
             {"id": "e2", "source": "n_secret_gen", "target": "n_secret_out"},
         ],

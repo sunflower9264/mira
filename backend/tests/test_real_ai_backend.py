@@ -163,7 +163,7 @@ def test_real_ai_run_generate_json_contract(real_ai_client: httpx.Client, runtim
             },
             _output_node("请把上游结构化结果中的摘要内容渲染成 HTML。", source="n_gen"),
         ],
-        "edges": [
+        "execution_edges": [
             {"id": "e1", "source": "n_input", "target": "n_gen"},
             {"id": "e2", "source": "n_gen", "target": "n_out"},
         ],
@@ -196,7 +196,7 @@ def test_real_ai_run_artifact_contract_with_codex(real_ai_client: httpx.Client) 
             },
             _output_node("展示上游文件产物名称。", source="n_gen"),
         ],
-        "edges": [
+        "execution_edges": [
             {"id": "e1", "source": "n_input", "target": "n_gen"},
             {"id": "e2", "source": "n_gen", "target": "n_out"},
         ],
@@ -237,7 +237,7 @@ def test_real_ai_run_ask_user_preflight_with_claude(real_ai_client: httpx.Client
             },
             _output_node("展示上游结果。", source="n_gen"),
         ],
-        "edges": [
+        "execution_edges": [
             {"id": "e1", "source": "n_input", "target": "n_gen"},
             {"id": "e2", "source": "n_gen", "target": "n_out"},
         ],
@@ -289,7 +289,7 @@ def test_real_ai_graph_layout_with_codex(real_ai_client: httpx.Client) -> None:
     response.raise_for_status()
     next_graph = response.json()["graph"]
     assert {node["id"] for node in next_graph["nodes"]} == {"n_input", "n_out"}
-    assert next_graph["edges"] == graph["edges"]
+    assert next_graph["execution_edges"] == graph["execution_edges"]
     assert all(isinstance(node.get("position", {}).get("x"), (int, float)) for node in next_graph["nodes"])
 
 
@@ -322,7 +322,7 @@ def test_real_ai_nlcompile_builds_complete_graph_without_unneeded_question(
     real_ai_client: httpx.Client,
 ) -> None:
     for attempt in _effect_attempts():
-        graph = {"agent": "codex", "tools": {"disabled_tool_ids": []}, "nodes": [], "edges": []}
+        graph = {"agent": "codex", "tools": {"disabled_tool_ids": []}, "nodes": [], "execution_edges": []}
         app_id = _create_app(real_ai_client, graph, name=f"real-ai-nlcompile-empty-{attempt}")
         response = real_ai_client.post(
             "/api/nlcompile",
@@ -357,7 +357,7 @@ def test_real_ai_nlcompile_builds_complete_graph_without_unneeded_question(
 
 def test_real_ai_nlcompile_asks_for_unresolved_delivery_choice(real_ai_client: httpx.Client) -> None:
     for attempt in _effect_attempts():
-        graph = {"agent": "codex", "tools": {"disabled_tool_ids": []}, "nodes": [], "edges": []}
+        graph = {"agent": "codex", "tools": {"disabled_tool_ids": []}, "nodes": [], "execution_edges": []}
         app_id = _create_app(real_ai_client, graph, name=f"real-ai-nlcompile-ambiguous-{attempt}")
         response = real_ai_client.post(
             "/api/nlcompile",
@@ -418,7 +418,7 @@ def test_real_ai_prompt_assistant_preserves_long_prompt_with_codex(real_ai_clien
                 },
                 _output_node("展示上游 summary。", source="n_gen"),
             ],
-            "edges": [
+            "execution_edges": [
                 {"id": "e1", "source": "n_input", "target": "n_gen"},
                 {"id": "e2", "source": "n_gen", "target": "n_out"},
             ],
@@ -467,11 +467,11 @@ def test_real_ai_condition_uses_branch_labels_and_default(real_ai_client: httpx.
                 },
                 _output_node("展示上游选择结果。", source="n_condition"),
             ],
-            "edges": [
+            "execution_edges": [
                 {"id": "e_input", "source": "n_input", "target": "n_condition"},
-                {"id": "e_low", "source": "n_condition", "target": "n_out", "source_handle": "route_a"},
-                {"id": "e_high", "source": "n_condition", "target": "n_out", "source_handle": "route_b"},
-                {"id": "e_default", "source": "n_condition", "target": "n_out", "source_handle": "__default__"},
+                {"id": "e_low", "source": "n_condition", "target": "n_out", "branch_key": "route_a"},
+                {"id": "e_high", "source": "n_condition", "target": "n_out", "branch_key": "route_b"},
+                {"id": "e_default", "source": "n_condition", "target": "n_out", "branch_key": "__default__"},
             ],
         }
         app_id = _create_app(real_ai_client, graph, name=f"real-ai-condition-labels-{attempt}")
@@ -588,7 +588,6 @@ def _output_node(prompt: str, *, source: str = "n_input") -> dict[str, Any]:
         "type": "output",
         "position": {"x": 520, "y": 0},
         "title": "Output",
-        "source_node_id": source,
         "prompt": prompt,
     }
 
@@ -601,7 +600,7 @@ def _simple_output_graph(runtime: str, *, marker: str) -> dict[str, Any]:
             _input_node(),
             _output_node(f"把主输入渲染为一个极简 HTML 片段，页面中必须出现字符串 {marker}。"),
         ],
-        "edges": [{"id": "e1", "source": "n_input", "target": "n_out"}],
+        "execution_edges": [{"id": "e1", "source": "n_input", "target": "n_out"}],
     }
 
 

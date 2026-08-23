@@ -584,6 +584,23 @@ def test_claude_print_command_includes_mcp_config_when_present(tmp_path):
     assert "hi" not in cmd
 
 
+def test_claude_resume_command_can_fork_native_session(tmp_path):
+    cmd = claude_build_print_cmd(
+        tmp_path / "claude",
+        tmp_path / "settings.json",
+        tmp_path / "mcp.json",
+        "branch task",
+        "parent-session",
+        None,
+        None,
+        None,
+        "default",
+        None,
+        True,
+    )
+    assert cmd[cmd.index("--resume") + 1] == "parent-session"
+    assert "--fork-session" in cmd
+
 def test_claude_ask_user_plan_does_not_enter_claude_plan_mode(tmp_path, monkeypatch):
     monkeypatch.setenv("RUNTIME_DIR", str(tmp_path / "runtime"))
     get_settings.cache_clear()
@@ -678,6 +695,36 @@ def test_codex_exec_command_includes_model_for_new_and_resumed_sessions(tmp_path
         "session-1",
         "-",
     ]
+
+
+def test_codex_forks_thread_through_app_server(tmp_path):
+    captured = {}
+
+    class FakeRunner:
+        async def run(self, spec, *, on_stdout_line, cancel_event):
+            captured["spec"] = spec
+            await on_stdout_line('{"id":2,"result":{"thread":{"id":"child-thread"}}}')
+            return DockerSandboxResult(return_code=0)
+
+    result = asyncio.run(
+        codex_runtime._fork_codex_session(  # noqa: SLF001
+            FakeRunner(),
+            parent_session_id="parent-thread",
+            env={},
+            path_map=SimpleNamespace(),
+            prompt_path=tmp_path / "fork.jsonl",
+            cancel_event=asyncio.Event(),
+        )
+    )
+    assert result == "child-thread"
+    spec = captured["spec"]
+    assert spec.command == ["codex", "app-server"]
+    requests = [json.loads(line) for line in spec.prompt.splitlines()]
+    assert requests[-1] == {
+        "id": 2,
+        "method": "thread/fork",
+        "params": {"threadId": "parent-thread", "cwd": "/workspace"},
+    }
 
 
 def test_codex_exec_command_injects_runtime_mcp_config_without_profile_v2(tmp_path):

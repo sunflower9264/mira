@@ -6,9 +6,11 @@ import time
 from sqlalchemy import select
 
 from app.db import SessionLocal
-from app.models import App, Run, Step, User
+from app.models import App, Run, RunAgentBranch, RunWorkspaceCheckpoint, Step, User
+from app.services.runtime_paths import run_workspace
 from app.services.runs import create_run_record, mark_active_runs_interrupted
-from app.utils import dumps
+from app.services.workspace_tree import WorkspaceTree
+from app.utils import dumps, new_id
 
 
 USER_INPUT_NODE = {
@@ -30,14 +32,13 @@ def _generate_node(node_id: str, prompt: str) -> dict:
     }
 
 
-def _output_node(node_id: str, source_node_id: str) -> dict:
+def _output_node(node_id: str, _predecessor_id: str) -> dict:
     return {
         "id": node_id,
         "type": "output",
         "position": {"x": 200, "y": 0},
         "title": node_id,
         "prompt": "render [[respond:<section>ok</section>]]",
-        "source_node_id": source_node_id,
     }
 
 
@@ -87,7 +88,7 @@ def test_startup_scan_marks_running_run_interrupted(auth_client, enable_claude_a
     graph = {
         "agent": "claude",
         "nodes": [USER_INPUT_NODE, _output_node("n_out", "n_input")],
-        "edges": [{"id": "e_out", "source": "n_input", "target": "n_out"}],
+        "execution_edges": [{"id": "e_out", "source": "n_input", "target": "n_out"}],
     }
     app_id = _build_app(auth_client, graph)
     run_id = asyncio.run(_create_unscheduled_run(app_id, {"n_input": "x"}))
@@ -122,7 +123,7 @@ def test_continue_run_skips_completed_steps(auth_client, enable_claude_agent):
             _generate_node("n_gen", "[[respond:generated]]"),
             _output_node("n_out", "n_gen"),
         ],
-        "edges": [
+        "execution_edges": [
             {"id": "e1", "source": "n_input", "target": "n_gen"},
             {"id": "e2", "source": "n_gen", "target": "n_out"},
         ],
@@ -139,17 +140,64 @@ def test_continue_run_skips_completed_steps(auth_client, enable_claude_agent):
             steps = (
                 await db.execute(select(Step).where(Step.run_id == run_id))
             ).scalars().all()
+            branch_id = new_id("branch")
+            checkpoint_id = new_id("checkpoint")
+            run_root = run_workspace(run.owner_id, run.app_id, run.id)
+            trees = WorkspaceTree(run_root)
+            workspace = trees.create_empty_branch(branch_id)
+            context_dir = workspace / ".mira" / "run-context"
+            context_dir.mkdir(parents=True)
+            (context_dir / "n_input.json").write_text(
+                dumps(
+                    {
+                        "node_id": "n_input",
+                        "node_type": "user_input",
+                        "title": "Input",
+                        "value": {"value": "hello", "attachments": []},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            snapshot, digest = trees.create_checkpoint(branch_id, checkpoint_id)
+            branch = RunAgentBranch(
+                id=branch_id,
+                run_id=run.id,
+                parent_branch_id=None,
+                fork_node_id=None,
+                base_checkpoint_id=checkpoint_id,
+                provider_session_id=None,
+                fork_from_session_id=None,
+                workspace_relpath=workspace.relative_to(run_root).as_posix(),
+                state="active",
+            )
+            db.add(branch)
             for step in steps:
                 if step.node_id == "n_input":
                     step.status = "success"
                     step.output_json = dumps({"value": "hello"})
+                    step.branch_id = branch_id
+                    step.post_checkpoint_id = checkpoint_id
+                    db.add(
+                        RunWorkspaceCheckpoint(
+                            id=checkpoint_id,
+                            run_id=run.id,
+                            step_id=step.id,
+                            node_id=step.node_id,
+                            branch_id=branch_id,
+                            kind="post_node",
+                            snapshot_relpath=snapshot.relative_to(run_root).as_posix(),
+                            tree_hash=digest,
+                            provider_session_id=None,
+                            output_digest=None,
+                        )
+                    )
             await db.commit()
 
     asyncio.run(seed_interrupted())
     changed_graph = {
         "agent": "claude",
         "nodes": [USER_INPUT_NODE],
-        "edges": [],
+        "execution_edges": [],
     }
     changed = auth_client.patch(f"/api/apps/{app_id}", json={"graph": changed_graph})
     assert changed.status_code == 200, changed.text
@@ -193,7 +241,7 @@ def test_resume_waiting_run_without_memory_future_continues_from_db(auth_client,
             _generate_node("n_gen", f"[[respond:resumed]] [[ask_user:{dumps({'context': ask['context'], 'groups': ask['groups']})}]]"),
             _output_node("n_out", "n_gen"),
         ],
-        "edges": [{"id": "e_out", "source": "n_gen", "target": "n_out"}],
+        "execution_edges": [{"id": "e_out", "source": "n_gen", "target": "n_out"}],
     }
     app_id = _build_app(auth_client, graph)
     run_id = asyncio.run(_create_unscheduled_run(app_id))

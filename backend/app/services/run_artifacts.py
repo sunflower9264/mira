@@ -152,7 +152,7 @@ async def _declared_artifact_manifests(
     *,
     node_id: str | None = None,
 ) -> list[_DeclaredArtifactManifest]:
-    graph = loads(run.graph_json, {"nodes": [], "edges": []}) or {"nodes": [], "edges": []}
+    graph = loads(run.graph_json, {"nodes": [], "execution_edges": []}) or {"nodes": [], "execution_edges": []}
     nodes_by_id = _nodes_by_id(graph)
     query = (
         select(Step.id, Step.node_id, Step.output_json)

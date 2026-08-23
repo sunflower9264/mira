@@ -33,7 +33,6 @@ OUTPUT_NODE = {
     "position": {"x": 200, "y": 0},
     "title": "Output",
     "prompt": "render [[respond:<section>ok</section>]]",
-    "source_node_id": "n_input",
 }
 
 
@@ -42,7 +41,6 @@ OUTPUT_FAIL_NODE = {
     "type": "output",
     "position": {"x": 200, "y": 0},
     "title": "Secret Output Node",
-    "source_node_id": "n_input",
     "prompt": "please fail-now",
 }
 
@@ -55,7 +53,7 @@ def _build_app(auth_client) -> str:
                 "graph": {
                     "agent": "claude",
                     "nodes": [USER_INPUT_NODE, ASSET_NODE, OUTPUT_NODE],
-                    "edges": [
+                    "execution_edges": [
                         {"id": "e_input_out", "source": "n_input", "target": "n_out"},
                         {"id": "e_asset_out", "source": "n_asset", "target": "n_out"},
                     ],
@@ -74,7 +72,7 @@ def _build_run_only_failing_app(auth_client) -> str:
             "graph": {
                 "agent": "claude",
                 "nodes": [USER_INPUT_NODE, OUTPUT_FAIL_NODE],
-                "edges": [{"id": "e1", "source": "n_input", "target": "n_out"}],
+                "execution_edges": [{"id": "e1", "source": "n_input", "target": "n_out"}],
             }
         },
     )
@@ -90,7 +88,7 @@ def _build_run_only_failing_app(auth_client) -> str:
 async def _create_running_run_with_history(app_id: str, owner_id: str) -> tuple[str, int]:
     graph = {
         "nodes": [USER_INPUT_NODE, ASSET_NODE],
-        "edges": [],
+        "execution_edges": [],
     }
     async with SessionLocal() as db:
         run = Run(
@@ -222,10 +220,9 @@ def test_sse_step_end_scrubs_upload_local_paths(auth_client, enable_claude_agent
                         "position": {"x": 200, "y": 0},
                         "title": "Output",
                         "prompt": "render [[respond:<section>ok</section>]]",
-                        "source_node_id": "n_asset",
                     },
                 ],
-                "edges": [{"id": "e_out", "source": "n_asset", "target": "n_out"}],
+                "execution_edges": [{"id": "e_out", "source": "n_asset", "target": "n_out"}],
             }
         },
     )
@@ -428,7 +425,7 @@ def test_run_only_failure_errors_are_redacted_for_runner(auth_client, enable_cla
     assert "mock failed" not in str(final)
     steps = {step["node_id"]: step for step in final["steps"]}
     assert steps["n_out"]["error"] == "运行失败"
-    assert steps["n_out"]["agent_session_id"] is None
+    assert "agent_session_id" not in steps["n_out"]
     assert steps["n_out"]["logs"] == []
 
     runs = auth_client.get(f"/api/apps/{app_id}/runs")

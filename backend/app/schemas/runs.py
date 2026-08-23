@@ -22,6 +22,7 @@ StepStatus = Literal[
     "waiting_for_user",
     "interrupted",
     "success",
+    "checkpoint_reused",
     "failed",
     "skipped",
     "cancelled",
@@ -125,7 +126,6 @@ class StepOut(BaseModel):
     status: StepStatus
     input: Any = None
     output: Any = None
-    agent_session_id: str | None = None
     started_at: str | None = None
     finished_at: str | None = None
     duration_ms: int | None = None
@@ -188,7 +188,6 @@ class RunStepTraceOut(BaseModel):
     agent: str | None = None
     model: str | None = None
     reasoning_effort: str | None = None
-    agent_session_id: str | None = None
     started_at: str | None = None
     finished_at: str | None = None
     duration_ms: int | None = None

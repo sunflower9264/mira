@@ -181,7 +181,7 @@ export function PreviewPanel() {
             className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-black/10 bg-white px-3 py-1.5 text-xs font-medium text-black/70 hover:bg-black/[0.03] disabled:cursor-not-allowed disabled:opacity-40"
           >
             <RefreshIcon className="h-3.5 w-3.5" />
-            {rerunning ? '启动中' : '从此节点重新执行'}
+            {rerunning ? '启动中' : '从此检查点重新执行'}
           </button>
         </div>
       )}
@@ -287,7 +287,7 @@ function FailedRunRepairBar({
           className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-black px-3 py-1.5 text-xs font-medium text-white hover:bg-black/80 disabled:cursor-not-allowed disabled:opacity-45"
         >
           <RefreshIcon className="h-3.5 w-3.5" />
-          {repairing ? '启动中' : '从失败节点重跑'}
+          {repairing ? '启动中' : '从失败前检查点重新执行'}
         </button>
       </div>
     </section>
@@ -364,8 +364,8 @@ function RepairInputsDialog({
     <AppDialog
       open={open}
       onClose={onClose}
-      title="修改本次重跑输入"
-      description="这些输入只用于下一次从失败节点重跑，不会修改旧运行记录。"
+      title="修改检查点后的输入"
+      description="只有位于失败节点或其下游的输入节点会采用这些值；检查点之前的输入已被冻结，不会修改旧运行记录。"
       widthClassName="max-w-2xl"
       footer={
         <>

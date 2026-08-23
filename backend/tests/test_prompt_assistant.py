@@ -159,7 +159,7 @@ def _create_app_with_agent(client, agent: str | None = "claude") -> str:
     response = client.post("/api/apps", json={"name": "Prompt Assistant Demo"})
     assert response.status_code == 200, response.text
     app_id = response.json()["id"]
-    graph = {"nodes": [], "edges": []}
+    graph = {"nodes": [], "execution_edges": []}
     if agent is not None:
         graph["agent"] = agent
     patch = client.patch(f"/api/apps/{app_id}", json={"graph": graph})
@@ -192,11 +192,10 @@ def _prompt_graph(agent: str | None = "claude") -> dict:
                 "type": "output",
                 "position": {"x": 640, "y": 0},
                 "title": "输出报告",
-                "source_node_id": "n_generate",
                 "prompt": "整理成最终报告。",
             },
         ],
-        "edges": [
+        "execution_edges": [
             {"id": "e_input_generate", "source": "n_input", "target": "n_generate"},
             {"id": "e_generate_output", "source": "n_generate", "target": "n_output"},
         ],
@@ -287,7 +286,7 @@ def test_prompt_assistant_uses_ai_with_graph_context_and_user_request(auth_clien
     assert "不写修改说明" in runtime.last_prompt
     assert "输入行业" in runtime.last_prompt
     assert "输出报告" in runtime.last_prompt
-    assert "直接上游节点" in runtime.last_prompt
+    assert "执行祖先节点" in runtime.last_prompt
     assert "直接下游节点" in runtime.last_prompt
     assert "output_contract" in runtime.last_prompt
     assert "自由文本是默认选择" in runtime.last_prompt
@@ -530,7 +529,7 @@ def test_prompt_assistant_uses_conservative_ask_user_default(
                 "prompt": "",
             },
         ],
-        "edges": [{"id": "e_input_generate", "source": "n_input", "target": "n_generate"}],
+        "execution_edges": [{"id": "e_input_generate", "source": "n_input", "target": "n_generate"}],
     }
     runtime = PromptAssistantRuntime(text=_assistant_result("书单推荐提示词"))
     set_runtime_override(runtime)
@@ -569,7 +568,7 @@ def test_prompt_assistant_allows_intermediate_graph_and_strips_runtime_snapshot(
                 "prompt": "保留这个输出格式。",
             }
         ],
-        "edges": [],
+        "execution_edges": [],
     }
     runtime = PromptAssistantRuntime(text=_assistant_result("新的完整提示词"))
     set_runtime_override(runtime)

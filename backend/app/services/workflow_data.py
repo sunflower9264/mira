@@ -56,7 +56,7 @@ def build_output_envelope(
             )
             target = (run_workspace / target_relative).resolve()
             target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.move(str(source), str(target))
+            shutil.copy2(source, target)
             target.chmod(target.stat().st_mode & ~0o222)
             artifacts.append(
                 {
@@ -107,10 +107,12 @@ def workflow_data_prompt() -> str:
     return "\n".join(
         [
             "# Workflow 数据 Interface",
-            "上游上下文只包含 Graph 直接入边声明的数据；不得假设还能读取其它节点、祖先节点或历史会话。",
-            "上游文件只通过其中列出的 `/mnt/inputs/...` 只读路径提供；不要猜测固定文件名或其它 Workspace 路径。",
-            "当前 `/workspace` 只属于本节点本次尝试，可用于临时文件；需要交给下游或用户的文件必须按 artifact 输出契约声明。",
-            "JSON、HTML 或自由文本输出不得用隐藏 sidecar、handoff 或 manifest 文件代替正式节点输出。",
+            "整个应用的一次运行由同一个 RunAgent 推进；顺序节点延续同一会话，并共享同一个可写 `/workspace`。",
+            "上游已经完成的分析、决策和文件都保留在当前会话与 workspace 中；不要等待额外的显式结果注入。",
+            "应用输入和素材在 Agent 首次启动前写入 `/workspace/.mira/run-context/`；需要时直接读取该目录，附件副本位于 `/workspace/inputs/`。",
+            "`/mnt/inputs` 只用于当前 ask_user 恢复时新增的附件。",
+            "可以在 `/workspace` 中维护跨节点工作文件；需要出现在节点正式结果或用户下载区的内容仍必须满足当前节点的强输出契约。",
+            "节点最终回复只提交当前节点契约要求的结果，不要用隐藏 sidecar、handoff 或 manifest 文件代替正式节点输出。",
             "业务验收完成但结论不通过时，仍须返回符合契约的 failed/blocked 业务结果；只有工具、程序或契约无法执行时才属于节点执行失败。",
         ]
     )
@@ -150,28 +152,6 @@ def runtime_input_refs(value: Any, *, run_workspace: Path) -> list[RuntimeUpload
         name = item.get("name") if isinstance(item.get("name"), str) else path.name
         refs.append(RuntimeUploadRef(id=artifact_id, path=path, name=name))
     return refs
-
-
-def value_for_prompt(value: Any, *, run_workspace: Path) -> Any:
-    if not is_output_envelope(value):
-        return value
-    prepared_artifacts: list[dict[str, Any]] = []
-    for item in artifact_items(value):
-        prepared = {
-            key: item[key]
-            for key in ("artifact_id", "name", "size", "sha256", "artifact_kind")
-            if key in item
-        }
-        path_text = item.get("path")
-        if isinstance(path_text, str):
-            resolved = _resolve_declared_artifact(run_workspace, path_text)
-            if resolved is not None:
-                prepared["path"] = str(resolved)
-        prepared_artifacts.append(prepared)
-    return {
-        "value": value.get("value"),
-        "artifacts": prepared_artifacts,
-    }
 
 
 def copy_reused_output_envelope(

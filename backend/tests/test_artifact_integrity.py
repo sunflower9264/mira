@@ -56,6 +56,8 @@ class ArtifactCatalogRuntime:
         runtime_tools=None,
         runtime_policy="execute",
         output_schema=None,
+        session_scope=None,
+        fork_session=False,
     ) -> AgentExecutionResult:
         if runtime_policy == "ask_user_plan":
             text = '{"action":"complete","decision_summary":"无需额外提问。","reason":"测试场景信息完整。"}'
@@ -112,10 +114,9 @@ def _artifact_graph() -> dict:
                 "position": {"x": 200, "y": 0},
                 "title": "Output",
                 "prompt": "展示结果",
-                "source_node_id": "n_gen",
             },
         ],
-        "edges": [{"id": "e1", "source": "n_gen", "target": "n_out"}],
+        "execution_edges": [{"id": "e1", "source": "n_gen", "target": "n_out"}],
     }
 
 
@@ -370,12 +371,18 @@ def test_hash_bound_token_requires_matching_sha256(auth_client, enable_claude_ag
     assert exc_info.value.status_code == 401
 
 
-def test_new_artifact_is_staged_as_a_declared_read_only_input(auth_client, enable_claude_agent):
-    _app_id, _run_id, final = _run_artifact_app(auth_client, enable_claude_agent)
+def test_artifact_remains_in_shared_workspace_without_ancestor_results_view(auth_client, enable_claude_agent):
+    app_id, run_id, final = _run_artifact_app(auth_client, enable_claude_agent)
     output_step = next(step for step in final["steps"] if step["node_id"] == "n_out")
     prompt = output_step["input"]["prompt"]
-    assert DECLARED_SHA256 in prompt
-    assert "/mnt/inputs/" in prompt
+    assert DECLARED_SHA256 not in prompt
+    assert "/mnt/results" not in prompt
+
+    root = run_workspace("user_admin", app_id, run_id) / "agent" / "branches"
+    workspaces = list(root.glob("*/work"))
+    assert len(workspaces) == 1
+    assert (workspaces[0] / "declared.txt").read_bytes() == DECLARED_CONTENT
+    assert (workspaces[0] / "undeclared.tmp").read_text(encoding="utf-8") == "workspace scratch"
 
 
 def test_artifact_validator_enforces_max_count(tmp_path):

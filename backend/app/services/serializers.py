@@ -29,7 +29,7 @@ def app_to_out(app: App, *, viewer_id: str | None = None) -> AppOut:
         can_clone=can_clone,
         can_run=can_run_app(app),
         can_view_source=can_view_source,
-        graph=graph_for_viewer(app, viewer_id, loads(app.graph_json, {"nodes": [], "edges": []})),
+        graph=graph_for_viewer(app, viewer_id, loads(app.graph_json, {"nodes": [], "execution_edges": []})),
     )
 
 
@@ -40,7 +40,7 @@ def version_to_out(version: AppVersion) -> AppVersionOut:
         label=version.label,
         name=version.name,
         description=version.description,
-        graph=sanitize_prompt_template_tokens(loads(version.graph_json, {"nodes": [], "edges": []})),
+        graph=sanitize_prompt_template_tokens(loads(version.graph_json, {"nodes": [], "execution_edges": []})),
         created_at=iso(version.created_at) or "",
         is_published=version.is_published,
     )

@@ -30,7 +30,7 @@ GALLERY_SEED_PATH = Path(__file__).resolve().parents[2] / "seeds" / "gallery.jso
 GALLERY_ASSETS_DIR = GALLERY_SEED_PATH.parent / "assets"
 
 
-EMPTY_GRAPH = {"nodes": [], "edges": []}
+EMPTY_GRAPH = {"nodes": [], "execution_edges": []}
 
 
 async def seed_gallery(db: AsyncSession, seed_path: Path | None = None) -> None:
@@ -215,7 +215,6 @@ def public_run_graph(graph: dict[str, Any]) -> dict[str, Any]:
                     "title": "输出",
                     "description": "",
                     "prompt": "",
-                    "source_node_id": "",
                 }
             )
     user_input_ids = [node["id"] for node in nodes if node.get("type") == "user_input"]
@@ -225,7 +224,7 @@ def public_run_graph(graph: dict[str, Any]) -> dict[str, Any]:
         for output_id in output_ids
         if user_input_ids
     ]
-    return {"nodes": nodes, "edges": edges}
+    return {"nodes": nodes, "execution_edges": edges}
 
 
 async def get_owned_app_or_404(db: AsyncSession, app_id: str, owner_id: str) -> App:

@@ -2,7 +2,7 @@
 
 key: prompt_assistant
 name: 提示词助手
-description: “生成提示词”按钮和 NL 编译节点 prompt 后处理共用的完整模板：结合用户输入、方案上下文与上下游关系，为节点生成可直接保存的 prompt。
+description: “生成提示词”按钮和 NL 编译节点 prompt 后处理共用的完整模板：结合用户输入、方案上下文与执行祖先/后继关系，为节点生成可直接保存的 prompt。
 variables:
   - user_request
   - plan_context
@@ -31,7 +31,7 @@ variables:
 * 已有 `output_contract`、`$contract_rules` 或运行时规则负责结构、格式、HTML、安全或分支输出时，不在 prompt 中重复；只补它们未表达的业务语义。没有相应契约时，才写必要的输出组织方式。
 * 新建或修改 JSON Schema 时，按 `$contract_rules` 为根对象和每个业务字段补齐简短准确的中文 `title` 与 `description`，但不要在节点 prompt 中复述这些元数据。
 * 多路输入仅在用途易混淆时说明；不写 `{{node.output}}`、`{{source.output}}` 等占位符；新增指令须具体、可检验。
-* Graph 直接入边是节点间唯一数据通道。不得让节点读取固定 Workspace 路径、未直连祖先的文件、隐藏 handoff/sidecar/manifest 或跨节点会话历史；结构化事实写入正式 JSON 输出，文件使用 artifact output_contract 并由直接连线传递。
+* Graph 连线只定义执行顺序和 condition 分支；当前节点运行时可读取全部成功执行祖先的正式结果。不得让节点读取固定 Workspace 路径、隐藏 handoff/sidecar/manifest 或跨节点会话历史；文件使用 artifact output_contract 正式输出。
 * 当前节点工作目录只用于本次尝试的临时文件。不要要求 Agent 自行维护跨节点 hash、复制协议或路径仲裁；这些属于 Workflow 引擎的 Artifact Interface。
 * 区分执行失败和业务结论：检查正常完成但验收不通过时，仍输出符合契约的 `failed`/`blocked` 业务结果；不要故意制造无效输出。condition 的 fail 分支是正常控制流。
 
@@ -55,7 +55,7 @@ $plan_context
 
 $node_context
 
-## 直接上游节点
+## 执行祖先节点
 
 $upstream_context
 

@@ -3,7 +3,7 @@
 // via PATCH /api/apps/:id (PRD §8.3).
 
 import { create } from 'zustand';
-import type { App, AppAgentKind, Graph, GraphNodeSizeMap, RunWaitingRequest, WorkflowEdge, WorkflowNode, NodeType } from '../types';
+import type { App, AppAgentKind, Graph, GraphNodeSizeMap, RunWaitingRequest, ExecutionEdge, WorkflowNode, NodeType } from '../types';
 import { CONDITION_DEFAULT_BRANCH_KEY } from '../types';
 import * as api from '../lib/api';
 import { defaultReasoningEffortForAgent, normalizeReasoningEffortForAgent } from '../lib/agentOptions';
@@ -49,7 +49,7 @@ interface EditorStoreState {
   addNode(type: NodeType, init?: Partial<WorkflowNode>): WorkflowNode;
   beautifyLayout(nodeSizes?: GraphNodeSizeMap): Promise<void>;
   removeNode(id: string): void;
-  addEdge(edge: WorkflowEdge): void;
+  addEdge(edge: ExecutionEdge): void;
   removeEdge(id: string): void;
   setSelected(id: string | null): void;
   setSelectedIds(ids: string[]): void;
@@ -58,7 +58,6 @@ interface EditorStoreState {
   undo(): void;
   redo(): void;
 
-  resetSession(nodeId: string): void;
   startPromptAssistantGeneration(generation: PromptAssistantGenerationState): void;
   finishPromptAssistantGeneration(nodeId: string, generationId: string): void;
 }
@@ -139,20 +138,6 @@ function sameIds(a: string[], b: string[]): boolean {
   return a.length === b.length && a.every((id, index) => id === b[index]);
 }
 
-function syncOutputSources(nodes: WorkflowNode[], edges: WorkflowEdge[]): WorkflowNode[] {
-  return nodes.map((node) => {
-    if (node.type !== 'output') return node;
-    const incoming = edges.filter((edge) => edge.target === node.id);
-    if (incoming.length === 0) {
-      return node.source_node_id ? { ...node, source_node_id: '' } : node;
-    }
-    if (node.source_node_id && incoming.some((edge) => edge.source === node.source_node_id)) {
-      return node;
-    }
-    return { ...node, source_node_id: incoming[0].source };
-  });
-}
-
 function effectiveConditionKeys(node: WorkflowNode): Set<string> {
   if (node.type !== 'condition') return new Set();
   if (node.mode === 'binary') return new Set(['true', 'false']);
@@ -164,8 +149,8 @@ function effectiveConditionKeys(node: WorkflowNode): Set<string> {
   return keys;
 }
 
-// 当 condition 节点的 mode/branches 变化后，孤儿 edges（source_handle 不在新 keys 集合里）应当被删除。
-function pruneOrphanConditionEdges(nodes: WorkflowNode[], edges: WorkflowEdge[]): WorkflowEdge[] {
+// 当 condition 节点的 mode/branches 变化后，孤儿 edges（branch_key 不在新 keys 集合里）应当被删除。
+function pruneOrphanConditionEdges(nodes: WorkflowNode[], edges: ExecutionEdge[]): ExecutionEdge[] {
   const conditionKeysById = new Map<string, Set<string>>();
   for (const node of nodes) {
     if (node.type === 'condition') conditionKeysById.set(node.id, effectiveConditionKeys(node));
@@ -174,7 +159,7 @@ function pruneOrphanConditionEdges(nodes: WorkflowNode[], edges: WorkflowEdge[])
   return edges.filter((edge) => {
     const valid = conditionKeysById.get(edge.source);
     if (!valid) return true; // 非 condition 起点，保留
-    const handle = edge.source_handle ?? '';
+    const handle = edge.branch_key ?? '';
     return valid.has(handle);
   });
 }
@@ -337,14 +322,14 @@ export const useEditorStore = create<EditorStoreState>((set, get) => ({
     const nodes = app.graph.nodes.map((n) =>
       n.id === id ? ({ ...n, ...patch } as WorkflowNode) : n,
     );
-    // condition 节点的 mode / branches 改动后，可能让某些 edge 的 source_handle 失效，需要剪枝。
+    // condition 节点的 mode / branches 改动后，可能让某些 edge 的 branch_key 失效，需要剪枝。
     const target = nodes.find((n) => n.id === id);
     const touchesConditionShape =
       target?.type === 'condition' && ('mode' in patch || 'branches' in patch);
     const edges = touchesConditionShape
-      ? pruneOrphanConditionEdges(nodes, app.graph.edges)
-      : app.graph.edges;
-    get().setGraph({ ...app.graph, nodes, edges }, opts);
+      ? pruneOrphanConditionEdges(nodes, app.graph.execution_edges)
+      : app.graph.execution_edges;
+    get().setGraph({ ...app.graph, nodes, execution_edges: edges }, opts);
   },
 
   addNode(type, init) {
@@ -395,7 +380,6 @@ export const useEditorStore = create<EditorStoreState>((set, get) => ({
           title: '输出',
           prompt: '',
           reasoning_effort: defaultReasoningEffortForAgent(app.graph.agent),
-          source_node_id: app.graph.nodes.find((n) => n.type === 'generate')?.id ?? '',
         };
         break;
       case 'condition':
@@ -423,7 +407,7 @@ export const useEditorStore = create<EditorStoreState>((set, get) => ({
         break;
     }
     if (init) node = { ...node, ...init } as WorkflowNode;
-    get().setGraph({ ...app.graph, nodes: [...app.graph.nodes, node], edges: app.graph.edges });
+    get().setGraph({ ...app.graph, nodes: [...app.graph.nodes, node], execution_edges: app.graph.execution_edges });
     set({ selectedId: id, selectedIds: [id], foregroundNodeId: id });
     return node;
   },
@@ -444,9 +428,9 @@ export const useEditorStore = create<EditorStoreState>((set, get) => ({
   removeNode(id) {
     const app = get().app;
     if (!app) return;
-    const remainingEdges = app.graph.edges.filter((e) => e.source !== id && e.target !== id);
-    const nodes = syncOutputSources(app.graph.nodes.filter((n) => n.id !== id), remainingEdges);
-    get().setGraph({ ...app.graph, nodes, edges: remainingEdges });
+    const remainingEdges = app.graph.execution_edges.filter((e) => e.source !== id && e.target !== id);
+    const nodes = app.graph.nodes.filter((n) => n.id !== id);
+    get().setGraph({ ...app.graph, nodes, execution_edges: remainingEdges });
     if (get().selectedIds.includes(id)) {
       const selectedIds = get().selectedIds.filter((selected) => selected !== id);
       set({ selectedIds, selectedId: selectedIds.length === 1 ? selectedIds[0] : null });
@@ -463,14 +447,14 @@ export const useEditorStore = create<EditorStoreState>((set, get) => ({
     if (!sourceNode || !targetNode) return;
     if (sourceNode.type === 'output') return;
     if (targetNode.type === 'user_input' || targetNode.type === 'asset') return;
-    if (sourceNode.type === 'condition' && (!edge.source_handle || !effectiveConditionKeys(sourceNode).has(edge.source_handle))) {
+    if (sourceNode.type === 'condition' && (!edge.branch_key || !effectiveConditionKeys(sourceNode).has(edge.branch_key))) {
       return;
     }
     // Skip duplicates and two-node loops. Condition edges are keyed by branch handle.
-    const duplicateOrLoop = app.graph.edges.some((e) => {
+    const duplicateOrLoop = app.graph.execution_edges.some((e) => {
       if (e.source === edge.target && e.target === edge.source) return true;
       if (e.source !== edge.source || e.target !== edge.target) return false;
-      if (sourceNode?.type === 'condition') return (e.source_handle ?? null) === (edge.source_handle ?? null);
+      if (sourceNode?.type === 'condition') return (e.branch_key ?? null) === (edge.branch_key ?? null);
       return true;
     });
     if (duplicateOrLoop) {
@@ -478,29 +462,27 @@ export const useEditorStore = create<EditorStoreState>((set, get) => ({
     }
     if (
       sourceNode?.type === 'condition' &&
-      app.graph.edges.some((e) => e.source === edge.source && (e.source_handle ?? null) === (edge.source_handle ?? null))
+      app.graph.execution_edges.some((e) => e.source === edge.source && (e.branch_key ?? null) === (edge.branch_key ?? null))
     ) {
       return;
     }
-    const normalizedEdge: WorkflowEdge = sourceNode.type === 'condition'
+    const normalizedEdge: ExecutionEdge = sourceNode.type === 'condition'
       ? edge
-      : { ...edge, source_handle: undefined };
-    const edges = [...app.graph.edges, normalizedEdge];
+      : { ...edge, branch_key: undefined };
+    const edges = [...app.graph.execution_edges, normalizedEdge];
     get().setGraph({
       ...app.graph,
-      nodes: syncOutputSources(app.graph.nodes, edges),
-      edges,
+      execution_edges: edges,
     });
   },
 
   removeEdge(id) {
     const app = get().app;
     if (!app) return;
-    const edges = app.graph.edges.filter((e) => e.id !== id);
+    const edges = app.graph.execution_edges.filter((e) => e.id !== id);
     get().setGraph({
       ...app.graph,
-      nodes: syncOutputSources(app.graph.nodes, edges),
-      edges,
+      execution_edges: edges,
     });
   },
 
@@ -539,10 +521,6 @@ export const useEditorStore = create<EditorStoreState>((set, get) => ({
     editVersion += 1;
     set({ app: { ...app, graph: next }, history: { past, future } });
     scheduleSave(get, set);
-  },
-
-  resetSession(nodeId) {
-    get().patchNode(nodeId, { agent_session_id: undefined } as Partial<WorkflowNode>);
   },
 
   startPromptAssistantGeneration(generation) {

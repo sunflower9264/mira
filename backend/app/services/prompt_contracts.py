@@ -46,11 +46,11 @@ patches 至少包含 1 项，必须共同完成已确认方案，并能按数组
 新增节点 id 和连线 id 必须在当前 graph 与本次 patches 中全局唯一。创建数据流时按 add_node、update_node、add_edge 的顺序输出；删除节点前先 remove_edge 删除仍需显式移除的连线。
 
 结构化输出字段固定如下；不用的字段必须填 null：
-{"op":"add_node","id":null,"node_json":"{...node JSON...}","patch_json":null,"edge_id":null,"edge_source":null,"edge_target":null,"edge_source_handle":null}
-{"op":"remove_node","id":"...","node_json":null,"patch_json":null,"edge_id":null,"edge_source":null,"edge_target":null,"edge_source_handle":null}
-{"op":"update_node","id":"...","node_json":null,"patch_json":"{...node patch JSON...}","edge_id":null,"edge_source":null,"edge_target":null,"edge_source_handle":null}
-{"op":"add_edge","id":null,"node_json":null,"patch_json":null,"edge_id":"...","edge_source":"...","edge_target":"...","edge_source_handle":null}
-{"op":"remove_edge","id":"...","node_json":null,"patch_json":null,"edge_id":null,"edge_source":null,"edge_target":null,"edge_source_handle":null}
+{"op":"add_node","id":null,"node_json":"{...node JSON...}","patch_json":null,"edge_id":null,"edge_source":null,"edge_target":null,"edge_branch_key":null}
+{"op":"remove_node","id":"...","node_json":null,"patch_json":null,"edge_id":null,"edge_source":null,"edge_target":null,"edge_branch_key":null}
+{"op":"update_node","id":"...","node_json":null,"patch_json":"{...node patch JSON...}","edge_id":null,"edge_source":null,"edge_target":null,"edge_branch_key":null}
+{"op":"add_edge","id":null,"node_json":null,"patch_json":null,"edge_id":"...","edge_source":"...","edge_target":"...","edge_branch_key":null}
+{"op":"remove_edge","id":"...","node_json":null,"patch_json":null,"edge_id":null,"edge_source":null,"edge_target":null,"edge_branch_key":null}
 
 node_json 和 patch_json 必须是合法 JSON 对象字符串，不要用 markdown 代码块包裹。
 
@@ -60,7 +60,7 @@ node_json 和 patch_json 必须是合法 JSON 对象字符串，不要用 markdo
 
 - user_input：{"id":"input_1","type":"user_input","title":"用户输入","input_schema":{"label":"请输入主题","kind":"text","required":true}}。kind 只能是 text 或 file；placeholder 可选。
 - generate：{"id":"generate_1","type":"generate","title":"生成摘要","prompt":"说明任务、输入利用方式和输出要求"}。仅当确认方案需要时增加 model、reasoning_effort 或 output_contract；自由文本不要设置 output_contract。JSON Schema 的根对象及每个 properties 业务字段（含嵌套字段）都必须有简短准确的中文 title 和 description。
-- output：{"id":"output_1","type":"output","title":"输出","prompt":"将上游结果完整渲染为 HTML","source_node_id":"generate_1"}。必须另有一条 edge_source 为 source_node_id、edge_target 为该 output 的入边；不能包含 output_contract，也不能有出边。
+- output：{"id":"output_1","type":"output","title":"输出","prompt":"基于当前 RunAgent 已有上下文将最终内容渲染为 HTML"}。必须至少有一条执行连线进入该节点；不能包含 output_contract，也不能有出边。
 - condition binary：{"id":"condition_1","type":"condition","title":"是否通过","mode":"binary","prompt":"根据上游内容判断是否通过","branches":[{"key":"true","label":"通过"},{"key":"false","label":"不通过"}]}。binary 的 key 固定且仅为 true、false。
 - condition cases：{"id":"condition_1","type":"condition","title":"分类","mode":"cases","prompt":"根据上游内容选择分类","branches":[{"key":"approved","label":"通过"},{"key":"review","label":"复核"}]}。key 只能含字母、数字、下划线且不重复；保留 key __default__ 不能写入 branches。
 - asset text：{"id":"asset_1","type":"asset","title":"参考资料","asset_kind":"text","content":"现有或用户明确提供的正文"}。
@@ -70,10 +70,10 @@ node_json 和 patch_json 必须是合法 JSON 对象字符串，不要用 markdo
 
 ### edge 契约
 
-- edge 是节点间唯一数据通道：target 只能获得直接入边 source 的正式输出。不得设计依赖固定 Workspace 路径、祖先节点文件、隐藏 handoff/sidecar/manifest 或跨节点 Agent session 的流程。
-- JSON、HTML 和自由文本必须通过正式节点输出传递；文件必须由 artifact output_contract 声明后再通过 edge 传给下游。若一个步骤既要结构化结果又要文件，拆成两个职责明确且有连线的 generate 节点。
-- 普通边：{"op":"add_edge","id":null,"node_json":null,"patch_json":null,"edge_id":"edge_input_generate","edge_source":"input_1","edge_target":"generate_1","edge_source_handle":null}。非 condition 出边必须填 null。
-- condition 分支边：{"op":"add_edge","id":null,"node_json":null,"patch_json":null,"edge_id":"edge_condition_output","edge_source":"condition_1","edge_target":"output_1","edge_source_handle":"approved"}。source_handle 必须是 branches 中真实 key；cases 可使用未声明的保留 key __default__ 表示其它情况。
+- edge 只定义执行顺序和 condition 分支，不表示单独的数据绑定；当前节点会自动获得执行图中全部已成功祖先的正式结果。
+- JSON、HTML 和自由文本必须作为正式节点输出；文件必须由 artifact output_contract 声明。顺序节点延续同一 RunAgent session 和 workspace；fan-out 使用隔离分支、fan-in 由协调 Agent 合并。不要设计额外 handoff/sidecar/manifest 通道。
+- 普通边：{"op":"add_edge","id":null,"node_json":null,"patch_json":null,"edge_id":"edge_input_generate","edge_source":"input_1","edge_target":"generate_1","edge_branch_key":null}。非 condition 出边必须填 null。
+- condition 分支边：{"op":"add_edge","id":null,"node_json":null,"patch_json":null,"edge_id":"edge_condition_output","edge_source":"condition_1","edge_target":"output_1","edge_branch_key":"approved"}。branch_key 必须是 branches 中真实 key；cases 可使用未声明的保留 key __default__ 表示其它情况。
 - user_input 和 asset 不能作为 target；output 不能作为 source；同一普通 source/target 不得重复，同一 condition 分支最多一条出边，且所有连线必须保持无环。
 """.strip()
 

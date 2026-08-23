@@ -15,17 +15,19 @@ import asyncio
 import json
 import logging
 import re
+import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Run, Step, StepLog
+from app.models import Step, StepLog
 from app.runtime.base import AgentChunk, AskUserRequest
 from app.runtime.factory import get_runtime
 from app.schemas import RunInputValue
 from app.services.decision_prompts import append_ask_user_none_option, validate_ask_request_groups
+from app.services.execution_plan import ExecutionPlan, compile_execution_plan
 from app.services.output_contracts import (
     ContractValidationResult,
     contract_prompt_suffix,
@@ -36,18 +38,14 @@ from app.services.output_contracts import (
 from app.services.prompts import get_prompt_content, render_prompt
 from app.services.reasoning_effort import normalize_reasoning_effort_for_agent
 from app.services.run_hub import RunChannel
-from app.services.run_output_sanitizer import sanitize_run_text
 from app.services.runs import attachments_meta
 from app.services.runtime_uploads import RuntimeUploadRef, rewrite_runtime_upload_paths, runtime_upload_context
-from app.services.runtime_paths import run_workspace
 from app.services.tools import RuntimeToolConfig
 from app.services.text_integrity import UNICODE_REPLACEMENT_ERROR, contains_unicode_replacement
 from app.services.uploads import resolve_upload
 from app.services.run_serializer import log_to_out
 from app.services.workflow_data import (
     WorkflowDataIntegrityError,
-    runtime_input_refs,
-    value_for_prompt,
     visible_output,
     workflow_data_prompt,
 )
@@ -143,11 +141,14 @@ class ExecutionContext:
     graph: dict[str, Any]
     agent: str
     workspace: Path
+    results_view: Path
     # 用户启动时收集的 user_input 节点输入：{node_id: RunInputValue}。
     inputs: dict[str, RunInputValue]
+    execution_plan: ExecutionPlan
     runtime_tools: RuntimeToolConfig | None = None
     planning_runtime_tools: RuntimeToolConfig | None = None
     agent_session_id: str | None = None
+    fork_session: bool = False
     # 已经执行成功的节点 output：{node_id: any}；handler 通过它获取上游上下文。
     outputs: dict[str, Any] = field(default_factory=dict)
     # 节点类型 / 标题查表，避免重复扫 graph。
@@ -167,10 +168,13 @@ def build_context(
     graph: dict[str, Any],
     agent: str,
     workspace: Path,
+    results_view: Path | None = None,
     inputs: dict[str, RunInputValue],
+    execution_plan: ExecutionPlan | None = None,
     runtime_tools: RuntimeToolConfig | None = None,
     planning_runtime_tools: RuntimeToolConfig | None = None,
 ) -> ExecutionContext:
+    plan = execution_plan or compile_execution_plan(graph)
     return ExecutionContext(
         db=db,
         channel=channel,
@@ -181,12 +185,12 @@ def build_context(
         graph=graph,
         agent=agent,
         workspace=workspace,
+        results_view=(results_view or workspace.parent / "results").resolve(),
         inputs=inputs,
+        execution_plan=plan,
         runtime_tools=runtime_tools,
         planning_runtime_tools=planning_runtime_tools,
-        nodes_by_id={
-            node["id"]: node for node in graph.get("nodes", []) if isinstance(node.get("id"), str)
-        },
+        nodes_by_id=plan.nodes_by_id,
     )
 
 
@@ -222,6 +226,7 @@ async def _handle_user_input(ctx: ExecutionContext, node: dict[str, Any], step: 
     payload: dict[str, Any] = {"value": raw.value}
     if metas:
         payload["attachments"] = metas
+    await asyncio.to_thread(_persist_workspace_context, ctx, node, payload)
     step.input_json = dumps(payload)
     await _append_log(ctx, step, "info", "读取用户输入")
     return NodeResult(status="success", output=payload)
@@ -243,6 +248,7 @@ async def _handle_asset(ctx: ExecutionContext, node: dict[str, Any], step: Step)
                 return NodeResult(status="failed", error="asset 节点上传文件不存在", failure_kind="runtime")
             payloads.append(resolved.to_tool_payload(ctx.asset_owner_id))
         step.input_json = dumps({"asset_kind": asset_kind, "uploads": payloads})
+        await asyncio.to_thread(_persist_workspace_context, ctx, node, payloads)
         await _append_log(ctx, step, "info", "读取上传素材")
         return NodeResult(status="success", output=payloads)
 
@@ -256,6 +262,7 @@ async def _handle_asset(ctx: ExecutionContext, node: dict[str, Any], step: Step)
             return NodeResult(status="failed", error="asset 节点上传文件不存在", failure_kind="runtime")
         payload = resolved.to_tool_payload(ctx.asset_owner_id)
         step.input_json = dumps({"asset_kind": asset_kind, "upload": payload})
+        await asyncio.to_thread(_persist_workspace_context, ctx, node, payload)
         await _append_log(ctx, step, "info", "读取上传素材")
         return NodeResult(status="success", output=payload)
 
@@ -265,6 +272,7 @@ async def _handle_asset(ctx: ExecutionContext, node: dict[str, Any], step: Step)
             return NodeResult(status="failed", error="asset 节点 urls 缺失", failure_kind="runtime")
         payload = [url.strip() for url in urls if isinstance(url, str) and url.strip()]
         step.input_json = dumps({"asset_kind": asset_kind, "urls": payload})
+        await asyncio.to_thread(_persist_workspace_context, ctx, node, payload)
         await _append_log(ctx, step, "info", "读取素材链接")
         return NodeResult(status="success", output=payload)
 
@@ -272,6 +280,7 @@ async def _handle_asset(ctx: ExecutionContext, node: dict[str, Any], step: Step)
     if not isinstance(content, str):
         return NodeResult(status="failed", error="asset 节点 content 缺失", failure_kind="runtime")
     step.input_json = dumps({"asset_kind": asset_kind, "content": content})
+    await asyncio.to_thread(_persist_workspace_context, ctx, node, content)
     await _append_log(ctx, step, "info", "读取素材内容")
     return NodeResult(status="success", output=content)
 
@@ -372,7 +381,7 @@ async def _run_llm(
     except WorkflowDataIntegrityError as exc:
         return NodeResult(
             status="failed",
-            error=f"上游 artifact 完整性校验失败：{exc}",
+            error=f"输入 artifact 完整性校验失败：{exc}",
             failure_kind="integrity",
         )
     with runtime_upload_context(cwd, input_refs):
@@ -413,7 +422,7 @@ async def _run_llm_with_upload_context(
     reasoning_effort = normalize_reasoning_effort_for_agent(agent_kind, node.get("reasoning_effort"))
 
     preflight: str | NodeResult = ""
-    if _should_run_ask_user_preflight(ctx, node, task_prompt):
+    if _should_run_ask_user_preflight(ctx, node):
         preflight = await _run_ask_user_preflight(
             ctx,
             node,
@@ -475,6 +484,8 @@ async def _run_llm_with_upload_context(
             runtime_tools=ctx.runtime_tools,
             runtime_policy="execute",
             output_schema=output_schema,
+            session_scope=f"run:{ctx.run_id}",
+            fork_session=ctx.fork_session,
         )
     except Exception as exc:  # noqa: BLE001
         logger.exception("runtime crashed for node=%s", node.get("id"))
@@ -488,6 +499,7 @@ async def _run_llm_with_upload_context(
     next_session_id = result.session_id or ctx.agent_session_id
     if next_session_id:
         ctx.agent_session_id = next_session_id
+    ctx.fork_session = False
 
     if result.finished_with == "cancelled":
         return NodeResult(status="cancelled", agent_session_id=next_session_id)
@@ -591,7 +603,7 @@ async def _run_ask_user_preflight(
         try:
             result = await runtime.execute(
                 prompt=preflight_prompt,
-                session_id=None,
+                session_id=ctx.agent_session_id,
                 allowed_tools=None,
                 model=model,
                 reasoning_effort=reasoning_effort,
@@ -602,6 +614,8 @@ async def _run_ask_user_preflight(
                 runtime_tools=ctx.planning_runtime_tools,
                 runtime_policy="ask_user_plan",
                 output_schema=_ASK_USER_PREFLIGHT_OUTPUT_SCHEMA,
+                session_scope=f"run:{ctx.run_id}",
+                fork_session=ctx.fork_session,
             )
         except Exception as exc:  # noqa: BLE001
             logger.exception("runtime ask_user preflight crashed for node=%s", node.get("id"))
@@ -612,6 +626,12 @@ async def _run_ask_user_preflight(
                 agent_session_id=ctx.agent_session_id,
             )
 
+        next_session_id = result.session_id or ctx.agent_session_id
+        if next_session_id:
+            ctx.agent_session_id = next_session_id
+            step.agent_session_id = next_session_id
+            await ctx.db.commit()
+        ctx.fork_session = False
         if result.finished_with == "cancelled":
             return NodeResult(status="cancelled", agent_session_id=ctx.agent_session_id)
         if result.finished_with == "error":
@@ -646,7 +666,12 @@ async def _run_ask_user_preflight(
                 rationale=str(action_payload.get("rationale") or "").strip() or None,
             )
 
-        summary, reason, feedback = _preflight_complete(action_payload, prompt, state)
+        summary, reason, feedback = _preflight_complete(
+            action_payload,
+            prompt,
+            state,
+            ancestor_requires_questions=_ancestor_requires_questions(ctx, node),
+        )
         if summary is None or reason is None:
             continue
         state["final"] = {"decision_summary": summary, "reason": reason}
@@ -676,15 +701,15 @@ def _preflight_state(input_payload: dict[str, Any]) -> dict[str, Any]:
     return dict(state)
 
 
-def _should_run_ask_user_preflight(ctx: ExecutionContext, node: dict[str, Any], task_prompt: str) -> bool:
+def _should_run_ask_user_preflight(ctx: ExecutionContext, node: dict[str, Any]) -> bool:
     if node.get("type") == "output":
         return False
     if node.get("type") == "generate" and node.get("ask_user_enabled") is False:
         return False
-    if _prompt_forces_ask_user(task_prompt):
+    if _prompt_forces_ask_user(str(node.get("prompt") or "")):
         return True
     if node.get("type") == "generate" and isinstance(node.get("output_contract"), dict):
-        return not _has_direct_user_input_value(ctx, node)
+        return not _has_ancestor_user_input_value(ctx, node)
     return True
 
 
@@ -703,14 +728,9 @@ def _prompt_forces_ask_user(prompt: str) -> bool:
     )
 
 
-def _has_direct_user_input_value(ctx: ExecutionContext, node: dict[str, Any]) -> bool:
-    node_id = node.get("id")
-    for edge in ctx.graph.get("edges", []):
-        if not isinstance(edge, dict) or edge.get("target") != node_id:
-            continue
-        source_id = edge.get("source")
-        if not isinstance(source_id, str):
-            continue
+def _has_ancestor_user_input_value(ctx: ExecutionContext, node: dict[str, Any]) -> bool:
+    node_id = str(node.get("id") or "")
+    for source_id in ctx.execution_plan.ancestor_ids(node_id):
         source_node = ctx.nodes_by_id.get(source_id, {})
         if source_node.get("type") != "user_input":
             continue
@@ -841,6 +861,8 @@ def _preflight_complete(
     action_payload: dict[str, Any],
     prompt: str,
     state: dict[str, Any],
+    *,
+    ancestor_requires_questions: bool,
 ) -> tuple[str | None, str | None, str | None]:
     summary = str(action_payload.get("decision_summary") or "").strip()
     reason = str(action_payload.get("reason") or "").strip()
@@ -849,11 +871,26 @@ def _preflight_complete(
     if not reason:
         return None, None, "action=complete 必须包含非空 reason"
     history = state.get("history") if isinstance(state.get("history"), list) else []
-    if not history and _prompt_requires_questions(prompt):
+    if not history and (_prompt_requires_questions(prompt) or ancestor_requires_questions):
         return None, None, "用户明确要求先提问或调用 ask_user；没有历史回答前不能 complete"
     if not history and _claims_user_interaction(summary + "\n" + reason):
         return None, None, "没有历史回答时不能声称用户已回答、取消或已经提供偏好"
     return summary, reason, None
+
+
+def _ancestor_requires_questions(ctx: ExecutionContext, node: dict[str, Any]) -> bool:
+    node_id = str(node.get("id") or "")
+    for ancestor_id in ctx.execution_plan.ancestor_ids(node_id):
+        if ancestor_id not in ctx.outputs:
+            continue
+        value = visible_output(ctx.outputs[ancestor_id])
+        try:
+            text = value if isinstance(value, str) else dumps(value)
+        except Exception:  # noqa: BLE001
+            text = str(value)
+        if _prompt_requires_questions(text):
+            return True
+    return False
 
 
 def _prompt_requires_questions(prompt: str) -> bool:
@@ -973,10 +1010,6 @@ async def _repair_contract_output(
         await on_chunk(chunk)
 
     repair_session_id = ctx.agent_session_id
-    if unicode_repair:
-        repair_session_id = None
-        ctx.agent_session_id = None
-        step.agent_session_id = None
     try:
         result = await runtime.execute(
             prompt=repair_prompt,
@@ -991,6 +1024,8 @@ async def _repair_contract_output(
             runtime_tools=ctx.runtime_tools,
             runtime_policy="execute",
             output_schema=output_schema,
+            session_scope=f"run:{ctx.run_id}",
+            fork_session=ctx.fork_session,
         )
     except Exception as exc:  # noqa: BLE001
         logger.exception("runtime repair crashed for node=%s", node.get("id"))
@@ -1004,6 +1039,7 @@ async def _repair_contract_output(
     next_session_id = result.session_id or ctx.agent_session_id
     if next_session_id:
         ctx.agent_session_id = next_session_id
+    ctx.fork_session = False
     if result.finished_with == "cancelled":
         return NodeResult(status="cancelled", agent_session_id=next_session_id)
     if result.finished_with == "error":
@@ -1147,25 +1183,58 @@ def _extract_session_id(data: dict | None) -> str | None:
 
 def _compose_node_prompt(ctx: ExecutionContext, node: dict[str, Any]) -> str:
     base = str(node.get("prompt") or "").strip()
-    if node.get("type") == "output":
-        source_id = node.get("source_node_id")
-        if isinstance(source_id, str) and source_id in ctx.outputs:
-            upstream = _format_upstream_context(ctx, node, exclude_source_ids={source_id})
-            main_input = ctx.outputs[source_id]
-            primary = f"# 主输入（来自 {source_id}）\n{_format_value(ctx, main_input)}"
-            sections = [primary]
-            if upstream:
-                sections.append("# 其它上游上下文\n" + upstream)
-            sections.append(workflow_data_prompt())
-            sections.append("# 输出指令\n" + base)
-            return "\n\n".join(sections)
-    upstream = _format_upstream_context(ctx, node)
-    sections: list[str] = []
-    if upstream:
-        sections.append("# 上游上下文\n" + upstream)
-    sections.append(workflow_data_prompt())
-    sections.append("# 当前任务\n" + base)
-    return "\n\n".join(sections)
+    return "\n\n".join(
+        [
+            workflow_data_prompt(),
+            "# 当前任务\n" + base,
+        ]
+    )
+
+
+def _persist_workspace_context(ctx: ExecutionContext, node: dict[str, Any], value: Any) -> None:
+    node_id = str(node.get("id") or "node")
+    context_dir = ctx.workspace / ".mira" / "run-context"
+    context_dir.mkdir(parents=True, exist_ok=True)
+    stored_value = _copy_context_files(ctx.workspace, value)
+    context_path = context_dir / f"{_safe_workspace_name(node_id)}.json"
+    context_path.write_text(
+        json.dumps(
+            {
+                "node_id": node_id,
+                "node_type": node.get("type"),
+                "title": node.get("title") or node_id,
+                "value": stored_value,
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+
+def _copy_context_files(workspace: Path, value: Any) -> Any:
+    if isinstance(value, list):
+        return [_copy_context_files(workspace, item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    copied = {key: _copy_context_files(workspace, item) for key, item in value.items() if key != "path"}
+    source_text = value.get("path")
+    upload_id = value.get("id")
+    if isinstance(source_text, str) and isinstance(upload_id, str):
+        source = Path(source_text)
+        if source.is_file():
+            name = _safe_workspace_name(str(value.get("name") or source.name))
+            relative = Path("inputs") / _safe_workspace_name(upload_id) / name
+            target = workspace / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
+            copied["workspace_path"] = f"/workspace/{relative.as_posix()}"
+    return copied
+
+
+def _safe_workspace_name(value: str) -> str:
+    safe = "".join(char if char.isalnum() or char in {"_", "-", "."} else "_" for char in value).strip(".")
+    return safe or "item"
 
 
 def _append_prompt(prompt: str, suffix: str) -> str:
@@ -1173,59 +1242,10 @@ def _append_prompt(prompt: str, suffix: str) -> str:
     return "\n\n".join(parts)
 
 
-def _format_upstream_context(
-    ctx: ExecutionContext,
-    node: dict[str, Any],
-    *,
-    exclude_source_ids: set[str] | None = None,
-) -> str:
-    node_id = node["id"]
-    parts: list[str] = []
-    seen_source_ids: set[str] = set()
-    excluded = exclude_source_ids or set()
-    for edge in ctx.graph.get("edges", []):
-        if not isinstance(edge, dict):
-            continue
-        if edge.get("target") != node_id:
-            continue
-        source_id = edge.get("source")
-        if not isinstance(source_id, str) or source_id not in ctx.outputs:
-            continue
-        if source_id in excluded or source_id in seen_source_ids:
-            continue
-        seen_source_ids.add(source_id)
-        upstream_node = ctx.nodes_by_id.get(source_id, {})
-        title = upstream_node.get("title") or source_id
-        parts.append(f"## {title} ({source_id})\n{_format_value(ctx, ctx.outputs[source_id])}")
-    return "\n\n".join(parts)
-
-
 def _runtime_upload_refs_for_node(ctx: ExecutionContext, node: dict[str, Any], step: Step) -> list[RuntimeUploadRef]:
     refs: dict[str, RuntimeUploadRef] = {}
-    current_run_workspace = run_workspace(ctx.user_id, ctx.app_id, ctx.run_id)
-    for source_id in _prompt_source_ids(ctx, node):
-        for ref in runtime_input_refs(ctx.outputs.get(source_id), run_workspace=current_run_workspace):
-            refs[ref.id] = ref
-        source_node = ctx.nodes_by_id.get(source_id, {})
-        if source_node.get("type") not in {"user_input", "asset"}:
-            continue
-        owner_id = ctx.asset_owner_id if source_node.get("type") == "asset" else ctx.user_id
-        _collect_upload_refs_from_value(owner_id, ctx.outputs.get(source_id), refs)
     _collect_resume_upload_refs(ctx, step, refs)
     return list(refs.values())
-
-
-def _prompt_source_ids(ctx: ExecutionContext, node: dict[str, Any]) -> set[str]:
-    node_id = node["id"]
-    source_ids = {
-        edge.get("source")
-        for edge in ctx.graph.get("edges", [])
-        if isinstance(edge, dict) and edge.get("target") == node_id and isinstance(edge.get("source"), str)
-    }
-    source_id = node.get("source_node_id")
-    if isinstance(source_id, str):
-        source_ids.add(source_id)
-    return {source_id for source_id in source_ids if isinstance(source_id, str) and source_id in ctx.outputs}
 
 
 def _collect_resume_upload_refs(ctx: ExecutionContext, step: Step, refs: dict[str, RuntimeUploadRef]) -> None:
@@ -1260,25 +1280,6 @@ def _collect_upload_refs_from_value(owner_id: str, value: Any, refs: dict[str, R
     if isinstance(value, list):
         for item in value:
             _collect_upload_refs_from_value(owner_id, item, refs)
-
-
-def _format_value(ctx: ExecutionContext, value: Any) -> str:
-    prepared = value_for_prompt(
-        value,
-        run_workspace=run_workspace(ctx.user_id, ctx.app_id, ctx.run_id),
-    )
-    if isinstance(prepared, str):
-        text = rewrite_runtime_upload_paths(prepared)
-        return sanitize_run_text(text, _run_from_context(ctx))
-    try:
-        text = rewrite_runtime_upload_paths(dumps(prepared))
-    except Exception:  # noqa: BLE001
-        text = rewrite_runtime_upload_paths(str(prepared))
-    return sanitize_run_text(text, _run_from_context(ctx))
-
-
-def _run_from_context(ctx: ExecutionContext) -> Run:
-    return Run(id=ctx.run_id, app_id=ctx.app_id, owner_id=ctx.user_id)
 
 
 # --- condition 分支选择 -----------------------------------------------------
@@ -1375,14 +1376,14 @@ def _condition_branch_keys_for_result(ctx: ExecutionContext, node: dict[str, Any
 
 def _branch_target_nodes(ctx: ExecutionContext, condition_id: str, branch_key: str | None) -> set[str]:
     """branch_key=None 时返回所有 condition 出边的 target；
-    其它时候返回 source_handle 等于 branch_key（或 cases 模式下命中 __default__）的 target。
+    其它时候返回 branch_key 等于 branch_key（或 cases 模式下命中 __default__）的 target。
     """
 
     targets: set[str] = set()
-    for edge in ctx.graph.get("edges", []):
+    for edge in ctx.graph.get("execution_edges", []):
         if not isinstance(edge, dict) or edge.get("source") != condition_id:
             continue
-        handle = edge.get("source_handle")
+        handle = edge.get("branch_key")
         target = edge.get("target")
         if not isinstance(target, str):
             continue
@@ -1395,29 +1396,8 @@ def _branch_target_nodes(ctx: ExecutionContext, condition_id: str, branch_key: s
     return targets
 
 
-def _downstream_nodes(ctx: ExecutionContext, start_id: str) -> set[str]:
-    """从 start_id 起，收集所有可达的下游节点（含自身）。"""
-
-    visited: set[str] = set()
-    stack = [start_id]
-    while stack:
-        current = stack.pop()
-        if current in visited:
-            continue
-        visited.add(current)
-        for edge in ctx.graph.get("edges", []):
-            if isinstance(edge, dict) and edge.get("source") == current:
-                target = edge.get("target")
-                if isinstance(target, str):
-                    stack.append(target)
-    return visited
-
-
 def _reachable_from_targets(ctx: ExecutionContext, targets: set[str]) -> set[str]:
-    reachable: set[str] = set()
-    for target in targets:
-        reachable.update(_downstream_nodes(ctx, target))
-    return reachable
+    return set(ctx.execution_plan.descendant_ids(targets))
 
 
 # --- log 持久化 -------------------------------------------------------------

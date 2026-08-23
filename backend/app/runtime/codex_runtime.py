@@ -106,13 +106,17 @@ class CodexCliRuntime:
         runtime_tools: RuntimeToolConfig | None = None,
         runtime_policy: RuntimePolicy = "execute",
         output_schema: dict | None = None,
+        session_scope: str | None = None,
+        fork_session: bool = False,
     ):
         status = await self.detect_status()
         if not status.installed:
             await on_chunk(AgentChunk(type="error", text=status.error))
             return AgentExecutionResult(finished_with="error", error=status.error)
         effective_runtime_tools = runtime_tools
-        home = _prepare_scoped_home(codex_home(), cwd, effective_runtime_tools)
+        home = _prepare_scoped_home(
+            codex_home(), cwd, effective_runtime_tools, session_scope=session_scope
+        )
         env = _clean_env(CONTAINER_HOME)
         chunks: list[str] = []
         structured_outputs: list[str] = []
@@ -128,6 +132,17 @@ class CodexCliRuntime:
             ) as call:
                 path_map = call.require_path_map()
                 env.update(call.bridge_env())
+                if fork_session:
+                    if not session_id:
+                        raise ValueError("fork_session 需要已有 Codex session_id")
+                    new_session = await _fork_codex_session(
+                        self.runner,
+                        parent_session_id=session_id,
+                        env=env,
+                        path_map=path_map,
+                        prompt_path=call.call_dir / "fork-session.jsonl",
+                        cancel_event=cancel_event,
+                    )
                 output_schema_path = None
                 if output_schema is not None:
                     output_schema_path = call.call_dir / "output_schema.json"
@@ -136,7 +151,7 @@ class CodexCliRuntime:
                     Path("codex"),
                     CONTAINER_WORKSPACE,
                     prompt,
-                    session_id,
+                    new_session,
                     model,
                     reasoning_effort,
                     effective_runtime_tools,
@@ -251,8 +266,10 @@ def _prepare_scoped_home(
     shared_home: Path,
     cwd: Path,
     runtime_tools: RuntimeToolConfig | None,
+    *,
+    session_scope: str | None = None,
 ) -> Path:
-    home = scoped_runtime_home("codex_home", cwd)
+    home = scoped_runtime_home("codex_home", cwd, session_scope=session_scope)
     home.mkdir(parents=True, exist_ok=True)
     for filename in ("config.toml", "auth.json"):
         source = shared_home / filename
@@ -262,6 +279,79 @@ def _prepare_scoped_home(
             target.write_bytes(source.read_bytes())
     sync_runtime_skills(runtime_tools.skills if runtime_tools else [], home / ".agents" / "skills")
     return home
+
+
+async def _fork_codex_session(
+    runner: DockerSandboxRunner,
+    *,
+    parent_session_id: str,
+    env: dict[str, str],
+    path_map,
+    prompt_path: Path,
+    cancel_event,
+) -> str:
+    requests = [
+        {
+            "id": 1,
+            "method": "initialize",
+            "params": {"clientInfo": {"name": "mira", "title": "Mira", "version": "1"}},
+        },
+        {"method": "initialized", "params": {}},
+        {
+            "id": 2,
+            "method": "thread/fork",
+            "params": {"threadId": parent_session_id, "cwd": str(CONTAINER_WORKSPACE)},
+        },
+    ]
+    payload = "\n".join(json.dumps(item, separators=(",", ":")) for item in requests) + "\n"
+    child_session_id: str | None = None
+    errors: list[str] = []
+
+    async def on_stdout_line(line: str) -> None:
+        nonlocal child_session_id
+        try:
+            response = json.loads(line)
+        except json.JSONDecodeError:
+            return
+        if response.get("id") != 2:
+            return
+        error = response.get("error")
+        if error:
+            errors.append(str(error))
+            return
+        child_session_id = _forked_thread_id(response.get("result"))
+
+    result = await runner.run(
+        DockerSandboxSpec(
+            provider="codex",
+            command=["codex", "app-server"],
+            prompt=payload,
+            env=env,
+            path_map=path_map,
+            prompt_path=prompt_path,
+        ),
+        on_stdout_line=on_stdout_line,
+        cancel_event=cancel_event,
+    )
+    if result.return_code != 0 or not child_session_id:
+        detail = errors[-1] if errors else result.stderr.strip() or "thread/fork 未返回 child thread"
+        raise RuntimeError(f"Codex session fork 失败：{detail}")
+    if child_session_id == parent_session_id:
+        raise RuntimeError("Codex session fork 返回了父 thread")
+    return child_session_id
+
+
+def _forked_thread_id(value: Any) -> str | None:
+    if not isinstance(value, dict):
+        return None
+    thread = value.get("thread")
+    if isinstance(thread, dict) and isinstance(thread.get("id"), str):
+        return thread["id"]
+    for key in ("threadId", "thread_id", "id"):
+        item = value.get(key)
+        if isinstance(item, str):
+            return item
+    return None
 
 
 def _build_exec_cmd(

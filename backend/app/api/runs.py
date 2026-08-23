@@ -53,7 +53,7 @@ router = APIRouter(tags=["runs"])
 def _protected_event_transform(run: Run, app: App | None, user_id: str):
     if not should_redact_app_source(app, user_id):
         return None
-    public_graph = public_run_graph(loads(run.graph_json, {"nodes": [], "edges": []}) or {"nodes": [], "edges": []})
+    public_graph = public_run_graph(loads(run.graph_json, {"nodes": [], "execution_edges": []}) or {"nodes": [], "execution_edges": []})
     nodes_by_id = {
         node.get("id"): node
         for node in public_graph.get("nodes", [])
@@ -76,7 +76,7 @@ def _protected_event_transform(run: Run, app: App | None, user_id: str):
                 step = dict(data["step"])
                 step["input"] = None
                 step["logs"] = []
-                step["agent_session_id"] = None
+                step.pop("agent_session_id", None)
                 if step.get("error"):
                     step["error"] = REDACTED_RUN_ERROR
                 if node_id not in output_node_ids:

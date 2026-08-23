@@ -40,7 +40,6 @@ def step_to_out(
         status=step.status,  # type: ignore[arg-type]
         input=input_value,
         output=output_value,
-        agent_session_id=step.agent_session_id,
         started_at=iso(step.started_at),
         finished_at=iso(step.finished_at),
         duration_ms=step.duration_ms,
@@ -61,7 +60,7 @@ def run_to_out(
 ) -> RunOut:
     recovery = _recovery_to_out(run, steps)
     sanitize_context = build_run_sanitize_context(run)
-    source_graph = sanitize_prompt_template_tokens(loads(run.graph_json, {"nodes": [], "edges": []}) or {"nodes": [], "edges": []})
+    source_graph = sanitize_prompt_template_tokens(loads(run.graph_json, {"nodes": [], "execution_edges": []}) or {"nodes": [], "execution_edges": []})
     graph = public_run_graph(source_graph) if redact_source else source_graph
     nodes_by_id = {
         node.get("id"): node
@@ -120,7 +119,6 @@ def _steps_to_out(
         if redact_source:
             item.input = None
             item.logs = []
-            item.agent_session_id = None
             item.error = _redacted_error(item.error, True)
             if node_type != "output":
                 item.output = None

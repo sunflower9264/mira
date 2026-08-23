@@ -88,7 +88,7 @@ def _graph() -> dict:
                 "prompt": "生成 B",
             },
         ],
-        "edges": [
+        "execution_edges": [
             {"id": "e_input_a", "source": "n_input", "target": "n_a"},
             {"id": "e_input_b", "source": "n_input", "target": "n_b"},
         ],
@@ -125,7 +125,7 @@ def test_graph_layout_beautify_updates_positions_only(auth_client):
         {"x": 400.0, "y": 80.0},
         {"x": 400.0, "y": 320.0},
     ]
-    assert graph["edges"] == _graph()["edges"]
+    assert graph["execution_edges"] == _graph()["execution_edges"]
     assert "_runtime_tools" not in graph
     assert graph["nodes"][1]["prompt"] == "生成 A"
     assert runtime.on_ask_user_values == [None]

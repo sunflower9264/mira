@@ -215,19 +215,14 @@ function renderPromptValue(editor: HTMLElement, value: string, tokens: PromptTok
   editor.replaceChildren(fragment);
 }
 
-function promptTokenClassName(kind: PromptTokenDefinition['kind']): string {
-  if (kind === 'field' || kind === 'enum') {
-    return 'mx-0.5 inline-flex select-all items-center rounded border border-black/10 bg-black/[0.035] px-1.5 py-0.5 font-mono text-xs leading-none text-black/60';
-  }
+function promptTokenClassName(_kind: PromptTokenDefinition['kind']): string {
   return 'mx-0.5 inline-flex select-all items-center rounded-md border border-blue-200 bg-blue-50 px-1.5 py-0.5 text-xs font-medium leading-none text-blue-700';
 }
 
 function promptTokenKindLabel(kind: PromptTokenDefinition['kind']): string {
   if (kind === 'system') return '系统工具';
   if (kind === 'skill') return 'Skill';
-  if (kind === 'mcp') return 'MCP';
-  if (kind === 'enum') return '状态值';
-  return '引用结果';
+  return 'MCP';
 }
 
 function splitPrompt(value: string, tokens: PromptTokenDefinition[]): Array<string | PromptTokenDefinition> {

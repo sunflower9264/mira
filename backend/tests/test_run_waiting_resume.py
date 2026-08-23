@@ -36,11 +36,10 @@ def _ensure_output(graph: dict) -> dict:
             "position": {"x": 200, "y": 0},
             "title": "Output",
             "prompt": "render [[respond:<section>ok</section>]]",
-            "source_node_id": source,
         }
     )
     if source:
-        next_graph.setdefault("edges", []).append({"id": "e_auto_out", "source": source, "target": "n_auto_out"})
+        next_graph.setdefault("execution_edges", []).append({"id": "e_auto_out", "source": source, "target": "n_auto_out"})
     return next_graph
 
 
@@ -143,7 +142,7 @@ def test_single_ask_user_emit_step_waiting_and_resume_success(auth_client, enabl
         "nodes": [
             _generate_node("n_gen", prompt=_ask_user_prompt(single=True, options=["A", "B", "C"])),
         ],
-        "edges": [],
+        "execution_edges": [],
     }
     app_id = _build_app(auth_client, graph=graph)
     run_id = _start_run(auth_client, app_id)
@@ -182,7 +181,7 @@ def test_single_ask_user_can_resume_with_none_option(auth_client, enable_claude_
         "nodes": [
             _generate_node("n_gen", prompt=_ask_user_prompt(single=True, options=["A", "B", "C"])),
         ],
-        "edges": [],
+        "execution_edges": [],
     }
     app_id = _build_app(auth_client, graph=graph)
     run_id = _start_run(auth_client, app_id)
@@ -225,7 +224,7 @@ def test_multi_ask_user_with_text_and_attachments(auth_client, enable_claude_age
                 prompt=_ask_user_prompt(single=False, options=["X", "Y", "Z"]),
             ),
         ],
-        "edges": [],
+        "execution_edges": [],
     }
     app_id = _build_app(auth_client, graph=graph)
     run_id = _start_run(auth_client, app_id)
@@ -268,7 +267,7 @@ def test_multi_group_ask_user_answers_all_groups(auth_client, enable_claude_agen
                 ),
             ),
         ],
-        "edges": [],
+        "execution_edges": [],
     }
     app_id = _build_app(auth_client, graph=graph)
     run_id = _start_run(auth_client, app_id)
@@ -304,7 +303,7 @@ def test_ask_user_can_resume_with_text_instead_of_answers(auth_client, enable_cl
                 prompt=_ask_user_prompt(single=True, options=["A", "B", "C"]),
             ),
         ],
-        "edges": [],
+        "execution_edges": [],
     }
     app_id = _build_app(auth_client, graph=graph)
     run_id = _start_run(auth_client, app_id)
@@ -345,7 +344,7 @@ def test_ask_user_can_resume_with_attachment_instead_of_answers(auth_client, ena
                 prompt=_ask_user_prompt(single=True, options=["A", "B", "C"]),
             ),
         ],
-        "edges": [],
+        "execution_edges": [],
     }
     app_id = _build_app(auth_client, graph=graph)
     run_id = _start_run(auth_client, app_id)
@@ -385,7 +384,7 @@ def test_multi_group_missing_answer_returns_400(auth_client, enable_claude_agent
                 ),
             ),
         ],
-        "edges": [],
+        "execution_edges": [],
     }
     app_id = _build_app(auth_client, graph=graph)
     run_id = _start_run(auth_client, app_id)
@@ -412,7 +411,7 @@ def test_resume_selected_not_in_options_returns_400(auth_client, enable_claude_a
         "nodes": [
             _generate_node("n_gen", prompt=_ask_user_prompt(single=True, options=["yes", "no", "later"])),
         ],
-        "edges": [],
+        "execution_edges": [],
     }
     app_id = _build_app(auth_client, graph=graph)
     run_id = _start_run(auth_client, app_id)
@@ -443,7 +442,7 @@ def test_multi_ask_user_none_option_is_mutually_exclusive(auth_client, enable_cl
         "nodes": [
             _generate_node("n_gen", prompt=_ask_user_prompt(single=False, options=["A", "B", "C"])),
         ],
-        "edges": [],
+        "execution_edges": [],
     }
     app_id = _build_app(auth_client, graph=graph)
     run_id = _start_run(auth_client, app_id)
@@ -470,7 +469,7 @@ def test_resume_wrong_node_id_returns_409(auth_client, enable_claude_agent):
         "nodes": [
             _generate_node("n_gen", prompt=_ask_user_prompt(single=True, options=["A", "B", "C"])),
         ],
-        "edges": [],
+        "execution_edges": [],
     }
     app_id = _build_app(auth_client, graph=graph)
     run_id = _start_run(auth_client, app_id)
@@ -496,7 +495,7 @@ def test_resume_wrong_tool_use_id_returns_409(auth_client, enable_claude_agent):
         "nodes": [
             _generate_node("n_gen", prompt=_ask_user_prompt(single=True, options=["A", "B", "C"])),
         ],
-        "edges": [],
+        "execution_edges": [],
     }
     app_id = _build_app(auth_client, graph=graph)
     run_id = _start_run(auth_client, app_id)
@@ -523,7 +522,7 @@ def test_resume_empty_payload_returns_400(auth_client, enable_claude_agent):
         "nodes": [
             _generate_node("n_gen", prompt=_ask_user_prompt(single=True, options=["A", "B", "C"])),
         ],
-        "edges": [],
+        "execution_edges": [],
     }
     app_id = _build_app(auth_client, graph=graph)
     run_id = _start_run(auth_client, app_id)
@@ -550,7 +549,7 @@ def test_cancel_during_waiting(auth_client, enable_claude_agent):
         "nodes": [
             _generate_node("n_gen", prompt=_ask_user_prompt(single=True, options=["A", "B", "C"])),
         ],
-        "edges": [],
+        "execution_edges": [],
     }
     app_id = _build_app(auth_client, graph=graph)
     run_id = _start_run(auth_client, app_id)
@@ -575,7 +574,7 @@ def test_ask_user_protocol_error_does_not_emit_waiting(auth_client, enable_claud
     graph = {
         "agent": "claude",
         "nodes": [_generate_node("n_gen", prompt=bad_prompt)],
-        "edges": [],
+        "execution_edges": [],
     }
     app_id = _build_app(auth_client, graph=graph)
     run_id = _start_run(auth_client, app_id)
@@ -602,7 +601,7 @@ def test_ask_user_protocol_error_for_too_many_options(auth_client, enable_claude
     graph = {
         "agent": "claude",
         "nodes": [_generate_node("n_gen", prompt=bad_prompt)],
-        "edges": [],
+        "execution_edges": [],
     }
     app_id = _build_app(auth_client, graph=graph)
     run_id = _start_run(auth_client, app_id)
@@ -635,7 +634,7 @@ def test_resume_with_foreign_attachment_returns_404(auth_client, enable_claude_a
         "nodes": [
             _generate_node("n_gen", prompt=_ask_user_prompt(single=True, options=["A", "B", "C"])),
         ],
-        "edges": [],
+        "execution_edges": [],
     }
     app_id = _build_app(auth_client, graph=graph)
     run_id = _start_run(auth_client, app_id)

@@ -10,6 +10,9 @@ import {
   CONDITION_DEFAULT_BRANCH_KEY,
   type ConditionNode as TCondition,
 } from '../../../types';
+import { useEditorStore } from '../../../stores/useEditorStore';
+import { useRunStore } from '../../../stores/useRunStore';
+import { conditionBranchVisual } from '../conditionBranchColors';
 
 interface RenderBranch {
   key: string;
@@ -41,6 +44,10 @@ function buildBranches(node: TCondition): RenderBranch[] {
 
 export const ConditionNodeView = memo(function ConditionNodeView({ id, data, selected }: NodeProps) {
   const node = data as unknown as TCondition;
+  const appId = useEditorStore((state) => state.app?.id);
+  const running = useRunStore(
+    (state) => state.mode === 'live' && state.appId === appId && state.steps[id]?.status === 'running',
+  );
   const branches = useMemo(() => buildBranches(node), [node]);
   const branchKeySignature = branches.map((branch) => branch.key).join('\u0000');
   const updateNodeInternals = useUpdateNodeInternals();
@@ -58,7 +65,7 @@ export const ConditionNodeView = memo(function ConditionNodeView({ id, data, sel
   }, [branchKeySignature, id, updateNodeInternals]);
 
   return (
-    <div className={`mira-node ${selected ? 'selected' : ''} pb-2`} data-node-id={id}>
+    <div className={`mira-node ${selected ? 'selected' : ''} ${running ? 'running' : ''} pb-2`} data-node-id={id}>
       <Handle
         id="target"
         type="target"
@@ -76,29 +83,43 @@ export const ConditionNodeView = memo(function ConditionNodeView({ id, data, sel
       </div>
       <div className="mt-2 text-[11px] text-black/55 line-clamp-2">{subtitle}</div>
       <ul className="mt-2 flex flex-col gap-1.5 text-[11px]">
-        {branches.map((branch) => (
-          <li
-            key={branch.key}
-            className={`flex items-center justify-between rounded-md px-2 py-0.5 ${
-              branch.isDefault ? 'bg-black/[0.03] text-black/45' : 'bg-black/[0.04] text-black/70'
-            }`}
-          >
-            <span className="truncate pr-2">{branch.label}</span>
-            <span className="text-[10px] opacity-60">→</span>
-          </li>
-        ))}
+        {branches.map((branch) => {
+          const visual = conditionBranchVisual(id, branch.key);
+          return (
+            <li
+              key={branch.key}
+              className={`flex items-center justify-between rounded-md px-2 py-0.5 ${
+                branch.isDefault ? 'text-black/45' : 'text-black/70'
+              }`}
+              style={{
+                backgroundColor: visual.backgroundColor,
+                boxShadow: `inset 0 0 0 1px ${visual.color}`,
+              }}
+            >
+              <span className="truncate pr-2">{branch.label}</span>
+              <span className="text-[10px]" style={{ color: visual.color }}>→</span>
+            </li>
+          );
+        })}
       </ul>
-      {branches.map((branch, index) => (
-        <Handle
-          key={branch.key}
-          id={branch.key}
-          type="source"
-          position={Position.Right}
-          isConnectableEnd={false}
-          className="mira-node-source-handle"
-          style={{ top: branchAreaStartPx + index * branchRowPx }}
-        />
-      ))}
+      {branches.map((branch, index) => {
+        const visual = conditionBranchVisual(id, branch.key);
+        return (
+          <Handle
+            key={branch.key}
+            id={branch.key}
+            type="source"
+            position={Position.Right}
+            isConnectableEnd={false}
+            className="mira-node-source-handle"
+            style={{
+              top: branchAreaStartPx + index * branchRowPx,
+              borderColor: visual.color,
+              backgroundColor: visual.color,
+            }}
+          />
+        );
+      })}
     </div>
   );
 });

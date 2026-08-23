@@ -28,7 +28,7 @@ async def get_run_step_trace(db: AsyncSession, run_id: str, node_id: str, user_i
     if should_redact_app_source(app, user_id):
         raise HTTPException(status_code=403, detail="该应用不允许查看 Trace")
 
-    graph = loads(run.graph_json, {"nodes": [], "edges": []}) or {"nodes": [], "edges": []}
+    graph = loads(run.graph_json, {"nodes": [], "execution_edges": []}) or {"nodes": [], "execution_edges": []}
     node = next(
         (
             item
@@ -71,7 +71,6 @@ async def get_run_step_trace(db: AsyncSession, run_id: str, node_id: str, user_i
         agent=str(graph.get("agent") or "") or None,
         model=str(node.get("model") or "") or None,
         reasoning_effort=str(node.get("reasoning_effort") or "") or None,
-        agent_session_id=step_out.agent_session_id,
         started_at=step_out.started_at,
         finished_at=step_out.finished_at,
         duration_ms=step_out.duration_ms,

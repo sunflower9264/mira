@@ -23,8 +23,9 @@ from typing import Any
 from sqlalchemy import select, update
 
 from app.db import SessionLocal
-from app.models import App, Run, Step, StepLog
+from app.models import App, Run, RunAgentBranch, Step, StepLog
 from app.schemas import RunInputValue
+from app.services.execution_plan import ExecutionPlan, compile_execution_plan
 from app.services.node_handlers import (
     ExecutionContext,
     NodeResult,
@@ -32,10 +33,11 @@ from app.services.node_handlers import (
     run_node,
 )
 from app.services.run_artifacts import validate_run_artifact_integrity
+from app.services.run_agent import RunAgent, RunAgentError
 from app.services.run_hub import RunChannel, get_run_hub
 from app.services.run_serializer import step_to_out
 from app.services.runs import touch_run_heartbeat
-from app.services.runtime_paths import run_step_workspace, run_workspace
+from app.services.runtime_paths import run_workspace
 from app.services.tools import planning_runtime_tools_for_graph, runtime_tools_for_graph
 from app.services.workflow_data import build_output_envelope
 from app.utils import iso, loads, now_utc
@@ -52,6 +54,7 @@ class StepState:
     status: str
     output: Any = None
     agent_session_id: str | None = None
+    branch_id: str | None = None
 
 
 @dataclass
@@ -63,6 +66,7 @@ class StepTaskResult:
     failure_kind: str | None = None
     agent_session_id: str | None = None
     skipped_nodes: set[str] | None = None
+    branch_id: str | None = None
 
 
 # --- 对外 API ----------------------------------------------------------------
@@ -130,7 +134,8 @@ async def _orchestrate(run_id: str, channel: RunChannel, *, continuation: bool =
             )
             return True
 
-        graph = loads(run.graph_json, {"nodes": [], "edges": []})
+        graph = loads(run.graph_json, {"nodes": [], "execution_edges": []})
+        execution_plan = compile_execution_plan(graph)
         agent = str(graph.get("agent") or "").strip()
         runtime_tools = await runtime_tools_for_graph(db, graph, agent, trust_snapshot=True)
         planning_runtime_tools = await planning_runtime_tools_for_graph(db, graph, agent, trust_snapshot=True)
@@ -158,6 +163,7 @@ async def _orchestrate(run_id: str, channel: RunChannel, *, continuation: bool =
             inputs=inputs,
             runtime_tools=runtime_tools,
             planning_runtime_tools=planning_runtime_tools,
+            execution_plan=execution_plan,
         )
 
         run.status = "running"
@@ -169,12 +175,31 @@ async def _orchestrate(run_id: str, channel: RunChannel, *, continuation: bool =
             run.started_at = now_utc()
         await db.commit()
         states = _step_states(steps)
+        if run.runtime_version < 2 and continuation:
+            raise RunAgentError("旧运行只支持只读历史，不能继续执行")
+        run_agent = RunAgent(
+            db,
+            run,
+            channel,
+            agent=agent,
+            runtime_tools=runtime_tools,
+        )
+        root_branch = await run_agent.ensure_root()
         outputs = {
             step.node_id: loads(step.output_json, None)
             for step in steps
             if step.status == "success" and step.output_json is not None
         }
-        predecessors, _children = _graph_dependencies(graph, states)
+        predecessors = execution_plan.predecessors
+        edge_branches = await _restore_edge_branches(db, run.id, states, execution_plan)
+        await _allocate_root_branches(
+            db,
+            run_agent,
+            root_branch,
+            states,
+            execution_plan,
+            edge_branches,
+        )
         active: dict[asyncio.Task[StepTaskResult], str] = {}
         launched: set[str] = set()
         blocked_by_waiting = False
@@ -208,11 +233,36 @@ async def _orchestrate(run_id: str, channel: RunChannel, *, continuation: bool =
                         run_error = run_error or "graph 中找不到节点"
                         run_failure_kind = run_failure_kind or "routing"
                         continue
+                    try:
+                        branch_id = await _branch_for_ready_node(
+                            run_agent,
+                            node_id,
+                            states,
+                            execution_plan,
+                            edge_branches,
+                            root_branch.id,
+                        )
+                    except RunAgentError as exc:
+                        step = await db.get(Step, state.id)
+                        if step is not None:
+                            await _finish_step(
+                                db,
+                                channel,
+                                step,
+                                status="failed",
+                                error=f"RunAgent 分支准备失败：{exc}",
+                                failure_kind="internal",
+                            )
+                        state.status = "failed"
+                        run_failed = True
+                        run_error = str(exc)
+                        run_failure_kind = "internal"
+                        continue
+                    state.branch_id = branch_id
                     launched.add(node_id)
                     active[
                         asyncio.create_task(
                             _run_step_task(
-                                run,
                                 channel,
                                 graph,
                                 node,
@@ -221,9 +271,14 @@ async def _orchestrate(run_id: str, channel: RunChannel, *, continuation: bool =
                                 runtime_tools,
                                 planning_runtime_tools,
                                 app.owner_id,
+                                execution_plan,
+                                run_id=run.id,
+                                run_owner_id=run.owner_id,
+                                run_app_id=run.app_id,
+                                branch_id=branch_id,
                                 outputs={
                                     source_id: outputs[source_id]
-                                    for source_id in predecessors.get(node_id, set())
+                                    for source_id in execution_plan.ancestor_ids(node_id)
                                     if source_id in outputs
                                 },
                                 skipped_nodes=set(ctx.skipped_nodes),
@@ -267,8 +322,25 @@ async def _orchestrate(run_id: str, channel: RunChannel, *, continuation: bool =
                 state.status = result.status
                 state.output = result.output
                 state.agent_session_id = result.agent_session_id
+                state.branch_id = result.branch_id or state.branch_id
+                if result.skipped_nodes:
+                    await _mark_skipped_nodes(db, channel, states, result.skipped_nodes)
+                    ctx.skipped_nodes.update(result.skipped_nodes)
                 if result.status == "success":
                     outputs[result.node_id] = result.output
+                    try:
+                        await _allocate_successor_branches(
+                            run_agent,
+                            result.node_id,
+                            state,
+                            states,
+                            execution_plan,
+                            edge_branches,
+                        )
+                    except RunAgentError as exc:
+                        run_failed = True
+                        run_error = f"RunAgent fan-out 失败：{exc}"
+                        run_failure_kind = "internal"
                 elif result.status == "waiting_for_user":
                     blocked_by_waiting = True
                     await _settle_active_siblings(active)
@@ -279,9 +351,6 @@ async def _orchestrate(run_id: str, channel: RunChannel, *, continuation: bool =
                     run_failed = True
                     run_error = run_error or result.error
                     run_failure_kind = run_failure_kind or result.failure_kind or "internal"
-                if result.skipped_nodes:
-                    await _mark_skipped_nodes(db, channel, states, result.skipped_nodes)
-                    ctx.skipped_nodes.update(result.skipped_nodes)
 
         # 收尾：未触达的 step 已经按状态在 DB 中保持 pending。run 终态决策：
         finished_at = now_utc()
@@ -372,28 +441,136 @@ def _step_states(steps: list[Step]) -> dict[str, StepState]:
             status=step.status,
             output=loads(step.output_json, None) if step.output_json is not None else None,
             agent_session_id=step.agent_session_id,
+            branch_id=step.branch_id,
         )
     return states
 
 
-def _graph_dependencies(
-    graph: dict[str, Any],
+async def _restore_edge_branches(
+    db,
+    run_id: str,
     states: dict[str, StepState],
-) -> tuple[dict[str, set[str]], dict[str, set[str]]]:
-    predecessors = {node_id: set() for node_id in states}
-    children = {node_id: set() for node_id in states}
-    for edge in graph.get("edges", []):
-        if not isinstance(edge, dict):
+    plan: ExecutionPlan,
+) -> dict[tuple[str, str], str]:
+    edges: dict[tuple[str, str], str] = {}
+    branches = (
+        await db.execute(
+            select(RunAgentBranch)
+            .where(RunAgentBranch.run_id == run_id)
+            .order_by(RunAgentBranch.created_at.asc(), RunAgentBranch.id.asc())
+        )
+    ).scalars().all()
+    for branch in branches:
+        if not branch.parent_branch_id or not branch.fork_node_id:
             continue
-        source = edge.get("source")
-        target = edge.get("target")
-        if not isinstance(source, str) or not isinstance(target, str):
+        candidates = [
+            state
+            for state in states.values()
+            if state.branch_id == branch.parent_branch_id
+            and branch.fork_node_id in plan.children.get(state.node_id, frozenset())
+        ]
+        if candidates:
+            source = max(candidates, key=lambda item: (item.ordering, item.node_id))
+            edges[(source.node_id, branch.fork_node_id)] = branch.id
+        elif not plan.predecessors.get(branch.fork_node_id):
+            edges[("", branch.fork_node_id)] = branch.id
+    for target_id, state in states.items():
+        if not state.branch_id:
             continue
-        if source not in states or target not in states:
+        for source_id in plan.predecessors.get(target_id, frozenset()):
+            source = states[source_id]
+            if source.status in {"success", "checkpoint_reused"}:
+                edges.setdefault((source_id, target_id), state.branch_id)
+    return edges
+
+
+async def _allocate_root_branches(
+    db,
+    run_agent: RunAgent,
+    root_branch: RunAgentBranch,
+    states: dict[str, StepState],
+    plan: ExecutionPlan,
+    edge_branches: dict[tuple[str, str], str],
+) -> None:
+    roots = [
+        node_id
+        for node_id in plan.ordered_node_ids
+        if not plan.predecessors.get(node_id)
+        and states[node_id].status in {"pending", "interrupted"}
+        and not states[node_id].branch_id
+    ]
+    if not roots:
+        return
+    if len(roots) == 1:
+        edge_branches.setdefault(("", roots[0]), root_branch.id)
+        return
+    created = False
+    for node_id in roots:
+        if ("", node_id) in edge_branches:
             continue
-        predecessors[target].add(source)
-        children[source].add(target)
-    return predecessors, children
+        child = await run_agent.fork(root_branch.id, fork_node_id=node_id)
+        edge_branches[("", node_id)] = child.id
+        created = True
+    if created:
+        await db.commit()
+        await run_agent.close_fanout_parent(root_branch.id)
+
+
+async def _branch_for_ready_node(
+    run_agent: RunAgent,
+    node_id: str,
+    states: dict[str, StepState],
+    plan: ExecutionPlan,
+    edge_branches: dict[tuple[str, str], str],
+    root_branch_id: str,
+) -> str:
+    state = states[node_id]
+    if state.branch_id:
+        return state.branch_id
+    predecessors = plan.predecessors.get(node_id, frozenset())
+    if not predecessors:
+        return edge_branches.get(("", node_id), root_branch_id)
+    incoming: set[str] = set()
+    for source_id in predecessors:
+        source = states[source_id]
+        if source.status not in {"success", "checkpoint_reused"}:
+            continue
+        branch_id = edge_branches.get((source_id, node_id)) or source.branch_id
+        if branch_id:
+            incoming.add(branch_id)
+    if not incoming:
+        raise RunAgentError(f"节点 {node_id} 没有可继承的成功上游 branch")
+    if len(incoming) == 1:
+        return next(iter(incoming))
+    coordinator = await run_agent.join(incoming, node_id=node_id)
+    return coordinator.id
+
+
+async def _allocate_successor_branches(
+    run_agent: RunAgent,
+    node_id: str,
+    state: StepState,
+    states: dict[str, StepState],
+    plan: ExecutionPlan,
+    edge_branches: dict[tuple[str, str], str],
+) -> None:
+    if not state.branch_id:
+        raise RunAgentError(f"节点 {node_id} 完成后缺少 branch")
+    children = [
+        child_id
+        for child_id in sorted(plan.children.get(node_id, frozenset()))
+        if states[child_id].status not in {"skipped", "cancelled"}
+    ]
+    if not children:
+        return
+    if len(children) == 1:
+        edge_branches[(node_id, children[0])] = state.branch_id
+        return
+    for child_id in children:
+        child = await run_agent.fork(state.branch_id, fork_node_id=child_id)
+        edge_branches[(node_id, child_id)] = child.id
+    await run_agent.db.commit()
+    await run_agent.close_fanout_parent(state.branch_id)
 
 
 def _terminal_routing_error(graph: dict[str, Any], states: dict[str, StepState]) -> str | None:
@@ -407,7 +584,11 @@ def _terminal_routing_error(graph: dict[str, Any], states: dict[str, StepState])
     output_state = states.get(output_ids[0])
     if output_state is None or output_state.status != "success":
         return "最终输出节点未执行成功"
-    unfinished = [state.node_id for state in states.values() if state.status not in {"success", "skipped"}]
+    unfinished = [
+        state.node_id
+        for state in states.values()
+        if state.status not in {"success", "skipped", "checkpoint_reused"}
+    ]
     if unfinished:
         return f"Workflow 存在未完成节点：{', '.join(sorted(unfinished))}"
     return None
@@ -415,7 +596,7 @@ def _terminal_routing_error(graph: dict[str, Any], states: dict[str, StepState])
 
 def _ready_node_ids(
     states: dict[str, StepState],
-    predecessors: dict[str, set[str]],
+    predecessors: dict[str, frozenset[str]],
     launched: set[str],
 ) -> list[str]:
     ready: list[StepState] = []
@@ -425,14 +606,16 @@ def _ready_node_ids(
         if state.status not in {"pending", "interrupted"}:
             continue
         upstream = predecessors.get(node_id, set())
-        if all(states[source].status in {"success", "skipped"} for source in upstream):
+        if all(
+            states[source].status in {"success", "skipped", "checkpoint_reused"}
+            for source in upstream
+        ):
             ready.append(state)
     ready.sort(key=lambda item: (item.ordering, item.node_id))
     return [state.node_id for state in ready]
 
 
 async def _run_step_task(
-    run: Run,
     channel: RunChannel,
     graph: dict[str, Any],
     node: dict[str, Any],
@@ -441,11 +624,24 @@ async def _run_step_task(
     runtime_tools,
     planning_runtime_tools,
     asset_owner_id: str,
+    execution_plan: ExecutionPlan,
     *,
+    run_id: str,
+    run_owner_id: str,
+    run_app_id: str,
+    branch_id: str,
     outputs: dict[str, Any],
     skipped_nodes: set[str],
 ) -> StepTaskResult:
     async with SessionLocal() as db:
+        run = await db.get(Run, run_id)
+        if run is None:
+            return StepTaskResult(
+                node_id=state.node_id,
+                status="failed",
+                error="运行记录不存在",
+                failure_kind="internal",
+            )
         step = await db.get(Step, state.id)
         if step is None:
             return StepTaskResult(
@@ -460,39 +656,49 @@ async def _run_step_task(
             return StepTaskResult(node_id=state.node_id, status="cancelled")
 
         await _emit_step_start(db, channel, step)
-        step_workspace = run_step_workspace(
-            run.owner_id,
-            run.app_id,
-            run.id,
-            state.node_id,
-            step.attempt,
+        run_agent = RunAgent(
+            db,
+            run,
+            channel,
+            agent=str(graph.get("agent") or "").strip(),
+            runtime_tools=runtime_tools,
         )
+        lease = await run_agent.lease(branch_id)
+        step.branch_id = branch_id
+        step.pre_checkpoint_id = lease.pre_checkpoint_id
+        await db.commit()
         ctx = build_context(
             db,
             channel,
-            user_id=run.owner_id,
+            user_id=run_owner_id,
             asset_owner_id=asset_owner_id,
-            app_id=run.app_id,
-            run_id=run.id,
+            app_id=run_app_id,
+            run_id=run_id,
             graph=graph,
             agent=str(graph.get("agent") or "").strip(),
-            workspace=step_workspace,
+            workspace=lease.workspace,
             inputs=inputs,
             runtime_tools=runtime_tools,
             planning_runtime_tools=planning_runtime_tools,
+            execution_plan=execution_plan,
         )
+        ctx.agent_session_id = lease.session_id
+        ctx.fork_session = lease.fork_session
         ctx.outputs.update(outputs)
         ctx.skipped_nodes.update(skipped_nodes)
         before_skipped = set(ctx.skipped_nodes)
 
         result = await _execute_node(ctx, node, step)
+        effective_session_id = result.agent_session_id or ctx.agent_session_id or lease.session_id
+        await run_agent.record_session(branch_id, effective_session_id)
         skipped_delta = set(ctx.skipped_nodes) - before_skipped
         if result.status == "waiting":
             return StepTaskResult(
                 node_id=state.node_id,
                 status="waiting_for_user",
-                agent_session_id=result.agent_session_id,
+                agent_session_id=effective_session_id,
                 skipped_nodes=skipped_delta,
+                branch_id=branch_id,
             )
         if result.status == "success":
             try:
@@ -501,8 +707,8 @@ async def _run_step_task(
                     node,
                     result.output,
                     step_workspace=ctx.workspace,
-                    run_workspace=run_workspace(run.owner_id, run.app_id, run.id),
-                    run_id=run.id,
+                    run_workspace=run_workspace(run_owner_id, run_app_id, run_id),
+                    run_id=run_id,
                     node_id=state.node_id,
                     step_id=step.id,
                 )
@@ -524,21 +730,32 @@ async def _run_step_task(
                     failure_kind="contract",
                     agent_session_id=result.agent_session_id,
                     skipped_nodes=skipped_delta,
+                    branch_id=branch_id,
                 )
+            branch = await db.get(RunAgentBranch, branch_id)
+            if branch is None:
+                raise RunAgentError(f"run branch 不存在：{branch_id}")
+            await run_agent.checkpoint(
+                branch,
+                step=step,
+                node_id=state.node_id,
+                output=stored_output,
+            )
             await _finish_step(
                 db,
                 channel,
                 step,
                 status="success",
                 output=stored_output,
-                agent_session_id=result.agent_session_id,
+                agent_session_id=effective_session_id,
             )
             return StepTaskResult(
                 node_id=state.node_id,
                 status="success",
                 output=stored_output,
-                agent_session_id=result.agent_session_id,
+                agent_session_id=effective_session_id,
                 skipped_nodes=skipped_delta,
+                branch_id=branch_id,
             )
         if result.status == "cancelled":
             await _finish_step(db, channel, step, status="cancelled")
@@ -546,10 +763,16 @@ async def _run_step_task(
                 node_id=state.node_id,
                 status="cancelled",
                 skipped_nodes=skipped_delta,
+                branch_id=branch_id,
             )
         if result.status == "skipped":
             await _finish_step(db, channel, step, status="skipped")
-            return StepTaskResult(node_id=state.node_id, status="skipped", skipped_nodes=skipped_delta)
+            return StepTaskResult(
+                node_id=state.node_id,
+                status="skipped",
+                skipped_nodes=skipped_delta,
+                branch_id=branch_id,
+            )
         await _finish_step(
             db,
             channel,
@@ -557,15 +780,16 @@ async def _run_step_task(
             status="failed",
             error=result.error,
             failure_kind=result.failure_kind or "internal",
-            agent_session_id=result.agent_session_id,
+            agent_session_id=effective_session_id,
         )
         return StepTaskResult(
             node_id=state.node_id,
             status="failed",
             error=result.error,
             failure_kind=result.failure_kind or "internal",
-            agent_session_id=result.agent_session_id,
+            agent_session_id=effective_session_id,
             skipped_nodes=skipped_delta,
+            branch_id=branch_id,
         )
 
 
@@ -769,7 +993,7 @@ async def _finish_step(
 
 
 def _node_type_for_step(run: Run, node_id: str) -> str | None:
-    graph = loads(run.graph_json, {"nodes": [], "edges": []}) or {"nodes": [], "edges": []}
+    graph = loads(run.graph_json, {"nodes": [], "execution_edges": []}) or {"nodes": [], "execution_edges": []}
     if not isinstance(graph, dict):
         return None
     for node in graph.get("nodes", []):

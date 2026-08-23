@@ -19,6 +19,7 @@ from app.runtime.factory import get_runtime
 from app.schemas.requests import PromptAssistantGenerateIn, PromptAssistantResumeIn
 from app.services import runtime_config
 from app.services.decision_prompts import append_ask_user_none_option, validate_ask_request_groups, validate_decision_answers
+from app.services.execution_plan import ExecutionPlanError, compile_execution_plan
 from app.services.graph_inputs import prepare_planning_graph
 from app.services.output_contracts import validate_output_contract_config
 from app.services.prompts import get_prompt_content, render_prompt
@@ -682,35 +683,34 @@ def _node_by_id(graph: dict, node_id: str) -> dict | None:
 
 
 def _related_nodes_summary(graph: dict, node_id: str, *, direction: str) -> str:
-    edges = [edge for edge in graph.get("edges", []) if isinstance(edge, dict)]
+    try:
+        plan = compile_execution_plan(graph)
+    except ExecutionPlanError:
+        return "（工作流结构尚未形成有效执行图）"
     if direction == "upstream":
-        related = [edge for edge in edges if edge.get("target") == node_id]
-        if not related:
-            return "（无直接上游）"
+        ancestor_ids = plan.ancestor_ids(node_id)
+        if not ancestor_ids:
+            return "（无执行祖先）"
         lines: list[str] = []
-        for edge in related:
-            source = _node_by_id(graph, str(edge.get("source") or ""))
+        for source_id in ancestor_ids:
+            source = plan.nodes_by_id.get(source_id)
             if not source:
                 continue
-            handle = edge.get("source_handle")
-            relation = f"连线 `{edge.get('id') or ''}`：`{source.get('id')}` -> `{node_id}`"
-            if handle:
-                relation += f"，分支 handle=`{handle}`"
+            relation = f"执行祖先 `{source_id}`：运行时结果会自动出现在当前节点的只读结果池"
             lines.append(f"{relation}\n{_node_summary(source, detail='related')}")
-        return "\n\n".join(lines) if lines else "（无直接上游）"
+        return "\n\n".join(lines) if lines else "（无执行祖先）"
 
-    related = [edge for edge in edges if edge.get("source") == node_id]
-    if not related:
+    child_ids = plan.children.get(node_id, frozenset())
+    if not child_ids:
         return "（无直接下游）"
     lines = []
-    for edge in related:
-        target = _node_by_id(graph, str(edge.get("target") or ""))
+    for target_id in plan.ordered_node_ids:
+        if target_id not in child_ids:
+            continue
+        target = plan.nodes_by_id.get(target_id)
         if not target:
             continue
-        handle = edge.get("source_handle")
-        relation = f"连线 `{edge.get('id') or ''}`：`{node_id}` -> `{target.get('id')}`"
-        if handle:
-            relation += f"，分支 handle=`{handle}`"
+        relation = f"直接执行后继：`{node_id}` -> `{target_id}`"
         lines.append(f"{relation}\n{_node_summary(target, detail='related')}")
     return "\n\n".join(lines) if lines else "（无直接下游）"
 
@@ -748,8 +748,6 @@ def _node_summary(node: dict, *, detail: str) -> str:
             lines.append("- 当前 output_contract：未设置（自由文本）")
     if node_type == "condition":
         lines.append(f"- 分支：{_compact_json(node.get('branches'), 1200)}")
-    if node_type == "output":
-        lines.append(f"- 主输入 source_node_id：`{node.get('source_node_id') or ''}`")
     if node_type == "user_input":
         lines.append(f"- 输入 schema：{_compact_json(node.get('input_schema'), 1000)}")
     if node_type == "asset":

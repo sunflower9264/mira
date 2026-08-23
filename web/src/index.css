@@ -75,6 +75,30 @@
   border-color: #3b82f6;
   box-shadow: 0 0 0 2px rgba(59,130,246,0.35), 0 6px 18px rgba(0,0,0,0.08);
 }
+.mira-node.running::after {
+  content: "";
+  position: absolute;
+  inset: -2px;
+  z-index: 2;
+  pointer-events: none;
+  border-radius: 16px;
+  padding: 2px;
+  background: linear-gradient(90deg, #111827 0%, #60a5fa 22%, #ffffff 38%, #111827 58%, #60a5fa 78%, #111827 100%);
+  background-size: 240% 100%;
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  animation: mira-node-running-border 1.4s linear infinite;
+}
+@keyframes mira-node-running-border {
+  to { background-position: -240% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mira-node.running::after {
+    animation: none;
+    background-position: 50% 0;
+  }
+}
 
 /* Connection handles: quiet at rest, stronger on hover / select / connect. */
 .react-flow__handle {

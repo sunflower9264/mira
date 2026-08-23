@@ -93,6 +93,8 @@ class AgentRuntime(Protocol):
         runtime_tools: RuntimeToolConfig | None = None,
         runtime_policy: RuntimePolicy = "execute",
         output_schema: dict | None = None,
+        session_scope: str | None = None,
+        fork_session: bool = False,
     ) -> AgentExecutionResult: ...
 
     async def detect_status(self) -> AgentProviderStatus: ...

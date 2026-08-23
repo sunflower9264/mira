@@ -105,7 +105,7 @@ def test_prompt_templates_are_seeded_and_saved_to_seed(auth_client):
     assert "不要包含 `tool_use_id`" in items["ask_user_preflight_protocol"]["content"]
     assert "context.title" in items["ask_user_preflight_protocol"]["content"]
     assert items["prompt_assistant"]["name"] == "提示词助手"
-    assert "上下游" in items["prompt_assistant"]["description"]
+    assert "执行祖先/后继关系" in items["prompt_assistant"]["description"]
     assert "先选模式；有歧义时最小改动" in items["prompt_assistant"]["content"]
     assert "其余逐字保留" in items["prompt_assistant"]["content"]
     assert "所有影响行为的目标、变量、字段、示例、边界、输出要求和验收标准必须保留" in items["prompt_assistant"]["content"]
@@ -122,7 +122,7 @@ def test_prompt_templates_are_seeded_and_saved_to_seed(auth_client):
     assert "box-sizing: border-box" in items["output_html_rendering"]["content"]
     assert "表格和代码在窄屏不得撑破页面" in items["output_html_rendering"]["content"]
     assert "download_url" in items["output_html_rendering"]["content"]
-    assert "`/mnt/inputs/...` 是本节点读取内容用的只读运行时路径" in items["output_html_rendering"]["content"]
+    assert "`/workspace` 中的内部文件路径绝对不要在 HTML 中展示或链接" in items["output_html_rendering"]["content"]
     assert "可下载文件由 Mira 的「文件」视图统一展示" in items["output_html_rendering"]["content"]
     assert '<img src="该地址" alt="图片说明">' in items["output_html_rendering"]["content"]
     assert "工具输出不是最终结果" in items["output_html_rendering"]["content"]

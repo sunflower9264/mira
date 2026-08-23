@@ -102,13 +102,17 @@ class ClaudeAgentRuntime:
         runtime_tools: RuntimeToolConfig | None = None,
         runtime_policy: RuntimePolicy = "execute",
         output_schema: dict | None = None,
+        session_scope: str | None = None,
+        fork_session: bool = False,
     ):
         status = await self.detect_status()
         if not status.installed:
             await on_chunk(AgentChunk(type="error", text=status.error))
             return AgentExecutionResult(finished_with="error", error=status.error)
         effective_runtime_tools = runtime_tools
-        home = _prepare_scoped_home(claude_home(), cwd, effective_runtime_tools)
+        home = _prepare_scoped_home(
+            claude_home(), cwd, effective_runtime_tools, session_scope=session_scope
+        )
         settings_path = home / ".claude" / "settings.json"
         env = _clean_env(CONTAINER_HOME)
         permission_mode = "default" if runtime_policy == "ask_user_plan" else "bypassPermissions"
@@ -140,6 +144,7 @@ class ClaudeAgentRuntime:
                     reasoning_effort,
                     permission_mode,
                     output_schema,
+                    fork_session,
                 )
                 runner_cancel_event = asyncio.Event()
 
@@ -254,8 +259,14 @@ def _is_sensitive_env_key(key: str) -> bool:
     return upper.endswith("_API_KEY") or upper.endswith("_TOKEN")
 
 
-def _prepare_scoped_home(shared_home: Path, cwd: Path, runtime_tools: RuntimeToolConfig | None) -> Path:
-    home = scoped_runtime_home("claude_home", cwd)
+def _prepare_scoped_home(
+    shared_home: Path,
+    cwd: Path,
+    runtime_tools: RuntimeToolConfig | None,
+    *,
+    session_scope: str | None = None,
+) -> Path:
+    home = scoped_runtime_home("claude_home", cwd, session_scope=session_scope)
     settings_dir = home / ".claude"
     settings_dir.mkdir(parents=True, exist_ok=True)
     source_settings = shared_home / ".claude" / "settings.json"
@@ -290,6 +301,7 @@ def _build_print_cmd(
     reasoning_effort: str | None,
     permission_mode: str,
     output_schema: dict | None = None,
+    fork_session: bool = False,
 ) -> list[str]:
     cmd = [
         str(cli),
@@ -313,6 +325,8 @@ def _build_print_cmd(
         cmd.extend(["--json-schema", json.dumps(output_schema, ensure_ascii=False, separators=(",", ":"))])
     if session_id:
         cmd.extend(["--resume", session_id])
+        if fork_session:
+            cmd.append("--fork-session")
     if allowed_tools:
         cmd.extend(["--allowedTools", ",".join(allowed_tools)])
     return cmd

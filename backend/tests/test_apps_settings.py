@@ -32,10 +32,9 @@ def _minimal_output_graph() -> dict:
                 "position": {"x": 200, "y": 0},
                 "title": "Output",
                 "prompt": "render [[respond:<section>ok</section>]]",
-                "source_node_id": "n_asset",
             }
         ],
-        "edges": [{"id": "e_out", "source": "n_asset", "target": "n_out"}],
+        "execution_edges": [{"id": "e_out", "source": "n_asset", "target": "n_out"}],
     }
 
 
@@ -59,7 +58,7 @@ def test_apps_gallery_versions_and_settings(auth_client):
     assert all(app["id"] != "tpl_parallel_ask_demo" for app in market.json())
 
     created = auth_client.post("/api/apps", json={"name": "Demo"}).json()
-    assert created["graph"] == {"nodes": [], "edges": []}
+    assert created["graph"] == {"nodes": [], "execution_edges": []}
     patched = auth_client.patch(
         f"/api/apps/{created['id']}",
         json={
@@ -80,10 +79,9 @@ def test_apps_gallery_versions_and_settings(auth_client):
                         "position": {"x": 200, "y": 0},
                         "title": "Output",
                         "prompt": "render",
-                        "source_node_id": "n1",
                     },
                 ],
-                "edges": [{"id": "e_out", "source": "n1", "target": "n_out"}],
+                "execution_edges": [{"id": "e_out", "source": "n1", "target": "n_out"}],
             }
         },
     )
@@ -155,7 +153,7 @@ def test_patch_app_strips_runtime_tools_snapshot(auth_client):
         "agent": "claude",
         "_runtime_tools": {"allowed_tool_ids": ["mcp:injected"]},
         "nodes": [],
-        "edges": [],
+        "execution_edges": [],
     }
     response = auth_client.patch(f"/api/apps/{created['id']}", json={"graph": graph})
     assert response.status_code == 200, response.text
@@ -196,7 +194,7 @@ def test_patch_app_rejects_asset_upload_owned_by_other_user(auth_client):
                 "uploads": [upload.json()],
             }
         ],
-        "edges": [],
+        "execution_edges": [],
     }
     response = auth_client.patch(f"/api/apps/{created['id']}", json={"graph": graph})
     assert response.status_code == 400
@@ -216,7 +214,7 @@ def test_patch_app_rejects_missing_drawing_asset_upload(auth_client):
                 "upload": {"id": "upl_missing", "name": "missing.png"},
             }
         ],
-        "edges": [],
+        "execution_edges": [],
     }
     response = auth_client.patch(f"/api/apps/{created['id']}", json={"graph": graph})
     assert response.status_code == 400
@@ -242,7 +240,7 @@ def test_publish_rejects_non_empty_graph_without_output(auth_client):
                 "input_schema": {"label": "input", "kind": "text"},
             }
         ],
-        "edges": [],
+        "execution_edges": [],
     }
     patched = auth_client.patch(f"/api/apps/{created['id']}", json={"graph": graph})
     assert patched.status_code == 200, patched.text
@@ -270,10 +268,9 @@ def test_publish_revalidates_stored_asset_upload_owner(auth_client):
                 "position": {"x": 220, "y": 0},
                 "title": "Output",
                 "prompt": "render",
-                "source_node_id": "n_asset",
             },
         ],
-        "edges": [{"id": "e_out", "source": "n_asset", "target": "n_out"}],
+        "execution_edges": [{"id": "e_out", "source": "n_asset", "target": "n_out"}],
     }
 
     async def store_graph() -> None:
@@ -479,10 +476,9 @@ def _file_asset_graph(upload_id: str) -> dict:
                 "position": {"x": 220, "y": 0},
                 "title": "Output",
                 "prompt": "render",
-                "source_node_id": "n_asset",
             },
         ],
-        "edges": [{"id": "e_out", "source": "n_asset", "target": "n_out"}],
+        "execution_edges": [{"id": "e_out", "source": "n_asset", "target": "n_out"}],
     }
 
 
@@ -522,7 +518,7 @@ def test_patch_app_rejects_drawing_upload_owned_by_other_user(auth_client):
                         "upload": uploaded.json(),
                     }
                 ],
-                "edges": [],
+                "execution_edges": [],
             }
         },
     )
@@ -589,7 +585,6 @@ def test_patch_app_rejects_invalid_graph_edges(auth_client):
             "position": {"x": 0, "y": 0},
             "title": "Output",
             "prompt": "ok",
-            "source_node_id": "n_gen",
         },
     ]
     response = auth_client.patch(
@@ -598,7 +593,7 @@ def test_patch_app_rejects_invalid_graph_edges(auth_client):
             "graph": {
                 "agent": "claude",
                 "nodes": base_nodes,
-                "edges": [
+                "execution_edges": [
                     {"id": "e1", "source": "n_input", "target": "n_gen"},
                     {"id": "e2", "source": "n_gen", "target": "n_out"},
                     {"id": "e3", "source": "n_out", "target": "n_gen"},
@@ -610,8 +605,8 @@ def test_patch_app_rejects_invalid_graph_edges(auth_client):
     assert "output 节点不能作为连线起点" in response.json()["detail"]
 
 
-def test_patch_app_rejects_invalid_output_source(auth_client):
-    created = auth_client.post("/api/apps", json={"name": "InvalidOutputSource"}).json()
+def test_patch_app_accepts_output_with_execution_predecessor(auth_client):
+    created = auth_client.post("/api/apps", json={"name": "OutputExecutionPredecessor"}).json()
     response = auth_client.patch(
         f"/api/apps/{created['id']}",
         json={
@@ -638,15 +633,26 @@ def test_patch_app_rejects_invalid_output_source(auth_client):
                         "position": {"x": 0, "y": 0},
                         "title": "Output",
                         "prompt": "ok",
-                        "source_node_id": "n_other",
                     },
                 ],
-                "edges": [{"id": "e1", "source": "n_gen", "target": "n_out"}],
+                "execution_edges": [{"id": "e1", "source": "n_gen", "target": "n_out"}],
             }
         },
     )
+    assert response.status_code == 200, response.text
+    output = next(node for node in response.json()["graph"]["nodes"] if node["id"] == "n_out")
+    assert "source_node_id" not in output
+
+
+def test_patch_app_rejects_legacy_edges_contract(auth_client):
+    created = auth_client.post("/api/apps", json={"name": "LegacyEdges"}).json()
+    response = auth_client.patch(
+        f"/api/apps/{created['id']}",
+        json={"graph": {"nodes": [], "edges": []}},
+    )
+
     assert response.status_code == 400
-    assert "source_node_id" in response.json()["detail"]
+    assert "graph.edges" in response.json()["detail"]
 
 
 def test_patch_app_rejects_multiple_output_nodes(auth_client):
@@ -670,7 +676,6 @@ def test_patch_app_rejects_multiple_output_nodes(auth_client):
                         "position": {"x": 0, "y": 0},
                         "title": "Output A",
                         "prompt": "ok",
-                        "source_node_id": "n_gen",
                     },
                     {
                         "id": "n_out_b",
@@ -678,10 +683,9 @@ def test_patch_app_rejects_multiple_output_nodes(auth_client):
                         "position": {"x": 0, "y": 0},
                         "title": "Output B",
                         "prompt": "ok",
-                        "source_node_id": "n_gen",
                     },
                 ],
-                "edges": [
+                "execution_edges": [
                     {"id": "e1", "source": "n_gen", "target": "n_out_a"},
                     {"id": "e2", "source": "n_gen", "target": "n_out_b"},
                 ],
@@ -714,7 +718,7 @@ def test_patch_app_rejects_multiple_user_input_nodes(auth_client):
                         "input_schema": {"label": "input b", "kind": "text"},
                     },
                 ],
-                "edges": [],
+                "execution_edges": [],
             }
         },
     )
@@ -743,11 +747,10 @@ def test_patch_app_rejects_output_contract_on_output_node(auth_client):
                         "position": {"x": 0, "y": 0},
                         "title": "Output",
                         "prompt": "ok",
-                        "source_node_id": "n_gen",
                         "output_contract": {"type": "json"},
                     },
                 ],
-                "edges": [{"id": "e1", "source": "n_gen", "target": "n_out"}],
+                "execution_edges": [{"id": "e1", "source": "n_gen", "target": "n_out"}],
             }
         },
     )
@@ -772,7 +775,7 @@ def test_patch_app_rejects_invalid_artifact_kind(auth_client):
                         "output_contract": {"type": "artifact", "artifact_kind": "exe"},
                     },
                 ],
-                "edges": [],
+                "execution_edges": [],
             }
         },
     )
@@ -796,7 +799,7 @@ def test_patch_app_accepts_zip_artifact_kind(auth_client):
                         "output_contract": {"type": "artifact", "artifact_kind": "zip"},
                     },
                 ],
-                "edges": [],
+                "execution_edges": [],
             }
         },
     )
@@ -828,7 +831,7 @@ def test_patch_app_accepts_office_document_validation(auth_client):
                         },
                     },
                 ],
-                "edges": [],
+                "execution_edges": [],
             }
         },
     )
@@ -861,7 +864,7 @@ def test_patch_app_rejects_non_bool_office_document_validation(auth_client):
                         },
                     },
                 ],
-                "edges": [],
+                "execution_edges": [],
             }
         },
     )
@@ -890,7 +893,7 @@ def test_patch_app_rejects_office_validation_for_non_office_artifact_kind(auth_c
                         },
                     },
                 ],
-                "edges": [],
+                "execution_edges": [],
             }
         },
     )
@@ -920,7 +923,7 @@ def test_patch_app_normalizes_stale_output_contract_fields(auth_client):
                         },
                     },
                 ],
-                "edges": [],
+                "execution_edges": [],
             }
         },
     )
@@ -947,7 +950,7 @@ def test_patch_app_rejects_json_field_level_output_contract(auth_client):
                         "output_contract": {"type": "json", "required_fields": ["title"]},
                     },
                 ],
-                "edges": [],
+                "execution_edges": [],
             }
         },
     )
@@ -971,7 +974,7 @@ def test_patch_app_rejects_non_boolean_ask_user_enabled(auth_client):
                         "ask_user_enabled": "false",
                     },
                 ],
-                "edges": [],
+                "execution_edges": [],
             }
         },
     )
@@ -996,7 +999,7 @@ def test_patch_app_rejects_ask_user_enabled_on_non_generate_node(auth_client):
                         "ask_user_enabled": False,
                     },
                 ],
-                "edges": [],
+                "execution_edges": [],
             }
         },
     )
@@ -1062,12 +1065,12 @@ def test_patch_app_rejects_invalid_condition_handle(auth_client):
                         "prompt": "ok",
                     },
                 ],
-                "edges": [{"id": "e1", "source": "n_cond", "target": "n_gen", "source_handle": "maybe"}],
+                "execution_edges": [{"id": "e1", "source": "n_cond", "target": "n_gen", "branch_key": "maybe"}],
             }
         },
     )
     assert response.status_code == 400
-    assert "source_handle 无效" in response.json()["detail"]
+    assert "branch_key 无效" in response.json()["detail"]
 
 
 def test_gallery_and_version_clone_clear_agent_session_id(auth_client):
@@ -1092,7 +1095,7 @@ def test_gallery_and_version_clone_clear_agent_session_id(auth_client):
                 "agent_session_id": "session_old",
             }
         ],
-        "edges": [],
+        "execution_edges": [],
     }
     auth_client.patch(f"/api/apps/{app['id']}", json={"graph": graph})
     version = auth_client.post(f"/api/apps/{app['id']}/versions", json={"label": "has session"}).json()
@@ -1208,10 +1211,9 @@ def test_clone_app_copies_file_asset_uploads_for_new_owner(auth_client):
                 "position": {"x": 220, "y": 0},
                 "title": "Output",
                 "prompt": "render",
-                "source_node_id": "n_asset",
             },
         ],
-        "edges": [{"id": "e_out", "source": "n_asset", "target": "n_out"}],
+        "execution_edges": [{"id": "e_out", "source": "n_asset", "target": "n_out"}],
     }
     patched = auth_client.patch(f"/api/apps/{source['id']}", json={"graph": graph})
     assert patched.status_code == 200, patched.text
@@ -1312,10 +1314,9 @@ def test_run_only_market_app_blocks_clone_hides_source_and_tracks_recent(auth_cl
                 "position": {"x": 440, "y": 0},
                 "title": "Secret Output Node",
                 "prompt": "render [[respond:<section>ok</section>]]",
-                "source_node_id": "n_input",
             },
         ],
-        "edges": [
+        "execution_edges": [
             {"id": "e_input_out", "source": "n_input", "target": "n_out"},
             {"id": "e_asset_out", "source": "n_asset", "target": "n_out"},
         ],
@@ -1341,7 +1342,7 @@ def test_run_only_market_app_blocks_clone_hides_source_and_tracks_recent(auth_cl
     assert market_app["can_view_source"] is False
     assert [node["type"] for node in market_app["graph"]["nodes"]] == ["user_input", "output"]
     assert market_app["graph"]["nodes"][0]["title"] == "Your request"
-    assert market_app["graph"]["edges"] == [{"id": "public_n_input_n_out", "source": "n_input", "target": "n_out"}]
+    assert market_app["graph"]["execution_edges"] == [{"id": "public_n_input_n_out", "source": "n_input", "target": "n_out"}]
 
     visible = auth_client.get(f"/api/apps/{created['id']}")
     assert visible.status_code == 200

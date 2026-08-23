@@ -21,7 +21,7 @@
 - Codex `exec --json` stdout 若含 U+FFFD，最终文本以同 session rollout 里未损坏的最后一条 agent_message 为准。
 - ask_user 通过内部 bridge/MCP 调用后端 callback；请求必须带 context/title/summary。修改协议时同步 runtime helper、run resume、SSE、decision schema 和 prompt templates。
 - Adapter 不做 UI 模型兜底；model、reasoning_effort 和 runtime policy 由 service 层准备并传入。
-- LLM session 复用策略由 run orchestrator 决定；adapter 不假设并行分支共享 session。
+- LLM session lineage 由 RunAgent 决定；adapter 必须支持线性 resume 与 provider 原生 fork。Claude 使用 `--resume ... --fork-session`，Codex 使用 app-server `thread/fork`；并行 branch 绝不能继续写同一物理 session。
 
 ## Verification
 

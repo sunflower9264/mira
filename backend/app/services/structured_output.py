@@ -109,7 +109,7 @@ NL_COMPILE_PATCH_OUTPUT_SCHEMA: dict[str, Any] = {
                     "edge_id": {"type": ["string", "null"]},
                     "edge_source": {"type": ["string", "null"]},
                     "edge_target": {"type": ["string", "null"]},
-                    "edge_source_handle": {"type": ["string", "null"]},
+                    "edge_branch_key": {"type": ["string", "null"]},
                 },
                 "required": [
                     "op",
@@ -119,7 +119,7 @@ NL_COMPILE_PATCH_OUTPUT_SCHEMA: dict[str, Any] = {
                     "edge_id",
                     "edge_source",
                     "edge_target",
-                    "edge_source_handle",
+                    "edge_branch_key",
                 ],
             },
         }

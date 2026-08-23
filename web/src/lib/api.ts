@@ -219,7 +219,7 @@ export async function listGallery(): Promise<App[]> {
 /**
  * POST /api/apps
  * 请求体：{ name?: string; description?: string }
- * 响应体：App（status='draft'，graph 为空 { nodes: [], edges: [] }）
+ * 响应体：App（status='draft'，graph 为空 { nodes: [], execution_edges: [] }）
  * 默认名称由后端决定，前端建议传 '未命名 Mira 应用'。
  */
 export async function createApp(payload: { name?: string; description?: string }): Promise<App> {
@@ -303,8 +303,7 @@ export async function deleteApp(id: string): Promise<void> {
 
 /**
  * POST /api/apps/:id/clone
- * 响应体：App（新 id；name 后追加“（副本）”；status 重置为 draft；
- *   graph 中所有 agent_session_id 必须清空）
+ * 响应体：App（新 id；name 后追加“（副本）”；status 重置为 draft）
  */
 export async function cloneApp(id: string): Promise<App> {
   return request<App>(`/api/apps/${id}/clone`, { method: 'POST' });
@@ -313,7 +312,7 @@ export async function cloneApp(id: string): Promise<App> {
 /**
  * POST /api/apps/clone/:template_id
  * 响应体：App（同一用户同一模板重复调用时返回已有导入；首次导入 name 追加 “ Remix”；
- *   status 重置为 draft；graph 中所有 agent_session_id 必须清空）
+ *   status 重置为 draft）
  * 失败：404 + { detail: '找不到模板 ${template_id}' }
  */
 export async function cloneFromGallery(templateId: string): Promise<App> {
@@ -387,8 +386,7 @@ export async function unpublishApp(appId: string): Promise<App> {
 
 /**
  * POST /api/versions/:id/clone
- * 响应体：App（基于版本快照创建新草稿应用；name 追加 “（vN）”，N 为该版本在所属 app 中的序号；
- *   graph 中所有 agent_session_id 必须清空）
+ * 响应体：App（基于版本快照创建新草稿应用；name 追加 “（vN）”，N 为该版本在所属 app 中的序号）
  */
 export async function cloneFromVersion(versionId: string): Promise<App> {
   return request<App>(`/api/versions/${versionId}/clone`, { method: 'POST' });
@@ -587,7 +585,7 @@ export async function createRun(payload: {
 
 /**
  * POST /api/runs/:id/rerun-from
- * 基于历史 run 创建一个新 run，使用当前 App graph，从指定节点开始重新执行。
+ * 基于历史 run 的节点前 checkpoint 创建新 run；cut 前状态冻结，使用当前 App graph 执行指定节点及下游。
  */
 export async function rerunFrom(
   id: string,

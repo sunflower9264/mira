@@ -26,10 +26,9 @@ def test_workspace_gc_removes_only_orphan_run_directories(auth_client, enable_cl
                 "position": {"x": 200, "y": 0},
                 "title": "Output",
                 "prompt": "render",
-                "source_node_id": "input",
             },
         ],
-        "edges": [{"id": "edge", "source": "input", "target": "output"}],
+        "execution_edges": [{"id": "edge", "source": "input", "target": "output"}],
     }
     saved = auth_client.patch(f"/api/apps/{created['id']}", json={"graph": graph})
     assert saved.status_code == 200, saved.text

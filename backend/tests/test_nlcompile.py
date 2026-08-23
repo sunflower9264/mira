@@ -48,7 +48,7 @@ def _structured_patch(
     edge_id: str | None = None,
     edge_source: str | None = None,
     edge_target: str | None = None,
-    edge_source_handle: str | None = None,
+    edge_branch_key: str | None = None,
 ) -> dict[str, Any]:
     return {
         "op": op,
@@ -58,7 +58,7 @@ def _structured_patch(
         "edge_id": edge_id,
         "edge_source": edge_source,
         "edge_target": edge_target,
-        "edge_source_handle": edge_source_handle,
+        "edge_branch_key": edge_branch_key,
     }
 
 
@@ -338,7 +338,7 @@ class AssistantContractRuntime(ScriptedRuntime):
 def _extract_assistant_current_prompt(prompt: str) -> str:
     match = re.search(
         r"- 当前提示词：\n(.*?)"
-        r"(?:\n- 当前 output_contract：|\n- 分支：|\n- 主输入 source_node_id：|\n\n## 直接上游节点)",
+        r"(?:\n- 当前 output_contract：|\n- 分支：|\n\n## 执行祖先节点)",
         prompt,
         flags=re.DOTALL,
     )
@@ -758,7 +758,7 @@ def test_nlcompile_requires_enabled_agent(auth_client):
     app_id = _create_app(auth_client)
     response = auth_client.post(
         "/api/nlcompile",
-        json={"app_id": app_id, "instruction": "加一个生成节点", "current_graph": {"agent": "claude", "nodes": [], "edges": []}},
+        json={"app_id": app_id, "instruction": "加一个生成节点", "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []}},
     )
     assert response.status_code == 400
     assert response.json()["detail"] == "无可用 Agent，请先在设置中启用 Agent"
@@ -821,7 +821,7 @@ def test_nlcompile_plan_passes_planning_safe_mcp_tools(auth_client, enable_claud
                         "allowed_tool_ids": ["mcp:mcp_nl_plan", "mcp:mcp_nl_disabled"],
                     },
                     "nodes": [],
-                    "edges": [],
+                    "execution_edges": [],
                 },
             },
         )
@@ -852,7 +852,7 @@ def test_nlcompile_plan_rejects_internal_ask_user_tool_failure(auth_client, enab
             json={
                 "app_id": app_id,
                 "instruction": "我不知道怎么改，给我几个方向",
-                "current_graph": {"agent": "claude", "nodes": [], "edges": []},
+                "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
             },
         )
     finally:
@@ -873,7 +873,7 @@ def test_nlcompile_plan_rejects_claude_ask_user_permission_denial(auth_client, e
             json={
                 "app_id": app_id,
                 "instruction": "先问我几个问题再改",
-                "current_graph": {"agent": "claude", "nodes": [], "edges": []},
+                "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
             },
         )
     finally:
@@ -903,7 +903,7 @@ def test_nlcompile_fallback_positions_only_fill_added_nodes_without_coordinates(
             {"id": "n_added_positioned", "position": {"x": 100, "y": 100}},
             {"id": "n_added_missing"},
         ],
-        "edges": [],
+        "execution_edges": [],
     }
     patches = [
         {"op": "add_node", "node": {"id": "n_added_positioned"}},
@@ -947,7 +947,7 @@ def test_nlcompile_applies_valid_patches_and_renders_plan(auth_client, enable_cl
             {
                 "app_id": app_id,
                 "instruction": "加一个生成节点",
-                "current_graph": {"agent": "claude", "nodes": [], "edges": []},
+                "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
             },
         )
     finally:
@@ -1077,7 +1077,6 @@ def test_nlcompile_applies_real_structured_fields_for_all_node_types(auth_client
                         "type": "output",
                         "title": "输出",
                         "prompt": "将判断结果和摘要完整渲染为 HTML。",
-                        "source_node_id": "n_condition",
                     },
                 ),
                 _structured_patch("update_node", id="n_generate", patch={"description": "生成发布摘要"}),
@@ -1104,7 +1103,7 @@ def test_nlcompile_applies_real_structured_fields_for_all_node_types(auth_client
                     edge_id="e_condition_output",
                     edge_source="n_condition",
                     edge_target="n_output",
-                    edge_source_handle="approved",
+                    edge_branch_key="approved",
                 ),
             ]
         },
@@ -1118,7 +1117,7 @@ def test_nlcompile_applies_real_structured_fields_for_all_node_types(auth_client
             {
                 "app_id": app_id,
                 "instruction": "创建一个带规范素材和质量判断的摘要应用",
-                "current_graph": {"agent": "claude", "nodes": [], "edges": []},
+                "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
             },
         )
     finally:
@@ -1136,8 +1135,8 @@ def test_nlcompile_applies_real_structured_fields_for_all_node_types(auth_client
     }
     assert all("position" in node for node in body["new_graph"]["nodes"])
     assert any(
-        edge.get("source_handle") == "approved"
-        for edge in body["new_graph"]["edges"]
+        edge.get("branch_key") == "approved"
+        for edge in body["new_graph"]["execution_edges"]
     )
     assert body["new_graph"]["nodes"][2]["description"] == "生成发布摘要"
     assert runtime.assistant_call_count == 3
@@ -1171,7 +1170,7 @@ def test_nlcompile_repairs_malformed_plan_output_before_apply(auth_client, enabl
             {
                 "app_id": app_id,
                 "instruction": "加一个生成节点",
-                "current_graph": {"agent": "claude", "nodes": [], "edges": []},
+                "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
             },
         )
     finally:
@@ -1230,7 +1229,7 @@ def test_nlcompile_repairs_plan_with_empty_required_sections(auth_client, enable
             {
                 "app_id": app_id,
                 "instruction": "新增摘要生成节点",
-                "current_graph": {"agent": "claude", "nodes": [], "edges": []},
+                "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
             },
         )
     finally:
@@ -1269,7 +1268,7 @@ def test_nlcompile_returns_graph_when_layout_beautify_fails(auth_client, enable_
             {
                 "app_id": app_id,
                 "instruction": "加一个生成节点",
-                "current_graph": {"agent": "claude", "nodes": [], "edges": []},
+                "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
             },
         )
     finally:
@@ -1321,7 +1320,7 @@ def test_nlcompile_plan_markdown_shows_update_before_after(auth_client, enable_c
                             "prompt": "请先输出一个简短草稿。",
                         }
                     ],
-                    "edges": [],
+                    "execution_edges": [],
                 },
             },
         )
@@ -1373,7 +1372,7 @@ def test_nlcompile_plan_markdown_renders_input_schema_readably(auth_client, enab
             {
                 "app_id": app_id,
                 "instruction": "新增阅读推荐输入",
-                "current_graph": {"agent": "claude", "nodes": [], "edges": []},
+                "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
             },
         )
     finally:
@@ -1430,7 +1429,7 @@ def test_nlcompile_plan_markdown_renders_structured_updates_readably(auth_client
                             "input_schema": {"label": "主题", "kind": "text"},
                         }
                     ],
-                    "edges": [],
+                    "execution_edges": [],
                 },
             },
         )
@@ -1480,7 +1479,7 @@ def test_nlcompile_plan_markdown_renders_branches_readably(auth_client, enable_c
             {
                 "app_id": app_id,
                 "instruction": "增加阅读方向判断",
-                "current_graph": {"agent": "claude", "nodes": [], "edges": []},
+                "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
             },
         )
     finally:
@@ -1536,7 +1535,7 @@ def test_nlcompile_plan_markdown_shows_edge_titles(auth_client, enable_claude_ag
                             "prompt": "根据主题生成回答",
                         },
                     ],
-                    "edges": [],
+                    "execution_edges": [],
                 },
             },
         )
@@ -1579,7 +1578,7 @@ def test_nlcompile_plan_markdown_shows_remove_node_edge_impact(auth_client, enab
                             "prompt": "根据主题生成回答",
                         },
                     ],
-                    "edges": [
+                    "execution_edges": [
                         {
                             "id": "e_input_to_generate",
                             "source": "n_input",
@@ -1636,7 +1635,7 @@ def test_nlcompile_waiting_resume_returns_completed_plan(auth_client, enable_cla
         json={
             "app_id": app_id,
             "instruction": f"[[ask_user:{json.dumps(ask_payload, ensure_ascii=False)}]] [[respond:{patch_text}]]",
-            "current_graph": {"agent": "claude", "nodes": [], "edges": []},
+            "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
         },
     )
     assert response.status_code == 200, response.text
@@ -1694,7 +1693,7 @@ def test_nlcompile_waiting_resume_with_none_option_continues_to_plan(auth_client
         json={
             "app_id": app_id,
             "instruction": f"[[ask_user:{json.dumps(ask_payload, ensure_ascii=False)}]] [[respond:{patch_text}]]",
-            "current_graph": {"agent": "claude", "nodes": [], "edges": []},
+            "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
         },
     )
     assert response.status_code == 200, response.text
@@ -1730,7 +1729,7 @@ def test_nlcompile_waiting_resume_answers_drive_runtime_patch(auth_client, enabl
                 json={
                     "app_id": app_id,
                     "instruction": "根据用户选择创建对应节点",
-                    "current_graph": {"agent": "claude", "nodes": [], "edges": []},
+                    "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
                 },
             )
             assert response.status_code == 200, response.text
@@ -1796,7 +1795,7 @@ def test_nlcompile_active_returns_planned_session_and_apply_rebuilds_from_db(aut
             json={
                 "app_id": app_id,
                 "instruction": "创建一个节点并测试恢复",
-                "current_graph": {"agent": "claude", "nodes": [], "edges": []},
+                "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
             },
         )
         assert planned.status_code == 200, planned.text
@@ -1838,7 +1837,7 @@ def test_nlcompile_resume_replays_from_db_after_memory_session_lost(auth_client,
             json={
                 "app_id": app_id,
                 "instruction": "根据用户选择创建对应节点",
-                "current_graph": {"agent": "claude", "nodes": [], "edges": []},
+                "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
             },
         )
         assert response.status_code == 200, response.text
@@ -1876,7 +1875,7 @@ def test_nlcompile_resume_after_waiting_tool_timeout_replays_from_db(auth_client
             json={
                 "app_id": app_id,
                 "instruction": "我不知道怎么改，给我几个方向",
-                "current_graph": {"agent": "claude", "nodes": [], "edges": []},
+                "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
             },
         )
         assert response.status_code == 200, response.text
@@ -1950,7 +1949,7 @@ def test_nlcompile_refine_reuses_history_and_updates_plan(auth_client, enable_cl
             json={
                 "app_id": app_id,
                 "instruction": "做一个摘要页面",
-                "current_graph": {"agent": "claude", "nodes": [], "edges": []},
+                "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
             },
         )
         assert planned.status_code == 200, planned.text
@@ -1996,7 +1995,7 @@ def test_nlcompile_refine_limit(auth_client, enable_claude_agent):
             json={
                 "app_id": app_id,
                 "instruction": "做一个可调整方案",
-                "current_graph": {"agent": "claude", "nodes": [], "edges": []},
+                "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
             },
         )
         assert planned.status_code == 200, planned.text
@@ -2055,7 +2054,7 @@ def test_nlcompile_waiting_resume_with_text_returns_completed_plan(auth_client, 
         json={
             "app_id": app_id,
             "instruction": f"[[ask_user:{json.dumps(ask_payload, ensure_ascii=False)}]] [[respond:{patch_text}]]",
-            "current_graph": {"agent": "claude", "nodes": [], "edges": []},
+            "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
         },
     )
     assert response.status_code == 200, response.text
@@ -2086,7 +2085,7 @@ def test_nlcompile_cancel_running_session_returns_409(auth_client, enable_claude
                 "app_id": app_id,
                 "compile_id": compile_id,
                 "instruction": '[[delay:5]] [[respond:{"patches":[]}]]',
-                "current_graph": {"agent": "claude", "nodes": [], "edges": []},
+                "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
             },
         )
 
@@ -2121,7 +2120,7 @@ def test_nlcompile_cancel_waiting_session_removes_resume(auth_client, enable_cla
         json={
             "app_id": app_id,
             "instruction": f"[[ask_user:{json.dumps(ask_payload, ensure_ascii=False)}]] [[respond:{patch_text}]]",
-            "current_graph": {"agent": "claude", "nodes": [], "edges": []},
+            "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
         },
     )
     assert response.status_code == 200, response.text
@@ -2152,7 +2151,7 @@ def test_nlcompile_pre_cancelled_compile_id_does_not_start_runtime(auth_client, 
             "app_id": app_id,
             "compile_id": compile_id,
             "instruction": '[[respond:{"patches":[]}]]',
-            "current_graph": {"agent": "claude", "nodes": [], "edges": []},
+            "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
         },
     )
 
@@ -2186,7 +2185,7 @@ def test_nlcompile_apply_owned_by_other_user_returns_404(client, auth_client, en
             json={
                 "app_id": app_id,
                 "instruction": "添加一个生成节点",
-                "current_graph": {"agent": "claude", "nodes": [], "edges": []},
+                "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
             },
         )
         assert planned.status_code == 200, planned.text
@@ -2217,7 +2216,7 @@ def test_nlcompile_apply_rejects_ask_user(auth_client, enable_claude_agent):
             json={
                 "app_id": app_id,
                 "instruction": "实施时不要再提问",
-                "current_graph": {"agent": "claude", "nodes": [], "edges": []},
+                "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
             },
         )
         assert planned.status_code == 200, planned.text
@@ -2244,7 +2243,7 @@ def test_nlcompile_rejects_empty_patches_after_repair_attempts(auth_client, enab
             {
                 "app_id": app_id,
                 "instruction": "新增一个摘要生成节点",
-                "current_graph": {"agent": "claude", "nodes": [], "edges": []},
+                "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
             },
         )
     finally:
@@ -2296,7 +2295,7 @@ def test_nlcompile_rejects_invalid_patches_after_repair_attempts(auth_client, en
             {
                 "app_id": app_id,
                 "instruction": "新增两个 generate",
-                "current_graph": {"agent": "claude", "nodes": [], "edges": []},
+                "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
             },
         )
     finally:
@@ -2337,10 +2336,9 @@ def test_nlcompile_rejects_second_singleton_nodes(auth_client, enable_claude_age
                 "position": {"x": 0, "y": 0},
                 "title": "Output",
                 "prompt": "展示最终 HTML",
-                "source_node_id": "n_gen",
             },
         ],
-        "edges": [
+        "execution_edges": [
             {"id": "e_input_gen", "source": "n_input", "target": "n_gen"},
             {"id": "e_gen_out", "source": "n_gen", "target": "n_out"},
         ],
@@ -2356,7 +2354,6 @@ def test_nlcompile_rejects_second_singleton_nodes(auth_client, enable_claude_age
                         "position": {"x": 0, "y": 0},
                         "title": "Extra Output",
                         "prompt": "展示另一个 HTML",
-                        "source_node_id": "n_gen",
                     },
                 },
                 {"op": "add_edge", "edge": {"id": "e_gen_extra_out", "source": "n_gen", "target": "n_output_extra"}},
@@ -2397,7 +2394,7 @@ def test_nlcompile_rejects_second_user_input_node(auth_client, enable_claude_age
                 "input_schema": {"label": "input", "kind": "text"},
             }
         ],
-        "edges": [],
+        "execution_edges": [],
     }
     payload = json.dumps(
         {
@@ -2477,7 +2474,7 @@ def test_nlcompile_repairs_invalid_patch_on_second_attempt(auth_client, enable_c
             {
                 "app_id": app_id,
                 "instruction": "新增一个 generate",
-                "current_graph": {"agent": "claude", "nodes": [], "edges": []},
+                "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
             },
         )
     finally:
@@ -2539,7 +2536,7 @@ def test_nlcompile_retries_when_prompt_assistant_fails(auth_client, enable_claud
             {
                 "app_id": app_id,
                 "instruction": "新增一个 generate",
-                "current_graph": {"agent": "claude", "nodes": [], "edges": []},
+                "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
             },
         )
     finally:
@@ -2608,7 +2605,7 @@ def test_nlcompile_applies_prompt_assistant_output_contract(auth_client, enable_
             {
                 "app_id": app_id,
                 "instruction": "新增一个生成选题的节点",
-                "current_graph": {"agent": "claude", "nodes": [], "edges": []},
+                "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
             },
         )
     finally:
@@ -2673,7 +2670,7 @@ def test_nlcompile_prunes_redundant_transitive_edge(auth_client, enable_claude_a
             {
                 "app_id": app_id,
                 "instruction": "新增三步串行生成节点",
-                "current_graph": {"agent": "claude", "nodes": [], "edges": []},
+                "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
             },
         )
     finally:
@@ -2682,7 +2679,7 @@ def test_nlcompile_prunes_redundant_transitive_edge(auth_client, enable_claude_a
     assert response.status_code == 200, response.text
     body = response.json()
     assert runtime.call_count == 2
-    edge_ids = {edge["id"] for edge in body["new_graph"]["edges"]}
+    edge_ids = {edge["id"] for edge in body["new_graph"]["execution_edges"]}
     assert edge_ids == {"e_a_b", "e_b_c"}
     assert all(
         patch.get("op") != "add_edge" or patch.get("edge", {}).get("id") != "e_a_c"
@@ -2739,7 +2736,7 @@ def test_nlcompile_prunes_existing_redundant_edge_on_unrelated_patch(auth_client
                             "prompt": "基于 B 生成 C",
                         },
                     ],
-                    "edges": [
+                    "execution_edges": [
                         {"id": "e_a_b", "source": "n_a", "target": "n_b"},
                         {"id": "e_b_c", "source": "n_b", "target": "n_c"},
                         {"id": "e_a_c", "source": "n_a", "target": "n_c"},
@@ -2752,7 +2749,7 @@ def test_nlcompile_prunes_existing_redundant_edge_on_unrelated_patch(auth_client
 
     assert response.status_code == 200, response.text
     body = response.json()
-    edge_ids = {edge["id"] for edge in body["new_graph"]["edges"]}
+    edge_ids = {edge["id"] for edge in body["new_graph"]["execution_edges"]}
     assert edge_ids == {"e_a_b", "e_b_c"}
     assert {"op": "remove_edge", "id": "e_a_c"} in body["applied_patches"]
     assert body["warnings"] == ["已自动清理 1 条冗余连线"]
@@ -2816,7 +2813,7 @@ def test_nlcompile_repair_prompt_rejects_delete_edge_and_restates_protocol(auth_
             {
                 "app_id": app_id,
                 "instruction": "新增三步串行生成节点",
-                "current_graph": {"agent": "claude", "nodes": [], "edges": []},
+                "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
             },
         )
     finally:
@@ -2824,7 +2821,7 @@ def test_nlcompile_repair_prompt_rejects_delete_edge_and_restates_protocol(auth_
 
     assert response.status_code == 200, response.text
     body = response.json()
-    edge_ids = {edge["id"] for edge in body["new_graph"]["edges"]}
+    edge_ids = {edge["id"] for edge in body["new_graph"]["execution_edges"]}
     assert edge_ids == {"e_a_b", "e_b_c"}
     assert runtime.call_count == 3
     assert "Mira graph patch 协议（后端强制）" in runtime.prompts[1]
@@ -2891,7 +2888,7 @@ def test_nlcompile_allows_parallel_upstreams_to_same_target(auth_client, enable_
             {
                 "app_id": app_id,
                 "instruction": "新增两个并行上游汇聚到一个节点",
-                "current_graph": {"agent": "claude", "nodes": [], "edges": []},
+                "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
             },
         )
     finally:
@@ -2901,7 +2898,7 @@ def test_nlcompile_allows_parallel_upstreams_to_same_target(auth_client, enable_
     body = response.json()
     assert runtime.call_count == 2
     assert runtime.layout_call_count == 1
-    edge_ids = {edge["id"] for edge in body["new_graph"]["edges"]}
+    edge_ids = {edge["id"] for edge in body["new_graph"]["execution_edges"]}
     assert edge_ids == {"e_a_c", "e_b_c"}
     assert body["warnings"] == []
 
@@ -2956,10 +2953,10 @@ def test_nlcompile_prune_keeps_condition_branch_edges(auth_client, enable_claude
                             "prompt": "基于 B 生成 C。",
                         },
                     ],
-                    "edges": [
-                        {"id": "e_cond_b", "source": "n_cond", "target": "n_b", "source_handle": "true"},
+                    "execution_edges": [
+                        {"id": "e_cond_b", "source": "n_cond", "target": "n_b", "branch_key": "true"},
                         {"id": "e_b_c", "source": "n_b", "target": "n_c"},
-                        {"id": "e_cond_c", "source": "n_cond", "target": "n_c", "source_handle": "false"},
+                        {"id": "e_cond_c", "source": "n_cond", "target": "n_c", "branch_key": "false"},
                     ],
                 },
             },
@@ -2969,12 +2966,12 @@ def test_nlcompile_prune_keeps_condition_branch_edges(auth_client, enable_claude
 
     assert response.status_code == 200, response.text
     body = response.json()
-    edge_ids = {edge["id"] for edge in body["new_graph"]["edges"]}
+    edge_ids = {edge["id"] for edge in body["new_graph"]["execution_edges"]}
     assert edge_ids == {"e_cond_b", "e_b_c", "e_cond_c"}
     assert body["warnings"] == []
 
 
-def test_nlcompile_prune_keeps_output_source_edge(auth_client, enable_claude_agent):
+def test_nlcompile_prunes_redundant_transitive_execution_edge(auth_client, enable_claude_agent):
     enable_claude_agent()
     app_id = _create_app(auth_client)
     payload = json.dumps(
@@ -3020,10 +3017,9 @@ def test_nlcompile_prune_keeps_output_source_edge(auth_client, enable_claude_age
                             "position": {"x": 600, "y": 0},
                             "title": "输出",
                             "prompt": "输出最终结果。",
-                            "source_node_id": "n_a",
                         },
                     ],
-                    "edges": [
+                    "execution_edges": [
                         {"id": "e_a_b", "source": "n_a", "target": "n_b"},
                         {"id": "e_b_output", "source": "n_b", "target": "n_output"},
                         {"id": "e_a_output", "source": "n_a", "target": "n_output"},
@@ -3036,9 +3032,9 @@ def test_nlcompile_prune_keeps_output_source_edge(auth_client, enable_claude_age
 
     assert response.status_code == 200, response.text
     body = response.json()
-    edge_ids = {edge["id"] for edge in body["new_graph"]["edges"]}
-    assert edge_ids == {"e_a_b", "e_b_output", "e_a_output"}
-    assert body["warnings"] == []
+    edge_ids = {edge["id"] for edge in body["new_graph"]["execution_edges"]}
+    assert edge_ids == {"e_a_b", "e_b_output"}
+    assert body["warnings"] == ["已自动清理 1 条冗余连线"]
 
 
 def test_nlcompile_logs_invalid_patch_reason(auth_client, enable_claude_agent, monkeypatch):
@@ -3073,7 +3069,7 @@ def test_nlcompile_logs_invalid_patch_reason(auth_client, enable_claude_agent, m
             {
                 "app_id": app_id,
                 "instruction": "新增一个非法 generate",
-                "current_graph": {"agent": "claude", "nodes": [], "edges": []},
+                "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
             },
         )
     finally:
@@ -3115,7 +3111,6 @@ def test_nlcompile_retries_order_dependent_output_source_update(auth_client, ena
                     "patch": {
                         "position": {"x": 1280, "y": 0},
                         "prompt": output_prompt,
-                        "source_node_id": "n_generate_docs",
                     },
                 },
                 {"op": "remove_edge", "id": "e_code_to_docs"},
@@ -3176,11 +3171,10 @@ def test_nlcompile_retries_order_dependent_output_source_update(auth_client, ena
                             "type": "output",
                             "position": {"x": 960, "y": 0},
                             "title": "输出文档与下载链接",
-                            "source_node_id": "n_generate_code",
                             "prompt": "基于上游已确认需求和生成代码，输出最终交付文档。",
                         },
                     ],
-                    "edges": [
+                    "execution_edges": [
                         {
                             "id": "e_industry_to_requirements",
                             "source": "n_input_industry",
@@ -3209,9 +3203,9 @@ def test_nlcompile_retries_order_dependent_output_source_update(auth_client, ena
     assert body["warnings"] == []
     assert len(body["applied_patches"]) == 6
     nodes = {node["id"]: node for node in body["new_graph"]["nodes"]}
-    assert nodes["n_output_docs"]["source_node_id"] == "n_generate_docs"
+    assert "source_node_id" not in nodes["n_output_docs"]
     assert nodes["n_output_docs"]["prompt"] == output_prompt
-    edge_ids = {edge["id"] for edge in body["new_graph"]["edges"]}
+    edge_ids = {edge["id"] for edge in body["new_graph"]["execution_edges"]}
     assert "e_generated_docs_to_output" in edge_ids
 
 
@@ -3310,10 +3304,9 @@ def test_nlcompile_soft_copyright_replaces_manual_supplement_nodes_with_ai(auth_
                             "position": {"x": 1280, "y": 0},
                             "title": "输出软著材料",
                             "prompt": "输出最终软著材料。",
-                            "source_node_id": "n_generate_materials",
                         },
                     ],
-                    "edges": [
+                    "execution_edges": [
                         {"id": "e_input_to_company", "source": "n_input", "target": "n_company_subject_manual"},
                         {
                             "id": "e_company_to_test_account",
@@ -3340,8 +3333,8 @@ def test_nlcompile_soft_copyright_replaces_manual_supplement_nodes_with_ai(auth_
     assert "n_test_account_manual" not in nodes
     assert nodes["n_ai_company_subject"]["title"] == "AI生成公司主体信息"
     assert nodes["n_ai_test_account"]["title"] == "AI生成测试账号说明"
-    assert nodes["n_output"]["source_node_id"] == "n_generate_materials"
-    edge_ids = {edge["id"] for edge in body["new_graph"]["edges"]}
+    assert "source_node_id" not in nodes["n_output"]
+    edge_ids = {edge["id"] for edge in body["new_graph"]["execution_edges"]}
     assert edge_ids == {
         "e_input_to_ai_company",
         "e_ai_company_to_ai_test_account",
@@ -3351,7 +3344,7 @@ def test_nlcompile_soft_copyright_replaces_manual_supplement_nodes_with_ai(auth_
     assert all(
         edge.get("source") not in {"n_company_subject_manual", "n_test_account_manual"}
         and edge.get("target") not in {"n_company_subject_manual", "n_test_account_manual"}
-        for edge in body["new_graph"]["edges"]
+        for edge in body["new_graph"]["execution_edges"]
     )
     assert body["warnings"] == []
     assert runtime.output_schemas[0] == NL_COMPILE_PLAN_OUTPUT_SCHEMA
@@ -3370,7 +3363,7 @@ def test_nlcompile_rejects_invalid_condition_edge_handle(auth_client, enable_cla
                         "id": "e_bad",
                         "source": "n_cond",
                         "target": "n_gen",
-                        "source_handle": "maybe",
+                        "branch_key": "maybe",
                     },
                 }
             ]
@@ -3404,7 +3397,7 @@ def test_nlcompile_rejects_invalid_condition_edge_handle(auth_client, enable_cla
                             "prompt": "ok",
                         },
                     ],
-                    "edges": [],
+                    "execution_edges": [],
                 },
             },
         )
@@ -3443,7 +3436,7 @@ def test_nlcompile_accepts_markdown_codeblock(auth_client, enable_claude_agent):
             {
                 "app_id": app_id,
                 "instruction": "尝试删除一条不存在的连线",
-                "current_graph": {"agent": "claude", "nodes": [], "edges": []},
+                "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
             },
         )
     finally:
@@ -3465,7 +3458,7 @@ def test_nlcompile_runtime_failure_returns_502(auth_client, enable_claude_agent)
             json={
                 "app_id": app_id,
                 "instruction": "随便",
-                "current_graph": {"agent": "claude", "nodes": [], "edges": []},
+                "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
             },
         )
     finally:
@@ -3485,7 +3478,7 @@ def test_nlcompile_unparseable_output_returns_502(auth_client, enable_claude_age
             {
                 "app_id": app_id,
                 "instruction": "随便",
-                "current_graph": {"agent": "claude", "nodes": [], "edges": []},
+                "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
             },
         )
     finally:
@@ -3501,7 +3494,7 @@ def test_nlcompile_app_not_found_returns_404(auth_client, enable_claude_agent):
         json={
             "app_id": "app_does_not_exist",
             "instruction": "随便",
-            "current_graph": {"agent": "claude", "nodes": [], "edges": []},
+            "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
         },
     )
     assert response.status_code == 404
@@ -3519,7 +3512,7 @@ def test_nlcompile_app_owned_by_other_user_returns_404(client, auth_client, enab
         json={
             "app_id": app_id,
             "instruction": "随便",
-            "current_graph": {"agent": "claude", "nodes": [], "edges": []},
+            "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
         },
     )
     assert response.status_code == 404
@@ -3546,7 +3539,7 @@ def test_slim_graph_for_prompt_strips_layout_and_truncates_assets():
                 "prompt": "写一段说明",
             },
         ],
-        "edges": [{"id": "e1", "source": "n_asset", "target": "n_generate"}],
+        "execution_edges": [{"id": "e1", "source": "n_asset", "target": "n_generate"}],
     }
     prompt = nlcompile_service.build_plan_prompt("改一下", graph, "$graph_json|$instruction", "PROTO")
     assert '"position"' not in prompt

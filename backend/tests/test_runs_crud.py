@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from pathlib import Path
 
@@ -36,7 +37,6 @@ OUTPUT_FROM_INPUT_NODE = {
     "position": {"x": 200, "y": 0},
     "title": "Output",
     "prompt": "render [[respond:<section>ok</section>]]",
-    "source_node_id": "n_input",
 }
 
 
@@ -44,13 +44,14 @@ def _user_input_output_graph() -> dict:
     return {
         "agent": "claude",
         "nodes": [USER_INPUT_NODE, OUTPUT_FROM_INPUT_NODE],
-        "edges": [{"id": "e_out", "source": "n_input", "target": "n_out"}],
+        "execution_edges": [{"id": "e_out", "source": "n_input", "target": "n_out"}],
     }
 
 
 class PromptCaptureRuntime:
     def __init__(self) -> None:
         self.prompts: list[str] = []
+        self.workspaces: list[Path] = []
 
     async def detect_status(self) -> AgentProviderStatus:
         return AgentProviderStatus(
@@ -76,17 +77,29 @@ class PromptCaptureRuntime:
         runtime_tools=None,
         runtime_policy="execute",
         output_schema=None,
+        session_scope=None,
+        fork_session=False,
     ) -> AgentExecutionResult:
         if runtime_policy == "ask_user_plan":
             text = '{"action":"complete","decision_summary":"无需额外提问。","reason":"测试场景不需要补充用户决策。"}'
         elif "你正在生成 Mira output 节点" in prompt:
             self.prompts.append(prompt)
+            self.workspaces.append(cwd)
             text = '{"html":"<section>OK</section>"}'
         else:
             self.prompts.append(prompt)
+            self.workspaces.append(cwd)
             text = "OK"
         await on_chunk(AgentChunk(type="text", text=text))
         return AgentExecutionResult(session_id=session_id or "prompt_capture", total_text=text, finished_with="done")
+
+
+def _workspace_context_values(root: Path) -> dict[str, object]:
+    values: dict[str, object] = {}
+    for path in (root / ".mira" / "run-context").glob("*.json"):
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        values[payload["node_id"]] = payload["value"]
+    return values
 
 
 def _build_app(auth_client, *, graph: dict) -> str:
@@ -115,7 +128,7 @@ def test_create_run_with_simple_input_asset_graph(auth_client, enable_claude_age
             ASSET_NODE,
             OUTPUT_FROM_INPUT_NODE,
         ],
-        "edges": [
+        "execution_edges": [
             {"id": "e_input_out", "source": "n_input", "target": "n_out"},
             {"id": "e_asset_out", "source": "n_asset", "target": "n_out"},
         ],
@@ -149,7 +162,7 @@ def test_create_run_rejects_unknown_input_key(auth_client, enable_claude_agent):
 def test_create_run_rejects_non_empty_graph_without_output(auth_client):
     graph = {
         "nodes": [USER_INPUT_NODE],
-        "edges": [],
+        "execution_edges": [],
     }
     app_id = _build_app(auth_client, graph=graph)
     response = auth_client.post(
@@ -180,10 +193,9 @@ def test_create_run_revalidates_stored_asset_upload_owner(auth_client, enable_cl
                 "position": {"x": 220, "y": 0},
                 "title": "Output",
                 "prompt": "render",
-                "source_node_id": "n_asset",
             },
         ],
-        "edges": [{"id": "e_out", "source": "n_asset", "target": "n_out"}],
+        "execution_edges": [{"id": "e_out", "source": "n_asset", "target": "n_out"}],
     }
 
     async def store_graph() -> None:
@@ -218,7 +230,7 @@ def test_patch_app_rejects_cyclic_graph(auth_client):
                 "prompt": "b",
             },
         ],
-        "edges": [
+        "execution_edges": [
             {"id": "e1", "source": "n_gen_a", "target": "n_gen_b"},
             {"id": "e2", "source": "n_gen_b", "target": "n_gen_a"},
         ],
@@ -246,10 +258,9 @@ def test_create_run_requires_enabled_agent_for_generate_graph(auth_client):
                 "position": {"x": 200, "y": 0},
                 "title": "Output",
                 "prompt": "render",
-                "source_node_id": "n_gen",
             },
         ],
-        "edges": [{"id": "e_out", "source": "n_gen", "target": "n_out"}],
+        "execution_edges": [{"id": "e_out", "source": "n_gen", "target": "n_out"}],
     }
     app_id = _build_app(auth_client, graph=graph)
     response = auth_client.post("/api/runs", json={"app_id": app_id, "inputs": {}})
@@ -274,10 +285,9 @@ def test_create_run_requires_graph_agent_for_generate_graph(auth_client, enable_
                 "position": {"x": 200, "y": 0},
                 "title": "Output",
                 "prompt": "render",
-                "source_node_id": "n_gen",
             },
         ],
-        "edges": [{"id": "e_out", "source": "n_gen", "target": "n_out"}],
+        "execution_edges": [{"id": "e_out", "source": "n_gen", "target": "n_out"}],
     }
     app_id = _build_app(auth_client, graph=graph)
     response = auth_client.post("/api/runs", json={"app_id": app_id, "inputs": {}})
@@ -303,10 +313,9 @@ def test_create_run_rejects_disabled_graph_agent(auth_client, enable_claude_agen
                 "position": {"x": 200, "y": 0},
                 "title": "Output",
                 "prompt": "render",
-                "source_node_id": "n_gen",
             },
         ],
-        "edges": [{"id": "e_out", "source": "n_gen", "target": "n_out"}],
+        "execution_edges": [{"id": "e_out", "source": "n_gen", "target": "n_out"}],
     }
     app_id = _build_app(auth_client, graph=graph)
     response = auth_client.post("/api/runs", json={"app_id": app_id, "inputs": {}})
@@ -342,10 +351,9 @@ def test_runtime_prompt_uses_staged_upload_path_for_input_attachment(auth_client
                     "position": {"x": 400, "y": 0},
                     "title": "Output",
                     "prompt": "render",
-                    "source_node_id": "n_gen",
                 },
             ],
-            "edges": [
+            "execution_edges": [
                 {"id": "e1", "source": "n_input", "target": "n_gen"},
                 {"id": "e_out", "source": "n_gen", "target": "n_out"},
             ],
@@ -371,8 +379,12 @@ def test_runtime_prompt_uses_staged_upload_path_for_input_attachment(auth_client
         assert runtime.prompts
         prompt = runtime.prompts[0]
         assert f"/uploads/{upload_id}/blob" not in prompt
-        assert "/mnt/inputs/" in prompt
-        assert f"/{upload_id}/blob" in prompt
+        assert "/mnt/results" not in prompt
+        values = _workspace_context_values(runtime.workspaces[0])
+        attachment = values["n_input"]["attachments"][0]
+        assert attachment["workspace_path"].startswith(f"/workspace/inputs/{upload_id}/")
+        copied = runtime.workspaces[0] / attachment["workspace_path"].removeprefix("/workspace/")
+        assert copied.read_bytes() == b"upload-body"
     finally:
         set_runtime_override(MockRuntime())
 
@@ -413,10 +425,9 @@ def test_non_owner_can_run_run_only_app_with_file_asset(auth_client, enable_clau
                     "position": {"x": 400, "y": 0},
                     "title": "Output",
                     "prompt": "render",
-                    "source_node_id": "n_gen",
                 },
             ],
-            "edges": [
+            "execution_edges": [
                 {"id": "e1", "source": "n_asset", "target": "n_gen"},
                 {"id": "e_out", "source": "n_gen", "target": "n_out"},
             ],
@@ -438,9 +449,13 @@ def test_non_owner_can_run_run_only_app_with_file_asset(auth_client, enable_clau
         assert final["status"] == "success"
         assert runtime.prompts
         prompt = runtime.prompts[0]
-        assert "/mnt/inputs/" in prompt
-        assert f"/{upload_id}/blob" in prompt
+        assert "/mnt/results" not in prompt
         assert f"/uploads/{upload_id}/blob" not in prompt
+        values = _workspace_context_values(runtime.workspaces[0])
+        asset = values["n_asset"][0]
+        assert asset["workspace_path"].startswith(f"/workspace/inputs/{upload_id}/")
+        copied = runtime.workspaces[0] / asset["workspace_path"].removeprefix("/workspace/")
+        assert copied.read_bytes() == b"owner asset"
     finally:
         set_runtime_override(MockRuntime())
 
@@ -481,10 +496,9 @@ def test_non_owner_can_run_public_app_with_drawing_asset(auth_client, enable_cla
                     "position": {"x": 400, "y": 0},
                     "title": "Output",
                     "prompt": "render",
-                    "source_node_id": "n_gen",
                 },
             ],
-            "edges": [
+            "execution_edges": [
                 {"id": "e1", "source": "n_asset", "target": "n_gen"},
                 {"id": "e_out", "source": "n_gen", "target": "n_out"},
             ],
@@ -503,9 +517,13 @@ def test_non_owner_can_run_public_app_with_drawing_asset(auth_client, enable_cla
         assert final["status"] == "success"
         assert runtime.prompts
         prompt = runtime.prompts[0]
-        assert "/mnt/inputs/" in prompt
-        assert f"/{upload_id}/blob" in prompt
+        assert "/mnt/results" not in prompt
         assert f"/uploads/{upload_id}/blob" not in prompt
+        values = _workspace_context_values(runtime.workspaces[0])
+        drawing = values["n_asset"]
+        assert drawing["workspace_path"].startswith(f"/workspace/inputs/{upload_id}/")
+        copied = runtime.workspaces[0] / drawing["workspace_path"].removeprefix("/workspace/")
+        assert copied.read_bytes() == b"owner drawing"
     finally:
         set_runtime_override(MockRuntime())
 

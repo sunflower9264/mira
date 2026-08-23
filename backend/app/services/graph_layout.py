@@ -112,7 +112,7 @@ def build_graph_layout_prompt(
 硬性规则：
 - 只输出一个 JSON 对象，形状必须是 {{"positions":[{{"id":"node_id","x":number,"y":number}}]}}。
 - positions 必须覆盖当前 graph 的全部节点；每个节点只能出现一次。
-- 禁止新增、删除、改名或改写节点；禁止修改 edges、prompt、title、description、agent、viewport 或其它字段。
+- 禁止新增、删除、改名或改写节点；禁止修改 execution_edges、prompt、title、description、agent、viewport 或其它字段。
 - 不要输出 markdown、解释、注释或代码块。
 - 不要调用 ask_user；直接完成布局。
 

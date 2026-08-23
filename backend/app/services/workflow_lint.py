@@ -4,11 +4,8 @@ import re
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from app.services.graph_validation import (
-    DEFAULT_BRANCH_KEY,
-    GraphValidationError,
-    topological_order,
-)
+from app.services.execution_plan import ExecutionPlanError, compile_execution_plan
+from app.services.graph_validation import DEFAULT_BRANCH_KEY
 from app.services.output_contracts import validate_output_contract_config
 from app.services.template import contains_template_token
 
@@ -69,12 +66,12 @@ def lint_workflow(
         return _result(issues)
 
     nodes = graph.get("nodes")
-    edges = graph.get("edges")
+    edges = graph.get("execution_edges")
     if not isinstance(nodes, list):
         issues.append(_issue("error", "nodes_invalid", "节点列表非法", "graph.nodes 必须是数组"))
         nodes = []
     if not isinstance(edges, list):
-        issues.append(_issue("error", "edges_invalid", "连线列表非法", "graph.edges 必须是数组"))
+        issues.append(_issue("error", "edges_invalid", "连线列表非法", "graph.execution_edges 必须是数组"))
         edges = []
     if not nodes:
         issues.append(
@@ -177,10 +174,10 @@ def lint_workflow(
             issues.append(_issue("error", "source_only_target", "起点类节点不能作为连线终点", f"{target_type} 节点「{_label(target)}」不能接收上游连线", node_id=target_id, edge_id=current_edge_id))
 
         if source_type == "condition":
-            handle = edge.get("source_handle")
+            handle = edge.get("branch_key")
             handles = _condition_handles(source, issues)
             if not isinstance(handle, str) or not handle:
-                issues.append(_issue("error", "condition_edge_missing_handle", "condition 出边缺少分支", f"condition 节点「{_label(source)}」的出边必须设置 source_handle", node_id=source_id, edge_id=current_edge_id))
+                issues.append(_issue("error", "condition_edge_missing_handle", "condition 出边缺少分支", f"condition 节点「{_label(source)}」的出边必须设置 branch_key", node_id=source_id, edge_id=current_edge_id))
             elif handle not in handles:
                 issues.append(_issue("error", "condition_edge_invalid_handle", "condition 出边分支无效", f"分支 handle 不存在：{handle}", node_id=source_id, edge_id=current_edge_id))
             else:
@@ -190,8 +187,8 @@ def lint_workflow(
                 condition_edges.add(key)
                 condition_connected_handles.setdefault(source_id, set()).add(handle)
         else:
-            if "source_handle" in edge:
-                issues.append(_issue("error", "non_condition_handle", "非 condition 连线不应有分支", "只有 condition 出边可以设置 source_handle", edge_id=current_edge_id))
+            if "branch_key" in edge:
+                issues.append(_issue("error", "non_condition_handle", "非 condition 连线不应有分支", "只有 condition 出边可以设置 branch_key", edge_id=current_edge_id))
             key = (source_id, target_id)
             if key in normal_edges:
                 issues.append(_issue("error", "edge_duplicate", "连线重复", f"重复连线：{source_id} -> {target_id}", edge_id=current_edge_id))
@@ -254,19 +251,12 @@ def lint_workflow(
                             "提示词包含隐式文件通道",
                             f"节点「{_label(node)}」疑似通过固定 Workspace 路径或 handoff 文件传递数据。",
                             node_id=node_id,
-                            suggestion="改为正式节点输出，并通过 Graph 直接入边传递给下游。",
+                            suggestion="改为正式节点输出；后续节点会延续同一 RunAgent 会话与 workspace。",
                         )
                     )
 
         if node_type == "output" and not incoming.get(node_id):
             issues.append(_issue("error", "output_no_input", "output 没有上游输入", f"output 节点「{_label(node)}」没有接入任何上游节点", node_id=node_id))
-        if node_type == "output":
-            source_node_id = node.get("source_node_id")
-            sources = incoming.get(node_id, set())
-            if sources and (not isinstance(source_node_id, str) or source_node_id not in sources):
-                issues.append(_issue("error", "output_source_invalid", "output 主输入无效", f"output 节点「{_label(node)}」的 source_node_id 必须指向一个上游节点", node_id=node_id))
-            if not sources and source_node_id not in (None, ""):
-                issues.append(_issue("error", "output_source_without_edge", "output 主输入缺少连线", f"output 节点「{_label(node)}」设置了主输入但没有对应上游连线", node_id=node_id))
 
         if node_type == "condition":
             handles = _condition_handles(node, issues)
@@ -322,8 +312,19 @@ def lint_workflow(
         for node in outputs
         if isinstance(node.get("id"), str)
     }
-    if terminal_ids:
-        can_reach_terminal = _nodes_that_can_reach_outputs(by_id, edges, terminal_ids)
+    execution_plan = None
+    if not duplicate_ids:
+        try:
+            execution_plan = compile_execution_plan(
+                {"nodes": list(by_id.values()), "execution_edges": [edge for edge in edges if isinstance(edge, dict)]}
+            )
+        except ExecutionPlanError as exc:
+            issues.append(_issue("error", "graph_topology_invalid", "工作流拓扑非法", str(exc)))
+
+    if terminal_ids and execution_plan is not None:
+        can_reach_terminal = set(terminal_ids)
+        for output_id in terminal_ids:
+            can_reach_terminal.update(execution_plan.ancestor_ids(output_id))
         for node_id, node in by_id.items():
             if node.get("type") in TERMINAL_NODE_TYPES:
                 continue
@@ -360,12 +361,6 @@ def lint_workflow(
             issues.append(_issue("error", "agent_missing", "应用未选择 Agent", "包含 LLM 节点的工作流必须选择应用默认 Agent"))
         elif agent_kind not in enabled_agents:
             issues.append(_issue("error", "agent_disabled", "应用 Agent 未启用", f"应用默认 Agent「{agent_kind}」未启用"))
-
-    if not duplicate_ids:
-        try:
-            topological_order({"nodes": list(by_id.values()), "edges": [edge for edge in edges if isinstance(edge, dict)]})
-        except GraphValidationError as exc:
-            issues.append(_issue("error", "graph_topology_invalid", "工作流拓扑非法", str(exc)))
 
     return _result(_dedupe(issues))
 
@@ -461,28 +456,3 @@ def _condition_handles(node: dict[str, Any], issues: list[WorkflowLintIssue]) ->
     if mode == "binary" and set(keys) != {"true", "false"}:
         issues.append(_issue("error", "condition_binary_keys_invalid", "binary 分支非法", f"节点「{_label(node)}」binary 模式只能使用 true / false 分支", node_id=node_id))
     return set(keys) | ({DEFAULT_BRANCH_KEY} if mode == "cases" else set())
-
-
-def _nodes_that_can_reach_outputs(
-    by_id: dict[str, dict[str, Any]],
-    edges: list[Any],
-    output_ids: set[str],
-) -> set[str]:
-    parents: dict[str, set[str]] = {node_id: set() for node_id in by_id}
-    for edge in edges:
-        if not isinstance(edge, dict):
-            continue
-        source = edge.get("source")
-        target = edge.get("target")
-        if isinstance(source, str) and isinstance(target, str) and source in by_id and target in by_id:
-            parents[target].add(source)
-    reachable: set[str] = set(output_ids)
-    queue = list(output_ids)
-    while queue:
-        node_id = queue.pop(0)
-        for parent in parents.get(node_id, set()):
-            if parent in reachable:
-                continue
-            reachable.add(parent)
-            queue.append(parent)
-    return reachable

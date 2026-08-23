@@ -67,6 +67,7 @@ const STEP_LABEL: Record<Step['status'], string> = {
   waiting_for_user: '等待输入',
   interrupted: '已中断',
   success: '成功',
+  checkpoint_reused: '检查点复用',
   failed: '失败',
   skipped: '已跳过',
   cancelled: '已取消',

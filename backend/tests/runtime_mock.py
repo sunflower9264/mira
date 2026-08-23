@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import re
+import shutil
 import uuid
 from pathlib import Path
 
@@ -49,7 +51,11 @@ class MockRuntime:
         runtime_tools=None,
         runtime_policy="execute",
         output_schema=None,
+        session_scope=None,
+        fork_session=False,
     ) -> AgentExecutionResult:
+        if fork_session and session_id:
+            session_id = f"{session_id}-fork-{uuid.uuid4().hex[:8]}"
         delay_match = _DELAY_RE.search(prompt)
         if delay_match:
             try:
@@ -94,6 +100,14 @@ class MockRuntime:
                 {"prompt": _extract_assistant_current_prompt(prompt), "output_contract_json": None},
                 ensure_ascii=False,
             )
+            await on_chunk(AgentChunk(type="text", text=text))
+            return AgentExecutionResult(
+                session_id=session_id or "mock_session",
+                total_text=text,
+                finished_with="done",
+            )
+        if "你是 Mira RunAgent 的 fan-in 合并协调 Agent" in prompt:
+            text = _merge_workspace(cwd)
             await on_chunk(AgentChunk(type="text", text=text))
             return AgentExecutionResult(
                 session_id=session_id or "mock_session",
@@ -178,6 +192,49 @@ def _build_ask_request(payload: dict) -> AskUserRequest:
     return AskUserRequest.model_validate(request_payload)
 
 
+def _merge_workspace(cwd: Path) -> str:
+    merge_root = cwd / ".mira" / "merge"
+    manifests = json.loads((merge_root / "manifest.json").read_text(encoding="utf-8"))
+    sources_by_path: dict[str, list[str]] = {}
+    final_change_by_path: dict[str, dict] = {}
+    for branch_id in sorted(manifests):
+        for change in manifests[branch_id]:
+            path = change["path"]
+            sources_by_path.setdefault(path, []).append(branch_id)
+            final_change_by_path[path] = {**change, "branch_id": branch_id}
+    receipt = []
+    for path in sorted(final_change_by_path):
+        change = final_change_by_path[path]
+        target = cwd / path
+        if change["kind"] == "deleted":
+            if target.is_dir():
+                shutil.rmtree(target)
+            else:
+                target.unlink(missing_ok=True)
+            digest = None
+            deleted = True
+        else:
+            source = merge_root / "branches" / change["branch_id"] / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if source.is_symlink():
+                target.unlink(missing_ok=True)
+                target.symlink_to(source.readlink())
+                digest = hashlib.sha256(str(source.readlink()).encode()).hexdigest()
+            else:
+                shutil.copy2(source, target)
+                digest = hashlib.sha256(target.read_bytes()).hexdigest()
+            deleted = False
+        receipt.append(
+            {
+                "path": path,
+                "sources": sources_by_path[path],
+                "result_sha256": digest,
+                "deleted": deleted,
+            }
+        )
+    return json.dumps({"paths": receipt}, ensure_ascii=False)
+
+
 def _is_html_schema(schema: dict | None) -> bool:
     return (
         isinstance(schema, dict)
@@ -188,7 +245,7 @@ def _is_html_schema(schema: dict | None) -> bool:
 
 def _extract_assistant_current_prompt(prompt: str) -> str:
     match = re.search(
-        r"- 当前提示词：\n(.*?)(?:\n- 分支：|\n- 主输入 source_node_id：|\n\n## 直接上游节点)",
+        r"- 当前提示词：\n(.*?)(?:\n- 分支：|\n\n## 执行祖先节点)",
         prompt,
         flags=re.DOTALL,
     )
@@ -293,7 +350,7 @@ def _layout_response(prompt: str) -> str:
     try:
         graph = json.loads(match.group(1))
     except json.JSONDecodeError:
-        graph = {"nodes": []}
+        graph = {"nodes": [], "execution_edges": []}
     positions = []
     for index, node in enumerate(graph.get("nodes", [])):
         node_id = node.get("id") if isinstance(node, dict) else None

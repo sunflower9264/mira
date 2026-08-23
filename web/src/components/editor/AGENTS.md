@@ -17,7 +17,7 @@
 
 - `useEditorStore` 持有 canonical graph；Canvas 本地 state 只服务 React Flow 交互，必须与 store graph 保持同步。
 - 画布最多允许一个 `user_input` 和一个 `output`；新增、拖拽和 NL compile apply 后都要遵守该规则。
-- `output` 是终点节点，不能作为 edge source；condition edge 必须保持 `source_handle` 与分支 key 对齐。
+- `output` 是终点节点，不能作为 edge source；condition edge 必须保持 `branch_key` 与分支 key 对齐。
 - 画布“美化布局”调用后端 `POST /api/graph-layout/beautify`，只写回节点 `position`；前端不要维护第二套布局算法。
 - NL compile 调用后端两阶段流程：先恢复/生成 planned 会话并展示确认，确认后调用 apply，只有 apply 返回 `new_graph` 才写入画布。
 - NL compile waiting 使用 `DecisionPromptPanel` 风格：选项来自后端，补充文本/附件按题目保存，最后一题统一提交，提交后保留可停止状态。

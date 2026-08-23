@@ -1,7 +1,7 @@
 import type { ToolConfig } from '../../types';
 
-export type PromptTokenKind = 'system' | 'skill' | 'mcp' | 'field' | 'enum';
-export type PromptToolTokenKind = Extract<PromptTokenKind, 'system' | 'skill' | 'mcp'>;
+export type PromptTokenKind = 'system' | 'skill' | 'mcp';
+export type PromptToolTokenKind = PromptTokenKind;
 
 export interface PromptTokenDefinition {
   value: string;

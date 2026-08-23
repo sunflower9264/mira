@@ -5,25 +5,21 @@
 // on structural events (drag-stop, delete, connect) so undo captures the
 // pre-drag graph correctly.
 
-import { useCallback, useEffect, useRef, useState, type CSSProperties, type DragEvent as ReactDragEvent, type MouseEvent as ReactMouseEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type DragEvent as ReactDragEvent, type MouseEvent as ReactMouseEvent } from 'react';
 import {
   ReactFlow,
   Background,
   BackgroundVariant,
-  BaseEdge,
   ConnectionMode,
   ConnectionLineType,
-  EdgeLabelRenderer,
   MarkerType,
   SelectionMode,
   ReactFlowProvider,
-  getBezierPath,
   useReactFlow,
   useNodesState,
   useEdgesState,
   type Connection,
   type Edge as RFEdge,
-  type EdgeProps,
   type Node as RFNode,
   type NodeChange,
 } from '@xyflow/react';
@@ -35,8 +31,9 @@ import { AssetNodeView } from './nodes/AssetNode';
 import { ConditionNodeView } from './nodes/ConditionNode';
 import { CanvasOverlay } from './CanvasOverlay';
 import { uuid } from '../../lib/utils';
-import type { ConditionNode, NodeType, WorkflowEdge, WorkflowNode } from '../../types';
+import type { ConditionNode, NodeType, ExecutionEdge, WorkflowNode } from '../../types';
 import { CONDITION_DEFAULT_BRANCH_KEY } from '../../types';
+import { conditionBranchVisual } from './conditionBranchColors';
 
 const TOOLBAR_NODE_DRAG_TYPE = 'application/x-ai-mira-node-type';
 const DRAGGABLE_NODE_TYPES: NodeType[] = ['user_input', 'generate', 'output', 'condition'];
@@ -46,16 +43,8 @@ const DEFAULT_EDGE_STYLE = { stroke: '#94a3b8', strokeWidth: 2, strokeDasharray:
 const SELECTED_EDGE_STYLE = { stroke: '#111827', strokeWidth: 2.5 };
 const EDGE_MARKER = { type: MarkerType.ArrowClosed, width: 18, height: 18, color: '#94a3b8' };
 const SELECTED_EDGE_MARKER = { type: MarkerType.ArrowClosed, width: 18, height: 18, color: '#111827' };
-const CONDITION_LABEL_STYLE = { fill: '#475569', fontSize: 10, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' };
-const CONDITION_LABEL_BG_STYLE = { fill: '#ffffff', fillOpacity: 0.95 };
-const CONDITION_LABEL_BG_PADDING: [number, number] = [6, 3];
-const CONDITION_BRANCH_EDGE_TYPE = 'condition-branch';
-const CONDITION_LABEL_OFFSET_X = 56;
 const EMPTY_NODES: WorkflowNode[] = [];
-const EMPTY_EDGES: WorkflowEdge[] = [];
-
-type ConditionBranchEdgeData = { label?: string };
-type ConditionBranchEdge = RFEdge<ConditionBranchEdgeData, typeof CONDITION_BRANCH_EDGE_TYPE>;
+const EMPTY_EDGES: ExecutionEdge[] = [];
 
 const nodeTypes = {
   user_input: UserInputNodeView,
@@ -63,11 +52,6 @@ const nodeTypes = {
   output: OutputNodeView,
   asset: AssetNodeView,
   condition: ConditionNodeView,
-};
-
-const conditionBranchLabelStyle: CSSProperties = {
-  position: 'absolute',
-  transform: 'translate(-50%, -50%)',
 };
 
 function useCoarsePointer(): boolean {
@@ -89,61 +73,6 @@ function useCoarsePointer(): boolean {
   return coarse;
 }
 
-function ConditionBranchEdgeView({
-  id,
-  sourceX,
-  sourceY,
-  targetX,
-  targetY,
-  sourcePosition,
-  targetPosition,
-  markerStart,
-  markerEnd,
-  style,
-  data,
-  interactionWidth,
-}: EdgeProps<ConditionBranchEdge>) {
-  const [path] = getBezierPath({
-    sourceX,
-    sourceY,
-    sourcePosition,
-    targetX,
-    targetY,
-    targetPosition,
-  });
-  const label = typeof data?.label === 'string' ? data.label : '';
-
-  return (
-    <>
-      <BaseEdge
-        id={id}
-        path={path}
-        style={style}
-        markerStart={markerStart}
-        markerEnd={markerEnd}
-        interactionWidth={interactionWidth}
-      />
-      {label ? (
-        <EdgeLabelRenderer>
-          <div
-            className="pointer-events-none max-w-[140px] truncate rounded-full border border-black/10 bg-white/95 px-1.5 py-0.5 font-mono text-[10px] leading-none text-slate-600 shadow-sm"
-            style={{
-              ...conditionBranchLabelStyle,
-              transform: `${conditionBranchLabelStyle.transform} translate(${sourceX + CONDITION_LABEL_OFFSET_X}px, ${sourceY}px)`,
-            }}
-          >
-            {label}
-          </div>
-        </EdgeLabelRenderer>
-      ) : null}
-    </>
-  );
-}
-
-const edgeTypes = {
-  [CONDITION_BRANCH_EDGE_TYPE]: ConditionBranchEdgeView,
-};
-
 function toRfNode(n: WorkflowNode, selectedIds: string[], foregroundNodeId: string | null, previous?: RFNode): RFNode {
   const isSelected = selectedIds.includes(n.id);
   return {
@@ -160,7 +89,7 @@ function toRfNode(n: WorkflowNode, selectedIds: string[], foregroundNodeId: stri
 }
 
 function toRfEdge(
-  e: { id: string; source: string; target: string; source_handle?: string },
+  e: { id: string; source: string; target: string; branch_key?: string },
   selectedIds: string[],
   selectedEdgeIds: string[],
   nodes: WorkflowNode[],
@@ -169,44 +98,35 @@ function toRfEdge(
   const isSelected = selectedEdgeIds.includes(e.id);
   const isLinkedToSelection = selectedIds.includes(e.source) || selectedIds.includes(e.target);
   const sourceNode = nodes.find((node) => node.id === e.source);
-  const label = conditionEdgeLabel(sourceNode, e.source_handle);
-  const isConditionBranch = Boolean(label);
   const useSelectedStyle = isSelected || isLinkedToSelection;
+  const branchVisual = sourceNode?.type === 'condition' && e.branch_key
+    ? conditionBranchVisual(sourceNode.id, e.branch_key)
+    : null;
+  const branchColor = branchVisual
+    ? useSelectedStyle ? branchVisual.selectedColor : branchVisual.color
+    : null;
   return {
     id: e.id,
     source: e.source,
     target: e.target,
     selected: isSelected,
-    sourceHandle: e.source_handle ?? 'source',
+    sourceHandle: e.branch_key ?? 'source',
     targetHandle: 'target',
-    type: isConditionBranch ? CONDITION_BRANCH_EDGE_TYPE : 'default',
-    style: useSelectedStyle ? SELECTED_EDGE_STYLE : DEFAULT_EDGE_STYLE,
-    markerEnd: useSelectedStyle ? SELECTED_EDGE_MARKER : EDGE_MARKER,
-    data: isConditionBranch ? { label: label ?? undefined } : undefined,
-    label: isConditionBranch ? undefined : label ?? undefined,
-    labelStyle: isConditionBranch ? undefined : CONDITION_LABEL_STYLE,
-    labelBgStyle: isConditionBranch ? undefined : CONDITION_LABEL_BG_STYLE,
-    labelBgPadding: isConditionBranch ? undefined : CONDITION_LABEL_BG_PADDING,
-    labelBgBorderRadius: isConditionBranch ? undefined : 999,
+    type: 'default',
+    style: branchColor
+      ? { stroke: branchColor, strokeWidth: useSelectedStyle ? 2.75 : 2.25 }
+      : useSelectedStyle ? SELECTED_EDGE_STYLE : DEFAULT_EDGE_STYLE,
+    markerEnd: branchColor
+      ? { type: MarkerType.ArrowClosed, width: 18, height: 18, color: branchColor }
+      : useSelectedStyle ? SELECTED_EDGE_MARKER : EDGE_MARKER,
     interactionWidth: touchCanvas ? 32 : 20,
     animated: false,
   };
 }
 
-function conditionEdgeLabel(
-  sourceData: WorkflowNode | undefined,
-  handleId: string | null | undefined,
-): string | null {
-  if (!sourceData || sourceData.type !== 'condition' || !handleId) return null;
-  if (handleId === CONDITION_DEFAULT_BRANCH_KEY) return '其它';
-  if (sourceData.mode === 'binary') return handleId;
-  const branch = sourceData.branches?.find((b) => b.key === handleId);
-  return (branch?.label && branch.label.trim()) || handleId;
-}
-
 function isValidGraphConnection(
   conn: { source?: string | null; target?: string | null; sourceHandle?: string | null },
-  edges: { source: string; target: string; source_handle?: string | undefined }[],
+  edges: { source: string; target: string; branch_key?: string | undefined }[],
   nodes: WorkflowNode[],
 ): boolean {
   if (!conn.source || !conn.target) return false;
@@ -219,19 +139,19 @@ function isValidGraphConnection(
   if (targetNode?.type === 'user_input' || targetNode?.type === 'asset') return false;
   if (sourceNode?.type === 'condition' && !conn.sourceHandle) return false;
   if (sourceNode?.type === 'condition' && !conditionHandleKeys(sourceNode).has(conn.sourceHandle ?? '')) return false;
-  // condition 节点：每个分支（同一 source_handle）最多连一条出边
+  // condition 节点：每个分支（同一 branch_key）最多连一条出边
   if (sourceNode?.type === 'condition') {
     const handle = conn.sourceHandle ?? null;
-    if (edges.some((edge) => edge.source === conn.source && (edge.source_handle ?? null) === handle)) {
+    if (edges.some((edge) => edge.source === conn.source && (edge.branch_key ?? null) === handle)) {
       return false;
     }
   }
   return !edges.some((edge) => {
     if (edge.source === conn.target && edge.target === conn.source) return true;
     if (edge.source !== conn.source || edge.target !== conn.target) return false;
-    // condition 上同一对 (source, target) 的两条边只要 source_handle 不同就允许并存
+    // condition 上同一对 (source, target) 的两条边只要 branch_key 不同就允许并存
     if (sourceNode?.type === 'condition') {
-      return (edge.source_handle ?? null) === (conn.sourceHandle ?? null);
+      return (edge.branch_key ?? null) === (conn.sourceHandle ?? null);
     }
     return true;
   });
@@ -245,20 +165,6 @@ function conditionHandleKeys(node: ConditionNode): Set<string> {
   }
   keys.add(CONDITION_DEFAULT_BRANCH_KEY);
   return keys;
-}
-
-function syncOutputSources(nodes: WorkflowNode[], edges: WorkflowEdge[]): WorkflowNode[] {
-  return nodes.map((node) => {
-    if (node.type !== 'output') return node;
-    const incoming = edges.filter((edge) => edge.target === node.id);
-    if (incoming.length === 0) {
-      return node.source_node_id ? { ...node, source_node_id: '' } : node;
-    }
-    if (node.source_node_id && incoming.some((edge) => edge.source === node.source_node_id)) {
-      return node;
-    }
-    return { ...node, source_node_id: incoming[0].source };
-  });
 }
 
 function singletonNodeMessage(type: NodeType): string | null {
@@ -321,7 +227,7 @@ function CanvasInner() {
 
   useEffect(() => {
     if (!app) return;
-    setRfEdges(app.graph.edges.map((edge) => toRfEdge(edge, selectedIds, selectedEdgeIds, app.graph.nodes, touchCanvas)));
+    setRfEdges(app.graph.execution_edges.map((edge) => toRfEdge(edge, selectedIds, selectedEdgeIds, app.graph.nodes, touchCanvas)));
   }, [app, selectedIds, selectedEdgeIds, setRfEdges, touchCanvas]);
 
   const onNodesChange = useCallback(
@@ -367,15 +273,15 @@ function CanvasInner() {
       if (!app) return;
       const ids = new Set(deleted.map((d) => d.id));
       const remainingNodes = app.graph.nodes.filter((n) => !ids.has(n.id));
-      const edges = app.graph.edges.filter((e) => !ids.has(e.source) && !ids.has(e.target));
+      const edges = app.graph.execution_edges.filter((e) => !ids.has(e.source) && !ids.has(e.target));
       setSelectedEdgeIds((current) => {
         const next = current.filter((id) => edges.some((edge) => edge.id === id));
         return sameIds(current, next) ? current : next;
       });
-      setGraph({
-        ...app.graph,
-        nodes: syncOutputSources(remainingNodes, edges),
-        edges,
+    setGraph({
+      ...app.graph,
+      nodes: remainingNodes,
+      execution_edges: edges,
       });
     },
     [app, setGraph],
@@ -385,15 +291,14 @@ function CanvasInner() {
     (deleted: RFEdge[]) => {
       if (!app) return;
       const ids = new Set(deleted.map((d) => d.id));
-      const edges = app.graph.edges.filter((e) => !ids.has(e.id));
+      const edges = app.graph.execution_edges.filter((e) => !ids.has(e.id));
       setSelectedEdgeIds((current) => {
         const next = current.filter((id) => !ids.has(id));
         return sameIds(current, next) ? current : next;
       });
-      setGraph({
-        ...app.graph,
-        nodes: syncOutputSources(app.graph.nodes, edges),
-        edges,
+    setGraph({
+      ...app.graph,
+      execution_edges: edges,
       });
     },
     [app, setGraph],
@@ -401,13 +306,13 @@ function CanvasInner() {
 
   const onConnect = useCallback(
     (conn: Connection) => {
-      if (!app || !isValidGraphConnection(conn, app.graph.edges, app.graph.nodes)) return;
+      if (!app || !isValidGraphConnection(conn, app.graph.execution_edges, app.graph.nodes)) return;
       const sourceNode = app.graph.nodes.find((node) => node.id === conn.source);
       addEdge({
         id: 'e_' + uuid(),
         source: conn.source,
         target: conn.target,
-        source_handle: sourceNode?.type === 'condition' ? conn.sourceHandle ?? undefined : undefined,
+        branch_key: sourceNode?.type === 'condition' ? conn.sourceHandle ?? undefined : undefined,
       });
     },
     [addEdge, app],
@@ -415,7 +320,7 @@ function CanvasInner() {
 
   const isValidConnection = useCallback(
     (conn: Connection | RFEdge) => {
-      const graphEdges = app?.graph.edges ?? EMPTY_EDGES;
+      const graphEdges = app?.graph.execution_edges ?? EMPTY_EDGES;
       const graphNodes = app?.graph.nodes ?? EMPTY_NODES;
       return isValidGraphConnection(
         {
@@ -427,7 +332,7 @@ function CanvasInner() {
         graphNodes,
       );
     },
-    [app?.graph.edges, app?.graph.nodes],
+    [app?.graph.execution_edges, app?.graph.nodes],
   );
 
   const onDragOver = useCallback((event: ReactDragEvent) => {
@@ -481,7 +386,6 @@ function CanvasInner() {
       nodes={rfNodes}
       edges={rfEdges}
       nodeTypes={nodeTypes}
-      edgeTypes={edgeTypes}
       onNodesChange={onNodesChange}
       onEdgesChange={onEdgesChangeRF}
       onNodeDragStart={onNodeDragStart}

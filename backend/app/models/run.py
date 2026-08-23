@@ -28,6 +28,7 @@ class Run(Base):
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    runtime_version: Mapped[int] = mapped_column(Integer, default=2)
 
 
 class Step(Base):
@@ -52,6 +53,9 @@ class Step(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    branch_id: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)
+    pre_checkpoint_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    post_checkpoint_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
 
 
 class StepLog(Base):
@@ -72,3 +76,54 @@ class RunEvent(Base):
     event: Mapped[str] = mapped_column(String(80), nullable=False)
     data_json: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+
+
+class RunAgentBranch(Base):
+    __tablename__ = "run_agent_branches"
+    __table_args__ = (Index("ix_run_agent_branches_run_state", "run_id", "state"),)
+
+    id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    run_id: Mapped[str] = mapped_column(ForeignKey("runs.id", ondelete="CASCADE"), index=True)
+    parent_branch_id: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)
+    fork_node_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    base_checkpoint_id: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)
+    provider_session_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    fork_from_session_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    workspace_relpath: Mapped[str] = mapped_column(Text)
+    state: Mapped[str] = mapped_column(String(24), default="active", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class RunWorkspaceCheckpoint(Base):
+    __tablename__ = "run_workspace_checkpoints"
+    __table_args__ = (Index("ix_run_workspace_checkpoints_run_step", "run_id", "step_id"),)
+
+    id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    run_id: Mapped[str] = mapped_column(ForeignKey("runs.id", ondelete="CASCADE"), index=True)
+    step_id: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)
+    node_id: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
+    branch_id: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)
+    kind: Mapped[str] = mapped_column(String(24), default="post_node")
+    snapshot_relpath: Mapped[str] = mapped_column(Text)
+    tree_hash: Mapped[str] = mapped_column(String(64))
+    provider_session_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    output_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+
+
+class RunAgentOperation(Base):
+    __tablename__ = "run_agent_operations"
+    __table_args__ = (Index("ix_run_agent_operations_run_status", "run_id", "status"),)
+
+    id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    run_id: Mapped[str] = mapped_column(ForeignKey("runs.id", ondelete="CASCADE"), index=True)
+    step_id: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)
+    branch_id: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)
+    kind: Mapped[str] = mapped_column(String(32))
+    status: Mapped[str] = mapped_column(String(24), default="running")
+    provider_session_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    request_json: Mapped[str] = mapped_column(Text, default="{}")
+    result_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

@@ -39,6 +39,8 @@ class TraceRuntime:
         runtime_tools=None,
         runtime_policy="execute",
         output_schema=None,
+        session_scope=None,
+        fork_session=False,
     ) -> AgentExecutionResult:
         if runtime_policy == "ask_user_plan":
             text = '{"action":"complete","decision_summary":"无需额外提问。","reason":"测试 trace 场景不需要补充用户决策。"}'
@@ -116,10 +118,9 @@ def _generate_graph() -> dict:
                 "position": {"x": 200, "y": 0},
                 "title": "Output",
                 "prompt": "render [[respond:<section>ok</section>]]",
-                "source_node_id": "n_gen",
             },
         ],
-        "edges": [{"id": "e_out", "source": "n_gen", "target": "n_out"}],
+        "execution_edges": [{"id": "e_out", "source": "n_gen", "target": "n_out"}],
     }
 
 
@@ -147,7 +148,7 @@ def test_run_step_trace_returns_llm_debug_payload(auth_client, enable_claude_age
     assert body["agent"] == "claude"
     assert body["model"] == "test-model"
     assert body["reasoning_effort"] == "high"
-    assert body["agent_session_id"] == "trace_session"
+    assert "agent_session_id" not in body
     assert body["started_at"].endswith("+08:00")
     assert body["logs"][0]["ts"].endswith("+08:00")
     assert "# 当前任务" in body["prompt"]
@@ -185,10 +186,9 @@ def test_run_step_trace_rejects_non_llm_node(auth_client, enable_claude_agent):
                 "position": {"x": 200, "y": 0},
                 "title": "Output",
                 "prompt": "render [[respond:<section>ok</section>]]",
-                "source_node_id": "n_input",
             },
         ],
-        "edges": [{"id": "e_out", "source": "n_input", "target": "n_out"}],
+        "execution_edges": [{"id": "e_out", "source": "n_input", "target": "n_out"}],
     }
     app_id = _build_app(auth_client, graph=graph)
     created = auth_client.post("/api/runs", json={"app_id": app_id, "inputs": {"n_input": "hello"}})

@@ -17,7 +17,7 @@ from app.services.uploads import resolve_upload
 
 def clean_graph_input(raw: dict[str, Any] | None) -> dict[str, Any]:
     if raw is None:
-        raw = {"nodes": [], "edges": []}
+        raw = {"nodes": [], "execution_edges": []}
     if not isinstance(raw, dict):
         raise GraphValidationError("graph 必须是对象")
     graph = sanitize_prompt_template_tokens(strip_runtime_tools_snapshot(deepcopy(raw)))

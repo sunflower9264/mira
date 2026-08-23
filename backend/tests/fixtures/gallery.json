@@ -27,11 +27,10 @@
           "type": "output",
           "position": {"x": 580, "y": 120},
           "title": "输出",
-          "source_node_id": "n_find_books",
           "prompt": "展示推荐。"
         }
       ],
-      "edges": [
+      "execution_edges": [
         {"id": "e1", "source": "n_input_books", "target": "n_find_books"},
         {"id": "e2", "source": "n_find_books", "target": "n_output_books"}
       ]
@@ -71,11 +70,10 @@
           "type": "output",
           "position": {"x": 700, "y": 220},
           "title": "汇总展示",
-          "source_node_id": "n_parallel_strategy",
           "prompt": "汇总两个分支。"
         }
       ],
-      "edges": [
+      "execution_edges": [
         {"id": "e_parallel_input_strategy", "source": "n_parallel_input", "target": "n_parallel_strategy"},
         {"id": "e_parallel_input_research", "source": "n_parallel_input", "target": "n_parallel_research"},
         {"id": "e_parallel_strategy_output", "source": "n_parallel_strategy", "target": "n_parallel_output"},
