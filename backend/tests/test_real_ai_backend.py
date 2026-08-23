@@ -671,10 +671,9 @@ async def main():
     async def on_chunk(_chunk):
         return None
 
-    result = await get_runtime(user.id).execute(
+    result = await get_runtime().execute(
         prompt=prompt,
         session_id=None,
-        allowed_tools=None,
         model="gpt-5.5",
         reasoning_effort="low",
         cwd=prompt_assistant_workspace(user.id),

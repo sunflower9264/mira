@@ -39,7 +39,7 @@ async def beautify_graph_layout(
 
     await runtime_config.write_configs(db)
     template = await get_prompt_content(db, "graph_layout_beautify")
-    runtime = get_runtime(user_id)
+    runtime = get_runtime()
     return await beautify_graph_layout_with_runtime(
         runtime=runtime,
         user_id=user_id,
@@ -124,7 +124,6 @@ async def _run_layout_agent(
     result = await runtime.execute(
         prompt=prompt,
         session_id=None,
-        allowed_tools=None,
         model=None,
         reasoning_effort=max_reasoning_effort(),
         cwd=graph_layout_workspace(user_id),

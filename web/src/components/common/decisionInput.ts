@@ -78,7 +78,7 @@ export function buildDecisionSupplementText(
   });
 
   if (!blocks.length) return undefined;
-  return `用户对 ask_user 的逐题回答：\n\n${blocks.join('\n\n')}`;
+  return `用户对补充问题的逐题回答：\n\n${blocks.join('\n\n')}`;
 }
 
 export function buildDecisionSubmittedSummary(

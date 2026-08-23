@@ -30,7 +30,6 @@ class PromptCaptureRuntime:
         *,
         prompt: str,
         session_id: str | None,
-        allowed_tools,
         model,
         reasoning_effort,
         cwd: Path,

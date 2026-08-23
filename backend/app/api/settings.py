@@ -173,7 +173,7 @@ async def refresh_codex_status(
     # 先把 DB 中的配置正文同步成 runtime 文件，再做 CLI / 配置文件存在性检查；
     # App Server + 配置文件就绪后，无条件执行一次真实短调用，由 smoke 结果填 runnable。
     await runtime_config.write_configs(db)
-    runtime = get_runtime(admin.id)
+    runtime = get_runtime()
     status = await runtime.detect_status()
     if not status.installed:
         return status.model_copy(update={"runnable": False})
@@ -189,7 +189,6 @@ async def refresh_codex_status(
             runtime.execute(
                 prompt=smoke_prompt,
                 session_id=None,
-                allowed_tools=None,
                 model=None,
                 reasoning_effort="low",
                 cwd=cwd,

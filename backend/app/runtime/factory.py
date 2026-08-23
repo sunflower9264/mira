@@ -11,7 +11,7 @@ def set_runtime_override(runtime: AgentRuntime | None) -> None:
     _override_runtime = runtime
 
 
-def get_runtime(user_id: str) -> AgentRuntime:
+def get_runtime() -> AgentRuntime:
     if _override_runtime is not None:
         return _override_runtime
-    return CodexRuntime(user_id)
+    return CodexRuntime()

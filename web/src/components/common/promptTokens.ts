@@ -1,6 +1,6 @@
 import type { ToolConfig } from '../../types';
 
-type PromptTokenKind = 'system' | 'skill' | 'mcp';
+type PromptTokenKind = 'skill' | 'mcp';
 
 export interface PromptTokenDefinition {
   value: string;
@@ -12,10 +12,6 @@ export interface PromptTokenDefinition {
 export interface PromptToolTokenDefinition extends PromptTokenDefinition {
   kind: PromptTokenKind;
 }
-
-const SYSTEM_TOKENS: PromptToolTokenDefinition[] = [
-  { value: 'ask_user', label: '询问用户', kind: 'system' },
-];
 
 const TOOL_LABELS: Record<string, string> = {
   'be-serious': '严谨写作',
@@ -29,11 +25,8 @@ const TOOL_LABELS: Record<string, string> = {
   xlsx: '电子表格',
 };
 
-export function buildPromptTokens(tools: ToolConfig[], includeSystem: boolean): PromptToolTokenDefinition[] {
+export function buildPromptTokens(tools: ToolConfig[]): PromptToolTokenDefinition[] {
   const tokens = new Map<string, PromptToolTokenDefinition>();
-  if (includeSystem) {
-    for (const token of SYSTEM_TOKENS) tokens.set(token.value, token);
-  }
   for (const tool of tools) {
     const name = tool.name.trim();
     if (!name || tokens.has(name)) continue;
@@ -48,6 +41,6 @@ export function buildPromptTokens(tools: ToolConfig[], includeSystem: boolean): 
 }
 
 export function promptTokenOptionLabel(token: PromptToolTokenDefinition): string {
-  const kindLabel = token.kind === 'system' ? '系统' : token.kind === 'skill' ? 'Skill' : 'MCP';
+  const kindLabel = token.kind === 'skill' ? 'Skill' : 'MCP';
   return `${kindLabel} · ${token.label}`;
 }

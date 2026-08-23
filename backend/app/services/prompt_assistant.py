@@ -175,7 +175,7 @@ async def _start_prompt_assistant_session_from_row(
     if not prompt or not graph:
         raise HTTPException(status_code=502, detail="提示词生成会话缺少可恢复上下文")
     await runtime_config.write_configs(db)
-    runtime = get_runtime(row.user_id)
+    runtime = get_runtime()
     planning_runtime_tools = await planning_runtime_tools_for_graph(db, graph)
     session = PromptAssistantSession(
         id=row.id,
@@ -484,7 +484,6 @@ async def _execute_prompt_assistant_once(
     execute_coro = runtime.execute(
         prompt=prompt,
         session_id=None,
-        allowed_tools=None,
         model=(model or "").strip() or None,
         reasoning_effort=normalize_reasoning_effort(reasoning_effort),
         cwd=prompt_assistant_workspace(user_id),

@@ -40,10 +40,9 @@ async def main() -> None:
     async def on_chunk(chunk):
         print(chunk.model_dump(mode="json"))
 
-    result = await get_runtime(user_id).execute(
+    result = await get_runtime().execute(
         prompt=args.prompt,
         session_id=args.session_id,
-        allowed_tools=None,
         model=None,
         reasoning_effort="low",
         cwd=run_workspace(user_id, args.app, f"_smoke_{args.node}"),

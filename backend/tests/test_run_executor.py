@@ -47,7 +47,6 @@ class ReasoningCaptureRuntime:
         *,
         prompt: str,
         session_id: str | None,
-        allowed_tools: list[str] | None,
         model: str | None,
         reasoning_effort: str | None,
         cwd: Path,
@@ -64,7 +63,6 @@ class ReasoningCaptureRuntime:
             {
                 "model": model,
                 "reasoning_effort": reasoning_effort,
-                "allowed_tools": allowed_tools,
                 "runtime_tools": runtime_tools,
                 "runtime_policy": runtime_policy,
             }
@@ -110,7 +108,6 @@ class LateSuccessAfterCancelRuntime:
         *,
         prompt: str,
         session_id: str | None,
-        allowed_tools: list[str] | None,
         model: str | None,
         reasoning_effort: str | None,
         cwd: Path,
@@ -166,7 +163,6 @@ class WorkspacePathRuntime:
         *,
         prompt: str,
         session_id: str | None,
-        allowed_tools: list[str] | None,
         model: str | None,
         reasoning_effort: str | None,
         cwd: Path,
@@ -210,7 +206,6 @@ class GeneratedImageRuntime:
         *,
         prompt: str,
         session_id: str | None,
-        allowed_tools: list[str] | None,
         model: str | None,
         reasoning_effort: str | None,
         cwd: Path,
@@ -270,7 +265,6 @@ class ToolResultOnlyHtmlRuntime:
         *,
         prompt: str,
         session_id: str | None,
-        allowed_tools: list[str] | None,
         model: str | None,
         reasoning_effort: str | None,
         cwd: Path,
@@ -285,7 +279,6 @@ class ToolResultOnlyHtmlRuntime:
     ) -> AgentExecutionResult:
         self.calls.append(
             {
-                "allowed_tools": allowed_tools,
                 "runtime_tools": runtime_tools,
                 "runtime_policy": runtime_policy,
             }
@@ -327,7 +320,6 @@ class ArtifactContractRuntime:
         *,
         prompt: str,
         session_id: str | None,
-        allowed_tools: list[str] | None,
         model: str | None,
         reasoning_effort: str | None,
         cwd: Path,
@@ -401,7 +393,6 @@ class OfficeArtifactRepairRuntime:
         *,
         prompt: str,
         session_id: str | None,
-        allowed_tools: list[str] | None,
         model: str | None,
         reasoning_effort: str | None,
         cwd: Path,
@@ -463,7 +454,6 @@ class SequenceRuntime:
         *,
         prompt: str,
         session_id: str | None,
-        allowed_tools: list[str] | None,
         model: str | None,
         reasoning_effort: str | None,
         cwd: Path,
@@ -565,7 +555,6 @@ class ParallelProbeRuntime:
         *,
         prompt: str,
         session_id: str | None,
-        allowed_tools: list[str] | None,
         model: str | None,
         reasoning_effort: str | None,
         cwd: Path,
@@ -774,7 +763,6 @@ class AskUserJudgmentRuntime:
         *,
         prompt: str,
         session_id: str | None,
-        allowed_tools: list[str] | None,
         model: str | None,
         reasoning_effort: str | None,
         cwd: Path,
@@ -871,7 +859,6 @@ class PlanningCaptureRuntime:
         *,
         prompt: str,
         session_id: str | None,
-        allowed_tools: list[str] | None,
         model: str | None,
         reasoning_effort: str | None,
         cwd: Path,
@@ -921,7 +908,6 @@ class ParallelTemplateRuntime:
         *,
         prompt: str,
         session_id: str | None,
-        allowed_tools: list[str] | None,
         model: str | None,
         reasoning_effort: str | None,
         cwd: Path,
@@ -2537,31 +2523,6 @@ def test_executor_passes_node_reasoning_effort_with_low_default(auth_client, con
     assert [call["reasoning_effort"] for call in execute_calls] == ["low", "high"]
 
 
-def test_executor_ignores_legacy_node_allowed_tools(auth_client, configure_codex):
-    configure_codex()
-    runtime = ReasoningCaptureRuntime()
-    set_runtime_override(runtime)
-    try:
-        graph = {
-            "nodes": [
-                {
-                    **_generate_node("n_gen", prompt="生成"),
-                    "allowed_tools": ["legacy-mcp", "legacy-skill"],
-                },
-            ],
-            "execution_edges": [],
-        }
-        app_id = _build_app(auth_client, graph=graph)
-        run = auth_client.post("/api/runs", json={"app_id": app_id, "inputs": {}}).json()
-        final = _wait_for_terminal(auth_client, run["run_id"])
-    finally:
-        set_runtime_override(MockRuntime())
-
-    assert final["status"] == "success", final
-    execute_calls = _execute_calls(runtime)
-    assert all(call["allowed_tools"] is None for call in execute_calls)
-
-
 def test_executor_passes_app_scoped_tools(auth_client, configure_codex):
     configure_codex()
     allowed_skill = _upload_skill(auth_client, "allowed-skill")
@@ -2854,7 +2815,7 @@ def test_executor_keeps_decision_plan_when_explicitly_enabled(auth_client, confi
     assert "生成纯文本结果" in runtime.plan_prompts[0]
 
 
-def test_executor_skips_decision_plan_for_contract_generate_with_user_input(auth_client, configure_codex):
+def test_executor_runs_decision_plan_for_contract_generate_with_user_input(auth_client, configure_codex):
     configure_codex()
     runtime = PlanningCaptureRuntime()
     set_runtime_override(runtime)
@@ -2877,7 +2838,8 @@ def test_executor_skips_decision_plan_for_contract_generate_with_user_input(auth
         set_runtime_override(MockRuntime())
 
     assert final["status"] == "success", final
-    assert runtime.plan_prompts == []
+    assert len(runtime.plan_prompts) == 1
+    assert "根据用户输入生成结构化结果" in runtime.plan_prompts[0]
     by_id = {step["node_id"]: step for step in final["steps"]}
     assert by_id["n_gen"]["output"] == {"result": "SCRIPT_RESULT"}
 
@@ -3252,8 +3214,6 @@ def test_executor_output_node_rejects_tool_result_html_without_final_html(auth_c
     assert by_id["n_out"]["status"] == "failed"
     assert "最终展示节点必须返回可渲染 HTML" in (by_id["n_out"].get("error") or "")
     assert by_id["n_out"].get("output") is None
-    execute_calls = [call for call in runtime.calls if call["runtime_policy"] == "execute"]
-    assert execute_calls[-1]["allowed_tools"] is None
 
 
 def test_executor_propagates_failure(auth_client, configure_codex):

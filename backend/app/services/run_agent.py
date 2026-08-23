@@ -306,7 +306,7 @@ class RunAgent:
         expected = _expected_receipt_paths(manifests)
         evidence_hash = await asyncio.to_thread(tree_hash, staging)
         prompt = _join_prompt(node_id=node_id, source_ids=[item.id for item in sources])
-        runtime = get_runtime(self.run.owner_id)
+        runtime = get_runtime()
         chunks: list[str] = []
 
         async def on_chunk(chunk: AgentChunk) -> None:
@@ -331,7 +331,6 @@ class RunAgent:
         result = await runtime.execute(
             prompt=prompt,
             session_id=session_id,
-            allowed_tools=None,
             model=None,
             reasoning_effort=None,
             cwd=workspace,

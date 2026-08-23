@@ -36,7 +36,6 @@ class WorkflowInterfaceRuntime:
         *,
         prompt: str,
         session_id: str | None,
-        allowed_tools: list[str] | None,
         model: str | None,
         reasoning_effort: str | None,
         cwd: Path,

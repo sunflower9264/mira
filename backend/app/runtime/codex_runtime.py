@@ -77,8 +77,7 @@ _TURN_REQUEST_ID = 3
 
 
 class CodexRuntime:
-    def __init__(self, user_id: str):
-        self.user_id = user_id
+    def __init__(self):
         self.runner = DockerSandboxRunner()
 
     async def detect_status(self) -> AgentRuntimeStatus:
@@ -117,7 +116,6 @@ class CodexRuntime:
         *,
         prompt: str,
         session_id: str | None,
-        allowed_tools: list[str] | None,
         model: str | None,
         reasoning_effort: str | None,
         cwd: Path,
@@ -130,7 +128,6 @@ class CodexRuntime:
         session_scope: str | None = None,
         fork_session: bool = False,
     ) -> AgentExecutionResult:
-        del allowed_tools
         status = await self.detect_status()
         if not status.installed:
             await on_chunk(AgentChunk(type="error", text=status.error))
@@ -272,11 +269,10 @@ class CodexRuntime:
             try:
                 run_result = await self.runner.run_interactive(
                     DockerSandboxSpec(
-                        command=_build_app_server_cmd(runtime_tools),
+                        command=["codex", "app-server"],
                         prompt=initial_input,
                         env=_clean_env(CONTAINER_HOME),
                         path_map=path_map,
-                        prompt_path=home / ".mira-app-server-input.jsonl",
                     ),
                     on_stdout_line=on_stdout_line,
                     cancel_event=sandbox_cancel_event,
@@ -363,6 +359,17 @@ def _prepare_scoped_home(
         if source.exists():
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(source.read_bytes())
+    config_path = home / "config.toml"
+    try:
+        config = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        config = {}
+    mcp_config = _runtime_mcp_config(runtime_tools)
+    if mcp_config:
+        config["mcp_servers"] = mcp_config
+    else:
+        config.pop("mcp_servers", None)
+    config_path.write_text(tomli_w.dumps(config), encoding="utf-8")
     sync_runtime_skills(runtime_tools.skills if runtime_tools else [], home / ".agents" / "skills")
     return home
 
@@ -437,14 +444,6 @@ def _turn_request(
     return {"id": _TURN_REQUEST_ID, "method": "turn/start", "params": params}
 
 
-def _build_app_server_cmd(runtime_tools: RuntimeToolConfig | None) -> list[str]:
-    command = ["codex", "app-server"]
-    mcp_config = _runtime_mcp_config(runtime_tools)
-    if mcp_config:
-        command.extend(["-c", f"mcp_servers={_toml_inline_value(mcp_config)}"])
-    return command
-
-
 def _runtime_mcp_config(runtime_tools: RuntimeToolConfig | None) -> dict[str, Any]:
     if runtime_tools is None:
         return {}
@@ -455,22 +454,6 @@ def _runtime_mcp_config(runtime_tools: RuntimeToolConfig | None) -> dict[str, An
             config["http_headers"] = {header.name: header.value for header in server.headers}
         servers[server.name] = config
     return servers
-
-
-def _toml_inline_value(value: Any) -> str:
-    if isinstance(value, dict):
-        items = [f"{_toml_key(key)} = {_toml_inline_value(item)}" for key, item in value.items()]
-        return "{ " + ", ".join(items) + " }"
-    if isinstance(value, list):
-        return "[" + ", ".join(_toml_inline_value(item) for item in value) + "]"
-    return tomli_w.dumps({"value": value}).split("=", 1)[1].strip()
-
-
-def _toml_key(key: str) -> str:
-    if key and all(char.isalnum() or char in {"_", "-"} for char in key):
-        return key
-    return _toml_inline_value(key)
-
 
 async def _request_user_input_response(
     message: dict[str, Any],

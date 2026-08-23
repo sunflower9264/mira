@@ -220,7 +220,6 @@ function promptTokenClassName(): string {
 }
 
 function promptTokenKindLabel(kind: PromptTokenDefinition['kind']): string {
-  if (kind === 'system') return '系统工具';
   if (kind === 'skill') return 'Skill';
   return 'MCP';
 }

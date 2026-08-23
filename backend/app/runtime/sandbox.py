@@ -5,9 +5,7 @@ import codecs
 import logging
 import os
 import re
-import shlex
 import threading
-from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Awaitable, Callable
@@ -110,16 +108,12 @@ class DockerSandboxSpec:
     prompt: str
     env: dict[str, str]
     path_map: RuntimePathMap
-    prompt_path: Path
 
 
 @dataclass(frozen=True)
 class DockerSandboxResult:
     return_code: int
     stderr: str = ""
-
-
-StdoutCallback = Callable[[str], Awaitable[None]]
 
 
 @dataclass(frozen=True)
@@ -129,29 +123,6 @@ class DockerSandboxReply:
 
 
 InteractiveStdoutCallback = Callable[[str], Awaitable[DockerSandboxReply | None]]
-
-
-def iter_utf8_lines(chunks: Iterable[bytes]) -> Iterator[str]:
-    """Decode stdout incrementally so a CJK character split across Docker log frames stays intact."""
-    decoder = codecs.getincrementaldecoder("utf-8")("replace")
-    buffer = ""
-    for chunk in chunks:
-        if isinstance(chunk, str):
-            chunk = chunk.encode("utf-8")
-        buffer += decoder.decode(chunk)
-        while "\n" in buffer:
-            line, buffer = buffer.split("\n", 1)
-            yield line
-    buffer += decoder.decode(b"", final=True)
-    if buffer:
-        yield buffer
-
-
-def _stdout_chunks(stream, cancel_event: asyncio.Event):  # noqa: ANN001
-    for chunk in stream:
-        if cancel_event.is_set():
-            return
-        yield chunk
 
 
 class DockerSandboxRunner:
@@ -164,21 +135,6 @@ class DockerSandboxRunner:
         except Exception as exc:  # noqa: BLE001
             return DockerSandboxStatus(ok=False, error=str(exc) or "Docker sandbox 不可用")
         return DockerSandboxStatus(ok=True)
-
-    async def run(
-        self,
-        spec: DockerSandboxSpec,
-        *,
-        on_stdout_line: StdoutCallback,
-        cancel_event: asyncio.Event,
-    ) -> DockerSandboxResult:
-        loop = asyncio.get_running_loop()
-
-        def forward_line(line: str) -> None:
-            future = asyncio.run_coroutine_threadsafe(on_stdout_line(line), loop)
-            future.result()
-
-        return await asyncio.to_thread(self._run_sync, spec, forward_line, cancel_event)
 
     async def run_interactive(
         self,
@@ -230,83 +186,6 @@ class DockerSandboxRunner:
             client.images.get(image)
         except Exception as exc:  # noqa: BLE001
             raise DockerSandboxError(f"未找到 runtime sandbox 镜像 {image}: {exc}") from exc
-
-    def _run_sync(
-        self,
-        spec: DockerSandboxSpec,
-        on_stdout_line: Callable[[str], None],
-        cancel_event: asyncio.Event,
-    ) -> DockerSandboxResult:
-        client = self._client_or_create()
-        settings = get_settings()
-        prompt_path = spec.prompt_path
-        prompt_path.parent.mkdir(parents=True, exist_ok=True)
-        prompt_path.write_text(spec.path_map.host_to_container_text(spec.prompt), encoding="utf-8")
-
-        container_command = _shell_command(spec.command, spec.path_map.host_to_container_path(prompt_path))
-        volumes = _volumes(spec.path_map)
-        host_config = {
-            "mem_limit": settings.runtime_container_memory,
-            "pids_limit": settings.runtime_container_pids_limit,
-            "cap_drop": ["ALL"],
-            "security_opt": ["no-new-privileges:true"],
-        }
-        if settings.runtime_container_cpus > 0:
-            host_config["nano_cpus"] = int(settings.runtime_container_cpus * 1_000_000_000)
-        run_kwargs = {
-            "image": settings.runtime_sandbox_image,
-            "command": container_command,
-            "detach": True,
-            "init": True,
-            "environment": spec.env,
-            "working_dir": str(CONTAINER_WORKSPACE),
-            "user": _container_user(),
-            "volumes": volumes,
-            "stdout": True,
-            "stderr": True,
-            "extra_hosts": {"host.docker.internal": "host-gateway"},
-            "labels": {
-                "mira.runtime": "agent",
-            },
-            **host_config,
-        }
-        if settings.runtime_docker_network.strip():
-            run_kwargs["network"] = settings.runtime_docker_network.strip()
-
-        container = None
-        watcher_stop = threading.Event()
-        try:
-            container = client.containers.run(**run_kwargs)
-            watcher = threading.Thread(
-                target=_watch_cancel,
-                args=(container, cancel_event, watcher_stop),
-                daemon=True,
-            )
-            watcher.start()
-            stream = container.logs(stream=True, stdout=True, stderr=False, follow=True)
-            for line in iter_utf8_lines(_stdout_chunks(stream, cancel_event)):
-                on_stdout_line(spec.path_map.container_to_host_text(line))
-            if cancel_event.is_set():
-                _stop_container(container)
-                return DockerSandboxResult(return_code=130, stderr="cancelled")
-            wait_result = container.wait(timeout=5)
-            status_code = int(wait_result.get("StatusCode") or 0)
-            stderr = container.logs(stdout=False, stderr=True).decode("utf-8", errors="ignore")
-            return DockerSandboxResult(
-                return_code=status_code,
-                stderr=spec.path_map.container_to_host_text(stderr),
-            )
-        except DockerSandboxError:
-            raise
-        except Exception as exc:  # noqa: BLE001
-            raise DockerSandboxError(f"Agent sandbox 执行失败: {exc}") from exc
-        finally:
-            watcher_stop.set()
-            if container is not None:
-                try:
-                    container.remove(force=True)
-                except Exception:  # noqa: BLE001
-                    logger.warning("failed to remove runtime sandbox container", exc_info=True)
 
     def _run_interactive_sync(
         self,
@@ -411,11 +290,6 @@ class DockerSandboxRunner:
                     container.remove(force=True)
                 except Exception:  # noqa: BLE001
                     logger.warning("failed to remove runtime sandbox container", exc_info=True)
-
-
-def _shell_command(command: list[str], prompt_path: Path) -> list[str]:
-    return ["/bin/sh", "-c", f"exec {shlex.join(command)} < {shlex.quote(prompt_path.as_posix())}"]
-
 
 class _MultiplexedLineDecoder:
     def __init__(self) -> None:

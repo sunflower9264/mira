@@ -427,7 +427,7 @@ async def apply_compile(
     )
     prompt = _append_initial_attachment_context(prompt, attachment_refs)
     _ensure_prompt_size(prompt)
-    runtime = get_runtime(user_id)
+    runtime = get_runtime()
     _apply_row_update(row, status="applying", error=None)
     await db.commit()
     try:
@@ -632,7 +632,7 @@ async def _start_plan_session_from_row(db: AsyncSession, row: NlCompileSessionRo
     prompt = build_plan_prompt(row.instruction, graph, prompt_template, history=history)
     prompt = _append_initial_attachment_context(prompt, attachment_refs)
     _ensure_prompt_size(prompt)
-    runtime = get_runtime(row.user_id)
+    runtime = get_runtime()
     planning_runtime_tools = await planning_runtime_tools_for_graph(db, graph)
     session = _session_from_row(row)
     session.response_future = asyncio.get_running_loop().create_future()
@@ -702,7 +702,6 @@ async def _run_plan_session(
             result = await runtime.execute(
                 prompt=runtime_prompt,
                 session_id=None,
-                allowed_tools=None,
                 model=None,
                 reasoning_effort=max_reasoning_effort(),
                 cwd=workspace,
@@ -814,7 +813,6 @@ async def _repair_plan_output_if_needed(
             result = await runtime.execute(
                 prompt=rewrite_runtime_upload_paths(repair_prompt),
                 session_id=None,
-                allowed_tools=None,
                 model=None,
                 reasoning_effort=max_reasoning_effort(),
                 cwd=workspace,
@@ -866,7 +864,6 @@ async def _execute_apply_session(
             result = await runtime.execute(
                 prompt=rewrite_runtime_upload_paths(attempt_prompt),
                 session_id=None,
-                allowed_tools=None,
                 model=None,
                 reasoning_effort=max_reasoning_effort(),
                 cwd=workspace,

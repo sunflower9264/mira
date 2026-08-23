@@ -591,9 +591,8 @@ function PromptToolInsertField({
   const insertableTokens = useMemo(() => {
     const disabled = new Set(disabledToolIds);
     const availableTools = tools.filter((tool) => tool.enabled && !disabled.has(tool.id));
-    const includeSystem = node.type === 'condition' || (node.type === 'generate' && node.ask_user_enabled !== false);
-    const kindOrder = { system: 0, skill: 1, mcp: 2 } as const;
-    return buildPromptTokens(availableTools, includeSystem).sort(
+    const kindOrder = { skill: 0, mcp: 1 } as const;
+    return buildPromptTokens(availableTools).sort(
       (a, b) => kindOrder[a.kind] - kindOrder[b.kind] || a.label.localeCompare(b.label),
     );
   }, [disabledToolIds, node, tools]);
@@ -665,9 +664,8 @@ function PromptField({
   const promptTokens = useMemo(() => {
     const disabledToolIds = new Set(app?.graph.tools?.disabled_tool_ids ?? []);
     const availableTools = tools.filter((tool) => tool.enabled && !disabledToolIds.has(tool.id));
-    const includeSystem = node.type === 'condition' || (node.type === 'generate' && node.ask_user_enabled !== false);
     const tokens = new Map<string, PromptTokenDefinition>(
-      buildPromptTokens(availableTools, includeSystem).map((token) => [token.value, token]),
+      buildPromptTokens(availableTools).map((token) => [token.value, token]),
     );
     return [...tokens.values()].sort((a, b) => b.value.length - a.value.length || a.value.localeCompare(b.value));
   }, [app?.graph, node, tools]);

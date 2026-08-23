@@ -1,5 +1,6 @@
 import asyncio
 import json
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -8,10 +9,10 @@ import app.runtime.codex_runtime as codex_runtime
 from app.runtime.base import AskUserResult
 from app.runtime.codex_runtime import (
     CodexRuntime,
-    _build_app_server_cmd,
     _clean_env,
     _native_answers,
     _normalize_request_user_input,
+    _prepare_scoped_home,
     _thread_request,
     _turn_request,
 )
@@ -148,7 +149,7 @@ def test_request_user_input_rejects_unsupported_native_questions(question, error
         _normalize_request_user_input({"itemId": "item_1", "questions": [question]})
 
 
-def test_codex_app_server_command_injects_only_configured_mcp() -> None:
+def test_codex_scoped_home_contains_only_configured_mcp(tmp_path) -> None:
     tools = RuntimeToolConfig(
         mcp_servers=[
             RuntimeMcpServerConfig(
@@ -159,11 +160,20 @@ def test_codex_app_server_command_injects_only_configured_mcp() -> None:
         ],
         skills=[],
     )
-    command = _build_app_server_cmd(tools)
-    assert command[:2] == ["codex", "app-server"]
-    assert command[2] == "-c"
-    assert "docs" in command[3]
-    assert "ask_user" not in command[3]
+    shared_home = tmp_path / "shared-home"
+    shared_home.mkdir()
+    (shared_home / "config.toml").write_text('model = "gpt-test"\n', encoding="utf-8")
+    (shared_home / "auth.json").write_text("{}\n", encoding="utf-8")
+
+    home = _prepare_scoped_home(shared_home, tmp_path / "workspace", tools)
+    config = tomllib.loads((home / "config.toml").read_text(encoding="utf-8"))
+
+    assert config["mcp_servers"] == {
+        "docs": {
+            "url": "https://example.test/mcp",
+            "http_headers": {"Authorization": "Bearer secret"},
+        }
+    }
 
 
 def test_codex_clean_env_does_not_forward_host_secrets(tmp_path, monkeypatch) -> None:
@@ -194,6 +204,7 @@ def test_codex_runtime_drives_app_server_json_rpc(tmp_path, monkeypatch) -> None
         async def run_interactive(self, spec, *, on_stdout_line, cancel_event):
             self.spec = spec
             assert not cancel_event.is_set()
+            assert spec.command == ["codex", "app-server"]
             initialize = json.loads(spec.prompt.splitlines()[0])
             assert initialize["method"] == "initialize"
             assert initialize["params"]["capabilities"]["experimentalApi"] is True
@@ -214,7 +225,7 @@ def test_codex_runtime_drives_app_server_json_rpc(tmp_path, monkeypatch) -> None
             return DockerSandboxResult(return_code=0)
 
     runner = FakeRunner()
-    runtime = CodexRuntime("user_admin")
+    runtime = CodexRuntime()
     runtime.runner = runner
     chunks = []
 
@@ -222,7 +233,6 @@ def test_codex_runtime_drives_app_server_json_rpc(tmp_path, monkeypatch) -> None
         return await runtime.execute(
             prompt="hello",
             session_id=None,
-            allowed_tools=None,
             model=None,
             reasoning_effort="medium",
             cwd=tmp_path / "workspace",

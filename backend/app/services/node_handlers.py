@@ -46,7 +46,6 @@ from app.services.uploads import resolve_upload
 from app.services.run_serializer import log_to_out
 from app.services.workflow_data import (
     WorkflowDataIntegrityError,
-    visible_output,
     workflow_data_prompt,
 )
 from app.utils import dumps, loads, new_id, now_utc
@@ -314,7 +313,7 @@ async def _run_llm(
     expects_text: bool,
     override_prompt: str | None = None,
 ) -> NodeResult:
-    runtime = get_runtime(ctx.user_id)
+    runtime = get_runtime()
     cwd = ctx.workspace
     try:
         input_refs = _runtime_upload_refs_for_node(ctx, node, step)
@@ -356,7 +355,7 @@ async def _run_llm_with_upload_context(
     reasoning_effort = normalize_reasoning_effort(node.get("reasoning_effort"))
 
     decision_summary: str | NodeResult = ""
-    if _should_run_decision_plan(ctx, node):
+    if _should_run_decision_plan(node):
         decision_summary = await _run_decision_plan(
             ctx,
             node,
@@ -407,7 +406,6 @@ async def _run_llm_with_upload_context(
             prompt=prompt,
             session_id=ctx.agent_session_id,
             # App Tools 是 run 级能力；旧节点工具字段不能限制它们。
-            allowed_tools=None,
             model=model,
             reasoning_effort=reasoning_effort,
             cwd=cwd,
@@ -554,7 +552,6 @@ async def _run_decision_plan(
         result = await runtime.execute(
             prompt=plan_prompt,
             session_id=ctx.agent_session_id,
-            allowed_tools=None,
             model=model,
             reasoning_effort=reasoning_effort,
             cwd=cwd,
@@ -615,53 +612,12 @@ async def _run_decision_plan(
     return summary
 
 
-def _should_run_decision_plan(ctx: ExecutionContext, node: dict[str, Any]) -> bool:
+def _should_run_decision_plan(node: dict[str, Any]) -> bool:
     if node.get("type") == "output":
         return False
     if node.get("type") == "generate" and node.get("ask_user_enabled") is False:
         return False
-    if _prompt_forces_ask_user(str(node.get("prompt") or "")):
-        return True
-    if node.get("type") == "generate" and isinstance(node.get("output_contract"), dict):
-        return not _has_ancestor_user_input_value(ctx, node)
     return True
-
-
-def _prompt_forces_ask_user(prompt: str) -> bool:
-    lowered = prompt.lower()
-    return any(
-        marker in lowered
-        for marker in (
-            "必须先调用 ask_user",
-            "必须调用 ask_user",
-            "先调用 ask_user",
-            "先询问",
-            "先提问",
-            "ask_user",
-        )
-    )
-
-
-def _has_ancestor_user_input_value(ctx: ExecutionContext, node: dict[str, Any]) -> bool:
-    node_id = str(node.get("id") or "")
-    for source_id in ctx.execution_plan.ancestor_ids(node_id):
-        source_node = ctx.nodes_by_id.get(source_id, {})
-        if source_node.get("type") != "user_input":
-            continue
-        value = visible_output(ctx.outputs.get(source_id))
-        if _has_meaningful_input_value(value):
-            return True
-    return False
-
-
-def _has_meaningful_input_value(value: Any) -> bool:
-    if isinstance(value, str):
-        return bool(value.strip())
-    if isinstance(value, dict):
-        text = value.get("value")
-        attachments = value.get("attachments")
-        return (isinstance(text, str) and bool(text.strip())) or (isinstance(attachments, list) and bool(attachments))
-    return value is not None
 
 
 def _build_decision_plan_prompt(prompt: str) -> str:
@@ -833,7 +789,6 @@ async def _repair_contract_output(
         result = await runtime.execute(
             prompt=repair_prompt,
             session_id=repair_session_id,
-            allowed_tools=None,
             model=model,
             reasoning_effort=reasoning_effort,
             cwd=cwd,
