@@ -141,7 +141,6 @@ class ExecutionContext:
     graph: dict[str, Any]
     agent: str
     workspace: Path
-    results_view: Path
     # 用户启动时收集的 user_input 节点输入：{node_id: RunInputValue}。
     inputs: dict[str, RunInputValue]
     execution_plan: ExecutionPlan
@@ -168,7 +167,6 @@ def build_context(
     graph: dict[str, Any],
     agent: str,
     workspace: Path,
-    results_view: Path | None = None,
     inputs: dict[str, RunInputValue],
     execution_plan: ExecutionPlan | None = None,
     runtime_tools: RuntimeToolConfig | None = None,
@@ -185,7 +183,6 @@ def build_context(
         graph=graph,
         agent=agent,
         workspace=workspace,
-        results_view=(results_view or workspace.parent / "results").resolve(),
         inputs=inputs,
         execution_plan=plan,
         runtime_tools=runtime_tools,
@@ -516,12 +513,28 @@ async def _run_llm_with_upload_context(
         if ctx.channel.cancel_event.is_set():
             return NodeResult(status="cancelled", agent_session_id=next_session_id)
         if not validated.ok:
-            await _append_log(ctx, step, "warn", f"output 节点最终输出无效：{validated.error}")
-            return NodeResult(
-                status="failed",
-                error=_contract_failure_message(node, validated.error or "输出无效"),
-                failure_kind="contract",
-                agent_session_id=next_session_id,
+            if not validated.repairable:
+                await _append_log(ctx, step, "error", f"输出契约校验不可用：{validated.error}")
+                return NodeResult(
+                    status="failed",
+                    error=f"输出契约校验不可用：{validated.error or '校验器不可用'}",
+                    failure_kind="contract",
+                    agent_session_id=next_session_id,
+                )
+            await _append_log(ctx, step, "warn", f"输出契约校验失败，尝试自动修正：{validated.error}")
+            return await _repair_contract_output(
+                ctx,
+                node,
+                step,
+                runtime=runtime,
+                original_output=text,
+                task_context=prompt,
+                validation_error=validated.error or "输出不符合契约",
+                model=model,
+                reasoning_effort=reasoning_effort,
+                cwd=cwd,
+                on_chunk=on_chunk,
+                output_schema=output_schema,
             )
         output = validated.output
     elif expects_text and node.get("type") == "generate":

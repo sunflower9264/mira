@@ -6,7 +6,7 @@ Mira 是一个参考 Google Opal 思路的可视化 AI App 搭建与运行项目
 
 ## 项目特点
 
-- **自然语言搭建应用**：通过 Agent 生成或调整工作流，先确认方案再应用修改，关键信息不足时可通过 `ask_user` 继续澄清。
+- **自然语言搭建应用**：可在首次指令中附带需求文档或截图，通过 Agent 生成或调整工作流，先确认方案再应用修改，关键信息不足时可通过 `ask_user` 继续澄清。
 - **可视化执行工作流**：使用输入、素材、生成、条件和输出节点组织执行顺序；一次运行由一个 RunAgent 在共享会话与 workspace 中持续推进，无需为上下游数据引用绘制大量交叉连线，并支持 AI 布局、撤销重做和节点级 Prompt Assistant。
 - **隔离的 Agent runtime**：Claude Code 和 Codex CLI 只在 Docker sandbox 中运行；线性节点延续同一 provider session，真正并行时才原生 fork session 与 CoW workspace，汇合时由协调 Agent 合并分支。
 - **可靠的运行与调试**：支持依赖驱动并发、强输出契约、workspace checkpoint、SSE 流式事件、运行快照、Trace、历史回放、中断恢复和从检查点重新执行。

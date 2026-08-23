@@ -51,6 +51,7 @@
 - Mobile 路由通过 viewport media query 切换到 `/m`，不要改成 UA 判断。手机端只承载登录、应用列表、最近运行、市场、运行、历史、结果和 owner 运行设置，不加节点编辑器或 Settings。
 - Mobile Run 不使用 `useEditorStore`；owner 运行设置可写回 `graph.agent`、节点 model 和 `graph.tools.disabled_tool_ids`，不编辑节点 prompt、结构或 reasoning_effort。
 - `ask_user` UI 统一使用后端返回的 context/groups/options。面板先显示 `context.title` 和 `context.summary`；每组必须选择选项，补充文字和附件始终可用；多问题只在最后一题提交；提交后显示“已选择 / 已补充”摘要并保留停止入口。
+- 自然语言编辑首次提交允许附件；必须先通过 uploads API 获得 upload id，再随 `POST /api/nlcompile` 发送引用，不能只把文件名拼进 instruction。
 - HTML 输出只通过 `HtmlOutputFrame` iframe 隔离渲染；滚动应由外层 Preview/App View/Mobile 容器承载。
 - 视觉改动保持现有 Tailwind、黑白灰和少量强调色体系；图标优先使用现有组件或 `lucide-react`。
 

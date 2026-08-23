@@ -428,7 +428,7 @@ def test_run_only_failure_errors_are_redacted_for_runner(auth_client, enable_cla
     assert "agent_session_id" not in steps["n_out"]
     assert steps["n_out"]["logs"] == []
 
-    runs = auth_client.get(f"/api/apps/{app_id}/runs")
+    runs = auth_client.get(f"/api/apps/{app_id}/runs/summary")
     assert runs.status_code == 200, runs.text
     assert runs.json()[0]["id"] == run_id
     assert runs.json()[0]["error"] == "运行失败"

@@ -1,7 +1,6 @@
 import type { ToolConfig } from '../../types';
 
-export type PromptTokenKind = 'system' | 'skill' | 'mcp';
-export type PromptToolTokenKind = PromptTokenKind;
+type PromptTokenKind = 'system' | 'skill' | 'mcp';
 
 export interface PromptTokenDefinition {
   value: string;
@@ -11,7 +10,7 @@ export interface PromptTokenDefinition {
 }
 
 export interface PromptToolTokenDefinition extends PromptTokenDefinition {
-  kind: PromptToolTokenKind;
+  kind: PromptTokenKind;
 }
 
 const SYSTEM_TOKENS: PromptToolTokenDefinition[] = [

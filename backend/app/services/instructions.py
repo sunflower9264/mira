@@ -27,11 +27,6 @@ def ensure_instruction_file(provider: InstructionProvider) -> Path:
     return path
 
 
-def ensure_instruction_files() -> None:
-    ensure_instruction_file("claude-code")
-    ensure_instruction_file("codex")
-
-
 def read_instruction_file(provider: InstructionProvider) -> InstructionFile:
     path = ensure_instruction_file(provider)
     return InstructionFile(

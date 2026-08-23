@@ -180,12 +180,12 @@ export async function me(): Promise<{ username: string; is_admin: boolean }> {
 // --- Apps -----------------------------------------------------------------
 
 /**
- * GET /api/apps?mine=true
+ * GET /api/apps
  * 响应体：App[]，按 updated_at 倒序。
  * 仅返回当前登录用户拥有的应用。
  */
 export async function listMyApps(): Promise<App[]> {
-  return request<App[]>('/api/apps', { query: { mine: true } });
+  return request<App[]>('/api/apps');
 }
 
 /**
@@ -210,10 +210,6 @@ export async function listTemplates(): Promise<App[]> {
  */
 export async function listRecentRuns(limit = 8): Promise<App[]> {
   return request<App[]>('/api/apps/recent-runs', { query: { limit } });
-}
-
-export async function listGallery(): Promise<App[]> {
-  return listTemplates();
 }
 
 /**
@@ -445,6 +441,7 @@ export async function nlCompile(input: {
   instruction: string;
   current_graph: App['graph'];
   compile_id?: string;
+  attachments?: { id: string; name?: string }[];
 }, signal?: AbortSignal): Promise<NlCompileResponse> {
   return request<NlCompileResponse>('/api/nlcompile', { method: 'POST', body: input, signal });
 }
@@ -650,14 +647,6 @@ export async function cancelRun(id: string): Promise<void> {
  */
 export async function continueRun(id: string): Promise<Run> {
   return request<Run>(`/api/runs/${id}/continue`, { method: 'POST' });
-}
-
-/**
- * GET /api/apps/:id/runs?limit=50
- * 响应体：Run[]，按 started_at 倒序。
- */
-export async function listRuns(appId: string, limit = 50): Promise<Run[]> {
-  return request<Run[]>(`/api/apps/${appId}/runs`, { query: { limit } });
 }
 
 /**

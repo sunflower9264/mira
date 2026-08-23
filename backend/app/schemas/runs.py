@@ -31,7 +31,7 @@ FailureKind = Literal["runtime", "contract", "routing", "integrity", "internal"]
 
 
 class RunAttachmentRef(BaseModel):
-    """Run.inputs / resume payload 中的附件引用。
+    """Run.inputs、NL compile 和 resume payload 中的附件引用。
 
     后端只透传 id（必须归当前用户）+ 客户端展示用的 name；mime/size/path 等
     元数据由 services/uploads.resolve_upload 在落地到 step 时补齐。

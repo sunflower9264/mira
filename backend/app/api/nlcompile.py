@@ -29,7 +29,15 @@ async def nlcompile_endpoint(
 ) -> NlCompileOut:
     # 校验 app_id 归属当前用户；不存在或越权统一 404，与 apps 接口一致。
     await get_owned_app_or_404(db, payload.app_id, user.id)
-    result = await compile_graph(db, user.id, payload.app_id, payload.instruction, payload.current_graph, payload.compile_id)
+    result = await compile_graph(
+        db,
+        user.id,
+        payload.app_id,
+        payload.instruction,
+        payload.current_graph,
+        payload.compile_id,
+        payload.attachments,
+    )
     return result
 
 

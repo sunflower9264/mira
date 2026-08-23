@@ -16,7 +16,6 @@ from app.schemas import SkillMarkdownOut
 from app.utils import new_id
 
 from .runtime_paths import skills_data_dir
-from .serializers import skill_to_config
 
 
 def _parse_front_matter(text: str) -> dict[str, str]:
@@ -125,7 +124,3 @@ async def delete_skill(db: AsyncSession, skill_id: str) -> None:
     shutil.rmtree(Path(skill.archive_path).parent, ignore_errors=True)
     await db.delete(skill)
     await db.commit()
-
-
-async def skill_config_for_upload(db: AsyncSession, archive: UploadFile):
-    return skill_to_config(await save_archive(db, archive))

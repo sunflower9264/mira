@@ -65,8 +65,8 @@ def _first_user_input_node_id(client: httpx.Client, app_id: str) -> str:
 
 def _find_book_recommendation_app_id(client: httpx.Client) -> str:
     candidates: list[dict[str, Any]] = []
-    for query in ("mine=true", "market=true", "gallery=true"):
-        response = client.get(f"/api/apps?{query}")
+    for endpoint in ("/api/apps", "/api/apps?market=true", "/api/apps?gallery=true"):
+        response = client.get(endpoint)
         response.raise_for_status()
         payload = response.json()
         if isinstance(payload, list):

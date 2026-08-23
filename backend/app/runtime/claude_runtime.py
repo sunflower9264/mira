@@ -361,10 +361,6 @@ def _write_mcp_config(
     return path
 
 
-def _ask_user_mcp_server_path() -> Path:
-    return Path(__file__).resolve().parents[2] / "scripts" / "ask_user_mcp_server.py"
-
-
 def _prepare_ask_user_plan_settings(
     settings_path: Path,
     bridge: InternalAskUserBridge | None,

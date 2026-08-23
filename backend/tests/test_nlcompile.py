@@ -154,6 +154,27 @@ class ScriptedRuntime:
         )
 
 
+class InitialAttachmentRuntime(ScriptedRuntime):
+    def __init__(self, text: str) -> None:
+        super().__init__(text=text)
+        self.attachment_text_by_phase: dict[str, str] = {}
+        self.attachment_prompt_by_phase: dict[str, str] = {}
+
+    async def execute(self, **kwargs) -> AgentExecutionResult:
+        output_schema = kwargs.get("output_schema")
+        phase = None
+        if output_schema == NL_COMPILE_PLAN_OUTPUT_SCHEMA:
+            phase = "plan"
+        elif output_schema == NL_COMPILE_PATCH_OUTPUT_SCHEMA:
+            phase = "apply"
+        if phase is not None:
+            matches = list((kwargs["cwd"] / ".inputs").rglob("brief.txt"))
+            if matches:
+                self.attachment_text_by_phase[phase] = matches[0].read_text(encoding="utf-8")
+            self.attachment_prompt_by_phase[phase] = kwargs["prompt"]
+        return await super().execute(**kwargs)
+
+
 class AssistantFailsOnceRuntime(ScriptedRuntime):
     async def execute(
         self,
@@ -1020,6 +1041,99 @@ def test_nlcompile_applies_valid_patches_and_renders_plan(auth_client, enable_cl
     assert "以上都不是" in compile_prompt
     assert "不得生成最终结果、写文件或触发业务副作用" in compile_prompt
     assert "如果当前信息足够完成编辑，不要提问" not in compile_prompt
+
+
+def test_nlcompile_initial_attachment_is_available_to_plan_and_apply_runtime(
+    auth_client,
+    enable_claude_agent,
+):
+    enable_claude_agent()
+    app_id = _create_app(auth_client)
+    upload = auth_client.post(
+        "/api/uploads",
+        files={"file": ("brief.txt", b"ATTACHMENT_REQUIREMENT_42", "text/plain")},
+    )
+    assert upload.status_code == 200, upload.text
+    upload_id = upload.json()["id"]
+    patch_payload = json.dumps(
+        {
+            "patches": [
+                {
+                    "op": "add_node",
+                    "node": {
+                        "id": "n_asset_brief",
+                        "type": "asset",
+                        "asset_kind": "text",
+                        "position": {"x": 100, "y": 100},
+                        "title": "需求摘要",
+                        "content": "ATTACHMENT_REQUIREMENT_42",
+                    },
+                }
+            ]
+        },
+        ensure_ascii=False,
+    )
+    runtime = InitialAttachmentRuntime(text=patch_payload)
+    set_runtime_override(runtime)
+    try:
+        planned = auth_client.post(
+            "/api/nlcompile",
+            json={
+                "app_id": app_id,
+                "instruction": "根据附件创建应用",
+                "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
+                "attachments": [{"id": upload_id, "name": "brief.txt"}],
+            },
+        )
+        assert planned.status_code == 200, planned.text
+        planned_body = planned.json()
+        assert planned_body["status"] == "planned"
+        nlcompile_service._compile_sessions.clear()
+        response = auth_client.post(
+            f"/api/nlcompile/{planned_body['compile_id']}/apply",
+        )
+    finally:
+        nlcompile_service._compile_sessions.clear()
+        set_runtime_override(MockRuntime())
+
+    assert response.status_code == 200, response.text
+    assert runtime.attachment_text_by_phase == {
+        "plan": "ATTACHMENT_REQUIREMENT_42",
+        "apply": "ATTACHMENT_REQUIREMENT_42",
+    }
+    assert "/mnt/inputs/" in runtime.attachment_prompt_by_phase["plan"]
+    assert "/mnt/inputs/" in runtime.attachment_prompt_by_phase["apply"]
+
+
+def test_nlcompile_initial_attachment_must_belong_to_current_user(
+    client,
+    auth_client,
+    enable_claude_agent,
+):
+    enable_claude_agent()
+    upload = auth_client.post(
+        "/api/uploads",
+        files={"file": ("private.txt", b"OWNER_ONLY", "text/plain")},
+    )
+    assert upload.status_code == 200, upload.text
+
+    other_token = _regular_user_token()
+    headers = {"Authorization": f"Bearer {other_token}"}
+    created = client.post("/api/apps", headers=headers, json={"name": "Other user app"})
+    assert created.status_code == 200, created.text
+    response = client.post(
+        "/api/nlcompile",
+        headers=headers,
+        json={
+            "app_id": created.json()["id"],
+            "instruction": "读取附件",
+            "current_graph": {"agent": "claude", "nodes": [], "execution_edges": []},
+            "attachments": [{"id": upload.json()["id"], "name": "private.txt"}],
+        },
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "附件不存在"
 
 
 def test_nlcompile_applies_real_structured_fields_for_all_node_types(auth_client, enable_claude_agent):

@@ -545,24 +545,6 @@ def test_get_run_404_for_other_user(auth_client, enable_claude_agent):
     assert response.json()["detail"] == "运行记录不存在"
 
 
-def test_list_runs_for_app_returns_recent_first(auth_client, enable_claude_agent):
-    enable_claude_agent()
-    graph = _user_input_output_graph()
-    app_id = _build_app(auth_client, graph=graph)
-    run_ids = []
-    for _ in range(3):
-        run = auth_client.post(
-            "/api/runs", json={"app_id": app_id, "inputs": {"n_input": "x"}}
-        ).json()
-        _wait_for_terminal(auth_client, run["run_id"])
-        run_ids.append(run["run_id"])
-    response = auth_client.get(f"/api/apps/{app_id}/runs")
-    assert response.status_code == 200
-    body = response.json()
-    assert len(body) == 3
-    assert {item["id"] for item in body} == set(run_ids)
-
-
 def test_list_run_summaries_omits_heavy_run_detail(auth_client, enable_claude_agent):
     enable_claude_agent()
     graph = _user_input_output_graph()
@@ -608,9 +590,6 @@ def test_public_app_run_history_is_isolated_per_runner(auth_client, enable_claud
     runner_run_id = runner_run.json()["run_id"]
     _wait_for_terminal(auth_client, runner_run_id)
 
-    runner_runs = auth_client.get(f"/api/apps/{app_id}/runs")
-    assert runner_runs.status_code == 200, runner_runs.text
-    assert [item["id"] for item in runner_runs.json()] == [runner_run_id]
     runner_summaries = auth_client.get(f"/api/apps/{app_id}/runs/summary")
     assert runner_summaries.status_code == 200, runner_summaries.text
     assert [item["id"] for item in runner_summaries.json()] == [runner_run_id]
@@ -618,17 +597,11 @@ def test_public_app_run_history_is_isolated_per_runner(auth_client, enable_claud
 
     spectator = create_regular_user("run-history-spectator")
     auth_client.headers.update({"Authorization": f"Bearer {spectator['token']}"})
-    spectator_runs = auth_client.get(f"/api/apps/{app_id}/runs")
-    assert spectator_runs.status_code == 200, spectator_runs.text
-    assert spectator_runs.json() == []
     spectator_summaries = auth_client.get(f"/api/apps/{app_id}/runs/summary")
     assert spectator_summaries.status_code == 200, spectator_summaries.text
     assert spectator_summaries.json() == []
 
     auth_client.headers.update({"Authorization": admin_auth})
-    owner_runs = auth_client.get(f"/api/apps/{app_id}/runs")
-    assert owner_runs.status_code == 200, owner_runs.text
-    assert [item["id"] for item in owner_runs.json()] == [owner_run_id]
     owner_summaries = auth_client.get(f"/api/apps/{app_id}/runs/summary")
     assert owner_summaries.status_code == 200, owner_summaries.text
     assert [item["id"] for item in owner_summaries.json()] == [owner_run_id]
@@ -761,9 +734,9 @@ def test_delete_public_app_with_other_user_runs_archives_and_keeps_history(auth_
     assert recent_app["can_view_source"] is False
     assert auth_client.get(f"/api/apps/{app_id}").status_code == 200
     assert auth_client.get(f"/api/runs/{runner_run_id}").status_code == 200
-    runner_runs = auth_client.get(f"/api/apps/{app_id}/runs")
-    assert runner_runs.status_code == 200, runner_runs.text
-    assert [item["id"] for item in runner_runs.json()] == [runner_run_id]
+    runner_summaries = auth_client.get(f"/api/apps/{app_id}/runs/summary")
+    assert runner_summaries.status_code == 200, runner_summaries.text
+    assert [item["id"] for item in runner_summaries.json()] == [runner_run_id]
     assert auth_client.post("/api/runs", json={"app_id": app_id, "inputs": {"n_input": "again"}}).status_code == 400
     assert auth_client.post(f"/api/apps/{app_id}/clone").status_code == 403
     assert resolve_upload(runner["id"], upload_id) is not None

@@ -17,7 +17,7 @@ interface History {
   future: Graph[];
 }
 
-export interface PromptAssistantGenerationState {
+interface PromptAssistantGenerationState {
   appId: string;
   nodeId: string;
   generationId: string;

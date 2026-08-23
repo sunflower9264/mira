@@ -175,8 +175,6 @@ async def _orchestrate(run_id: str, channel: RunChannel, *, continuation: bool =
             run.started_at = now_utc()
         await db.commit()
         states = _step_states(steps)
-        if run.runtime_version < 2 and continuation:
-            raise RunAgentError("旧运行只支持只读历史，不能继续执行")
         run_agent = RunAgent(
             db,
             run,

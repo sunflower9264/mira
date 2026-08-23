@@ -24,7 +24,7 @@
 - `output_contracts.py` 负责 generate/output 输出契约 schema 生成、校验和一次原 session/workspace 修正；JSON 必须按 strict object schema 校验，HTML 只通过 wrapper 解析并原样保存，artifact 统一按工作区文件 path 处理。
 - Run artifacts 和 Trace 按需组装，必须使用 run owner 权限和 `runtime_paths.py` 计算路径，只读取统一 Envelope 中带 `holder` / `origin` / 可选 `reused_from` / hash 的声明，对外只返回签名下载链接而不返回内部路径，不新增 artifact 表。
 - `tools.py` 管理 MCP/Skills 库存、App disabled tools、run snapshot allowed tools 和 planning-only `planning_enabled` 过滤。
-- NL compile 使用 `nlcompile_sessions` 持久化 plan/wait/apply/refine/cancel；plan 阶段可 ask_user，apply 阶段禁止继续交互。
+- NL compile 使用 `nlcompile_sessions` 持久化 plan/wait/apply/refine/cancel；首次请求附件以 upload 引用写入会话历史，并在 plan/apply 调用时校验归属后挂载到 `/mnt/inputs`；plan 阶段可 ask_user，apply 阶段禁止继续交互。
 - NL compile apply 将 patches 作为整批在临时 graph 上模拟和校验，失败可让 Agent 重新生成；不得返回半应用 graph。
 - NL compile apply 返回前调用 Prompt Assistant 后处理 prompt，并调用 graph layout 美化；这些后处理不进入 ask_user。
 - Prompt Assistant 使用 `prompt_assistant_generations` 持久化生成、waiting、resume、cancel、active；内存 session 只用于当前进程快速等待和取消。

@@ -1273,7 +1273,7 @@ def test_published_apps_market_visibility_and_readonly_access(auth_client, enabl
     assert lint.status_code == 200
     run = auth_client.post("/api/runs", json={"app_id": public_app["id"], "inputs": {}})
     assert run.status_code == 200, run.text
-    runs = auth_client.get(f"/api/apps/{public_app['id']}/runs")
+    runs = auth_client.get(f"/api/apps/{public_app['id']}/runs/summary")
     assert runs.status_code == 200
     assert any(item["id"] == run.json()["run_id"] for item in runs.json())
 
@@ -1362,10 +1362,13 @@ def test_run_only_market_app_blocks_clone_hides_source_and_tracks_recent(auth_cl
     assert run.status_code == 200, run.text
     assert [node["type"] for node in run.json()["graph"]["nodes"]] == ["user_input", "output"]
 
-    runs = auth_client.get(f"/api/apps/{created['id']}/runs")
+    runs = auth_client.get(f"/api/apps/{created['id']}/runs/summary")
     assert runs.status_code == 200
-    assert runs.json()[0]["graph"] == run.json()["graph"]
-    assert [step["node_id"] for step in runs.json()[0]["steps"]] == ["n_input", "n_out"]
+    assert runs.json()[0]["id"] == run.json()["run_id"]
+    run_detail = auth_client.get(f"/api/runs/{run.json()['run_id']}")
+    assert run_detail.status_code == 200, run_detail.text
+    assert run_detail.json()["graph"] == run.json()["graph"]
+    assert [step["node_id"] for step in run_detail.json()["steps"]] == ["n_input", "n_out"]
 
     recent_runs = auth_client.get("/api/apps/recent-runs")
     assert recent_runs.status_code == 200

@@ -17,7 +17,7 @@ from app.runtime.factory import get_runtime
 from app.services.run_hub import RunChannel
 from app.services.runtime_paths import run_workspace
 from app.services.tools import RuntimeToolConfig
-from app.services.workspace_tree import WorkspaceTree, remove_tree, scan_tree, tree_hash
+from app.services.workspace_tree import TreeEntry, WorkspaceTree, remove_tree, scan_tree, tree_hash
 from app.utils import dumps, loads, new_id, now_utc
 
 
@@ -280,6 +280,7 @@ class RunAgent:
         branches_dir = staging / "branches"
         contexts_dir = staging / "contexts"
         base_snapshot = self.workspaces.checkpoint_snapshot(base_checkpoint_id)
+        base_tree = await asyncio.to_thread(scan_tree, base_snapshot)
         staging.mkdir(parents=True, exist_ok=False)
         shutil.copytree(base_snapshot, staging / "base", symlinks=True)
         manifests: dict[str, list[dict[str, Any]]] = {}
@@ -355,7 +356,7 @@ class RunAgent:
         if await asyncio.to_thread(tree_hash, staging) != evidence_hash:
             raise RunAgentError("join Agent 修改了只读合并证据")
         remove_tree(staging)
-        _validate_merge_receipt(receipt, expected, workspace)
+        _validate_merge_receipt(receipt, expected, workspace, base_tree=base_tree)
         return receipt
 
     async def _branch_context(self, branch_id: str) -> dict[str, Any]:
@@ -477,6 +478,8 @@ def _validate_merge_receipt(
     receipt: dict[str, Any],
     expected: dict[str, dict[str, dict[str, Any]]],
     workspace: Path,
+    *,
+    base_tree: dict[str, TreeEntry],
 ) -> None:
     paths = receipt.get("paths")
     if not isinstance(paths, list):
@@ -494,6 +497,12 @@ def _validate_merge_receipt(
         extra = sorted(set(received) - set(expected))
         raise RunAgentError(f"join receipt 覆盖不完整：missing={missing}, extra={extra}")
     result_tree = scan_tree(workspace)
+    unexpected = sorted(set(result_tree) - set(base_tree) - set(expected))
+    if unexpected:
+        raise RunAgentError(f"join Agent 新增了未声明路径：{unexpected}")
+    for path in sorted(set(base_tree) - set(expected)):
+        if result_tree.get(path) != base_tree[path]:
+            raise RunAgentError(f"join Agent 改写了未声明的 base 路径：{path}")
     for path, source_changes in expected.items():
         item = received[path]
         received_sources = item.get("sources")

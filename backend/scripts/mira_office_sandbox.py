@@ -5,7 +5,6 @@ import grp
 import json
 import os
 import re
-import socket
 import subprocess
 import sys
 import uuid

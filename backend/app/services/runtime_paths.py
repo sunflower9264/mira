@@ -62,8 +62,7 @@ def codex_home() -> Path:
 
 def scoped_runtime_home(provider: str, cwd: Path, *, session_scope: str | None = None) -> Path:
     scope = session_scope.strip() if isinstance(session_scope, str) and session_scope.strip() else str(cwd.resolve())
-    digest = hashlib.sha256(scope.encode("utf-8")).hexdigest()[:20]
-    path = runtime_dir() / "homes" / "_scoped" / digest / provider
+    path = _scoped_runtime_home_path(provider, scope)
     path.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -71,12 +70,16 @@ def scoped_runtime_home(provider: str, cwd: Path, *, session_scope: str | None =
 def clone_run_scoped_homes(source_run_id: str, target_run_id: str) -> None:
     source_scope = f"run:{source_run_id}"
     target_scope = f"run:{target_run_id}"
-    placeholder = runtime_dir()
     for provider in ("claude_home", "codex_home"):
-        source = scoped_runtime_home(provider, placeholder, session_scope=source_scope)
-        target = scoped_runtime_home(provider, placeholder, session_scope=target_scope)
+        source = _scoped_runtime_home_path(provider, source_scope)
         if source.is_dir():
+            target = _scoped_runtime_home_path(provider, target_scope)
             shutil.copytree(source, target, symlinks=True, dirs_exist_ok=True)
+
+
+def _scoped_runtime_home_path(provider: str, scope: str) -> Path:
+    digest = hashlib.sha256(scope.encode("utf-8")).hexdigest()[:20]
+    return runtime_dir() / "homes" / "_scoped" / digest / provider
 
 
 def node_workspace(user_id: str, app_id: str, node_id: str) -> Path:

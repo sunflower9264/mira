@@ -1,6 +1,6 @@
 import { matchPath } from 'react-router-dom';
 
-export const MOBILE_MEDIA_QUERY = '(max-width: 767px)';
+const MOBILE_MEDIA_QUERY = '(max-width: 767px)';
 
 export function prefersMobileViewport(): boolean {
   if (typeof window === 'undefined') return false;

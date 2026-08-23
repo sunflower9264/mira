@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_admin, get_current_user
@@ -54,12 +54,10 @@ SMOKE_STATUS_TIMEOUT_SEC = 45
 
 @router.get("/settings")
 async def get_settings(
-    reveal: bool = Query(False),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     # 任意登录用户可读全局配置（StepTab / AppLaunchView 依赖此数据）。
-    # reveal 仅保留兼容旧调用；是否返回 secret 只由当前用户角色决定。
     return await settings_out(db, reveal_keys=user.is_admin)
 
 

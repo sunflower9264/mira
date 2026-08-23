@@ -12,11 +12,6 @@ def reasoning_efforts_for_agent(agent: str | None) -> tuple[str, ...]:
     return ()
 
 
-def default_reasoning_effort_for_agent(agent: str | None) -> str | None:
-    efforts = reasoning_efforts_for_agent(agent)
-    return efforts[0] if efforts else None
-
-
 def max_reasoning_effort_for_agent(agent: str | None) -> str | None:
     efforts = reasoning_efforts_for_agent(agent)
     return efforts[-1] if efforts else None

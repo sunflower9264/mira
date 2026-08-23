@@ -26,10 +26,6 @@ ADMIN_PASSWORD_PLACEHOLDER = "change-me"
 ADMIN_PASSWORD_MIN_LENGTH = 6
 
 
-def get_admin_user_id() -> str:
-    return ADMIN_USER_ID
-
-
 class AdminCredentialsError(ValueError):
     """``.env`` 中的 admin 凭据无效（缺失、过短或还是占位符）。"""
 

@@ -8,6 +8,8 @@ import time
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
+import pytest
+
 from app.runtime.base import AgentChunk, AgentExecutionResult, AgentProviderStatus
 from app.runtime.factory import set_runtime_override
 from app.services.admin import ADMIN_USER_ID
@@ -16,8 +18,9 @@ from app.utils import now_utc
 
 
 class WorkflowInterfaceRuntime:
-    def __init__(self) -> None:
+    def __init__(self, *, merge_mutation: str | None = None) -> None:
         self.calls: dict[str, dict[str, object]] = {}
+        self.merge_mutation = merge_mutation
 
     async def detect_status(self) -> AgentProviderStatus:
         return AgentProviderStatus(
@@ -50,6 +53,10 @@ class WorkflowInterfaceRuntime:
             session_id = f"{session_id}-fork"
         if "你是 Mira RunAgent 的 fan-in 合并协调 Agent" in prompt:
             text = _merge_workspace(cwd)
+            if self.merge_mutation == "tamper_base":
+                (cwd / "hidden.txt").write_text("tampered", encoding="utf-8")
+            elif self.merge_mutation == "add_unmanifested":
+                (cwd / "surprise.txt").write_text("surprise", encoding="utf-8")
             await on_chunk(AgentChunk(type="text", text=text))
             return AgentExecutionResult(
                 session_id=session_id or "session-join",
@@ -185,6 +192,76 @@ def test_linear_nodes_share_workspace_and_fanout_is_isolated_until_join(auth_cli
         assert "unrelated.txt" not in runtime.calls["relay"]["files"]
         output = next(step for step in final["steps"] if step["node_id"] == "output")
         assert output["output"] == "<p>hidden=true,declared=true</p>"
+    finally:
+        set_runtime_override(None)
+
+
+@pytest.mark.parametrize("merge_mutation", ["tamper_base", "add_unmanifested"])
+def test_fan_in_rejects_unmanifested_workspace_changes(
+    auth_client,
+    enable_claude_agent,
+    merge_mutation,
+):
+    enable_claude_agent()
+    runtime = WorkflowInterfaceRuntime(merge_mutation=merge_mutation)
+    set_runtime_override(runtime)
+    try:
+        created = auth_client.post("/api/apps", json={"name": "Protected merge base"})
+        app_id = created.json()["id"]
+        graph = {
+            "agent": "claude",
+            "nodes": [
+                {
+                    "id": "producer",
+                    "type": "generate",
+                    "position": {"x": 0, "y": 0},
+                    "title": "Producer",
+                    "prompt": "PRODUCE_DECLARED",
+                    "ask_user_enabled": False,
+                    "output_contract": {"type": "artifact", "artifact_kind": "file"},
+                },
+                {
+                    "id": "relay",
+                    "type": "generate",
+                    "position": {"x": 300, "y": -100},
+                    "title": "Relay",
+                    "prompt": "RELAY_DECLARED",
+                    "ask_user_enabled": False,
+                },
+                {
+                    "id": "unrelated",
+                    "type": "generate",
+                    "position": {"x": 300, "y": 100},
+                    "title": "Parallel",
+                    "prompt": "PARALLEL_UNRELATED",
+                    "ask_user_enabled": False,
+                },
+                {
+                    "id": "output",
+                    "type": "output",
+                    "position": {"x": 600, "y": 0},
+                    "title": "Output",
+                    "prompt": "VERIFY_NO_HIDDEN",
+                },
+            ],
+            "execution_edges": [
+                {"id": "producer-relay", "source": "producer", "target": "relay"},
+                {"id": "producer-unrelated", "source": "producer", "target": "unrelated"},
+                {"id": "relay-output", "source": "relay", "target": "output"},
+                {"id": "unrelated-output", "source": "unrelated", "target": "output"},
+            ],
+        }
+        saved = auth_client.patch(f"/api/apps/{app_id}", json={"graph": graph})
+        assert saved.status_code == 200, saved.text
+
+        started = auth_client.post("/api/runs", json={"app_id": app_id, "inputs": {}})
+        assert started.status_code == 200, started.text
+        final = _wait_for_terminal(auth_client, started.json()["run_id"])
+
+        assert final["status"] == "failed", final
+        output = next(step for step in final["steps"] if step["node_id"] == "output")
+        assert output["failure_kind"] == "internal"
+        assert "未声明" in output["error"]
     finally:
         set_runtime_override(None)
 

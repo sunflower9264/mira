@@ -3,14 +3,14 @@ import type { PillAttachment } from './PillInputBar';
 
 export const ASK_USER_NONE_OPTION = '以上都不是';
 
-export interface DecisionSupplementDraft {
+interface DecisionSupplementDraft {
   text: string;
   attachments: PillAttachment[];
 }
 
 export type DecisionSupplementDrafts = Record<string, DecisionSupplementDraft>;
 
-export interface DecisionSubmittedSupplement {
+interface DecisionSubmittedSupplement {
   text?: string;
   fileNames?: string[];
 }
@@ -20,14 +20,14 @@ export interface DecisionSubmittedSummary {
   supplements?: Record<string, DecisionSubmittedSupplement>;
 }
 
-export function selectedForDecisionGroup(
+function selectedForDecisionGroup(
   answers: DecisionAnswer[],
   groupId: string,
 ): string[] {
   return answers.find((answer) => answer.group_id === groupId)?.selected ?? [];
 }
 
-export function isDecisionOptionComplete(
+function isDecisionOptionComplete(
   group: DecisionGroup,
   answers: DecisionAnswer[],
 ): boolean {
@@ -35,7 +35,7 @@ export function isDecisionOptionComplete(
   return group.type === 'single' ? selected.length === 1 : selected.length > 0;
 }
 
-export function isDecisionDraftComplete(
+function isDecisionDraftComplete(
   draft: DecisionSupplementDraft | undefined,
 ): boolean {
   if (!draft) return false;
@@ -51,7 +51,7 @@ export function completedDecisionGroupIds(
     .map((group) => group.id);
 }
 
-export function hasDecisionSupplementDrafts(
+function hasDecisionSupplementDrafts(
   groups: DecisionGroup[],
   drafts: DecisionSupplementDrafts,
 ): boolean {

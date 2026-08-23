@@ -54,7 +54,7 @@ interface RunStoreState {
 }
 
 /** WaitingInputPanel 提交时携带的 payload；store 内部转成 POST /api/runs/{id}/resume 请求体。 */
-export interface WaitingInputSubmit {
+interface WaitingInputSubmit {
   answers?: DecisionAnswer[];
   text?: string;
   attachments?: { id: string; name?: string }[];
@@ -72,7 +72,7 @@ let activeStream: RunStream | null = null;
 /** 用于忽略已经被替换 / 取消的 run 事件回调。 */
 let activeRunToken = 0;
 
-export function readActiveRun(): ActiveRunRef | null {
+function readActiveRun(): ActiveRunRef | null {
   if (typeof window === 'undefined') return null;
   try {
     const raw = window.sessionStorage.getItem(ACTIVE_RUN_KEY);
@@ -82,7 +82,7 @@ export function readActiveRun(): ActiveRunRef | null {
   }
 }
 
-export function clearActiveRun(): void {
+function clearActiveRun(): void {
   if (typeof window === 'undefined') return;
   window.sessionStorage.removeItem(ACTIVE_RUN_KEY);
 }
@@ -564,7 +564,7 @@ function handleRunEvent(
     }
     case 'step.waiting': {
       const req = evt.request;
-      set((state) => ({
+      set({
         status: 'waiting_for_user',
         waitingInput: {
           node_id: evt.node_id,
@@ -572,7 +572,7 @@ function handleRunEvent(
           groups: req.groups ?? [],
           tool_use_id: req.tool_use_id,
         },
-      }));
+      });
       return;
     }
     case 'run.waiting_for_user':

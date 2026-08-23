@@ -11,7 +11,7 @@
 import type { App, DecisionOption, FailureKind, RunEvent } from '../types';
 import { getToken } from './auth';
 
-export type RunStreamHandler = (evt: RunEvent) => void;
+type RunStreamHandler = (evt: RunEvent) => void;
 
 export interface RunStream {
   close(): void;

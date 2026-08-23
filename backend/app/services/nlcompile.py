@@ -21,6 +21,7 @@ from app.models import NlCompileSessionRow
 from app.runtime.base import AgentChunk, AskUserAttachment, AskUserRequest, AskUserResult
 from app.runtime.factory import get_runtime
 from app.schemas.requests import NlCompileRefineIn, NlCompileResumeIn
+from app.schemas.runs import RunAttachmentRef
 from app.services.decision_prompts import append_ask_user_none_option, validate_ask_request_groups, validate_decision_answers
 from app.services.execution_plan import ExecutionPlanError, compile_execution_plan
 from app.services.graph_validation import (
@@ -41,6 +42,7 @@ from app.services.prompt_contracts import (
     output_schema_for,
 )
 from app.services.runtime_paths import nlcompile_workspace
+from app.services.runtime_uploads import RuntimeUploadRef, rewrite_runtime_upload_paths, runtime_upload_context
 from app.services.reasoning_effort import max_reasoning_effort_for_agent
 from app.services.settings import NO_ENABLED_AGENT_DETAIL, settings_out
 from app.services.structured_output import parse_structured_json_object
@@ -162,6 +164,62 @@ def _history_from_row(row: NlCompileSessionRow) -> list[dict[str, Any]]:
 
 def _qa_history_from_history(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [entry for entry in history if entry.get("kind") == "ask_user"]
+
+
+def _initial_attachment_history(
+    user_id: str,
+    attachments: list[RunAttachmentRef],
+) -> list[dict[str, Any]]:
+    items: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for ref in attachments:
+        if ref.id in seen:
+            continue
+        resolved = resolve_upload(user_id, ref.id)
+        if resolved is None:
+            raise HTTPException(status_code=404, detail="附件不存在")
+        seen.add(ref.id)
+        items.append({"id": resolved.id, "name": ref.name or resolved.name})
+    return [{"kind": "initial_attachments", "attachments": items}] if items else []
+
+
+def _initial_attachment_runtime_refs(
+    user_id: str,
+    history: list[dict[str, Any]],
+) -> list[RuntimeUploadRef]:
+    refs: list[RuntimeUploadRef] = []
+    seen: set[str] = set()
+    for entry in history:
+        if entry.get("kind") != "initial_attachments":
+            continue
+        items = entry.get("attachments")
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            upload_id = item.get("id")
+            if not isinstance(upload_id, str) or upload_id in seen:
+                continue
+            resolved = resolve_upload(user_id, upload_id)
+            if resolved is None:
+                raise HTTPException(status_code=404, detail="附件不存在")
+            name = item.get("name") if isinstance(item.get("name"), str) else resolved.name
+            refs.append(RuntimeUploadRef(id=resolved.id, path=resolved.path, name=name))
+            seen.add(upload_id)
+    return refs
+
+
+def _append_initial_attachment_context(prompt: str, refs: list[RuntimeUploadRef]) -> str:
+    if not refs:
+        return prompt
+    lines = [
+        "## 用户首次提交的附件",
+        "以下文件是本次自然语言编辑的输入。请按需使用工具读取文件内容，不要只根据文件名推测。",
+    ]
+    for ref in refs:
+        lines.append(f"- {ref.name or ref.path.name}：{ref.path}")
+    return "\n\n".join([prompt.strip(), "\n".join(lines)])
 
 
 def _plan_from_row(row: NlCompileSessionRow) -> dict[str, Any] | None:
@@ -288,6 +346,7 @@ async def _create_compile_row(
     app_id: str,
     instruction: str,
     current_graph: dict[str, Any],
+    history: list[dict[str, Any]],
 ) -> NlCompileSessionRow:
     row = NlCompileSessionRow(
         id=session_id,
@@ -296,7 +355,7 @@ async def _create_compile_row(
         status="planning",
         instruction=instruction,
         graph_json=_json_dumps(current_graph),
-        history_json="[]",
+        history_json=_json_dumps(history),
     )
     db.add(row)
     await db.commit()
@@ -314,6 +373,7 @@ async def compile_graph(
     instruction: str,
     current_graph: dict[str, Any],
     compile_id: str | None = None,
+    attachments: list[RunAttachmentRef] | None = None,
 ) -> dict[str, Any]:
     """根据自然语言指令调用 LLM 生成待确认方案，不提前生成 graph patch。"""
 
@@ -330,6 +390,7 @@ async def compile_graph(
 
     row = await db.get(NlCompileSessionRow, session_id)
     if row is None:
+        history = _initial_attachment_history(user_id, attachments or [])
         row = await _create_compile_row(
             db,
             session_id=session_id,
@@ -337,6 +398,7 @@ async def compile_graph(
             app_id=app_id,
             instruction=instruction,
             current_graph=deepcopy(current_graph),
+            history=history,
         )
     elif row.user_id != user_id or row.app_id != app_id:
         raise HTTPException(status_code=404, detail="编译会话不存在")
@@ -389,6 +451,7 @@ async def apply_compile(
     prompt_template = await get_prompt_content(db, "nlcompile_graph_patch")
     prompt_assistant_template = await get_prompt_content(db, "prompt_assistant")
     graph_layout_template = await get_prompt_content(db, "graph_layout_beautify")
+    attachment_refs = _initial_attachment_runtime_refs(user_id, session.history)
     prompt = build_patch_prompt(
         session.instruction,
         session.current_graph,
@@ -396,6 +459,7 @@ async def apply_compile(
         prompt_template,
         history=session.history,
     )
+    prompt = _append_initial_attachment_context(prompt, attachment_refs)
     _ensure_prompt_size(prompt)
     runtime = get_runtime(agent.runtime, user_id)
     _apply_row_update(row, status="applying", error=None)
@@ -409,6 +473,7 @@ async def apply_compile(
             prompt_assistant_template=prompt_assistant_template,
             graph_layout_template=graph_layout_template,
             user_id=user_id,
+            attachment_refs=attachment_refs,
         )
         _apply_row_update(row, status="completed", error=None)
         await db.commit()
@@ -608,7 +673,9 @@ async def _start_plan_session_from_row(db: AsyncSession, row: NlCompileSessionRo
     prompt_template = await get_prompt_content(db, "nlcompile_plan")
     ask_user_protocol = await get_prompt_content(db, "ask_user_protocol")
     history = _history_from_row(row)
+    attachment_refs = _initial_attachment_runtime_refs(row.user_id, history)
     prompt = build_plan_prompt(row.instruction, graph, prompt_template, ask_user_protocol, history=history)
+    prompt = _append_initial_attachment_context(prompt, attachment_refs)
     _ensure_prompt_size(prompt)
     runtime = get_runtime(agent.runtime, row.user_id)
     planning_runtime_tools = await planning_runtime_tools_for_graph(db, graph, agent.runtime)
@@ -623,6 +690,7 @@ async def _start_plan_session_from_row(db: AsyncSession, row: NlCompileSessionRo
             agent=agent.runtime,
             prompt=prompt,
             runtime_tools=planning_runtime_tools,
+            attachment_refs=attachment_refs,
         ),
         name=f"nlcompile-{session.id}",
     )
@@ -636,6 +704,7 @@ async def _run_plan_session(
     agent: str,
     prompt: str,
     runtime_tools: RuntimeToolConfig | None,
+    attachment_refs: list[RuntimeUploadRef],
 ) -> None:
     async def on_ask_user(request: AskUserRequest) -> AskUserResult:
         protocol_error = validate_ask_request_groups(request.groups)
@@ -681,20 +750,23 @@ async def _run_plan_session(
                     if chunk.raw:
                         diagnostic_chunks.append(json.dumps(chunk.raw, ensure_ascii=False))
 
-        result = await runtime.execute(
-            prompt=prompt,
-            session_id=None,
-            allowed_tools=None,
-            model=None,
-            reasoning_effort=max_reasoning_effort_for_agent(agent),
-            cwd=nlcompile_workspace(session.user_id),
-            on_chunk=on_chunk,
-            cancel_event=session.cancel_event or asyncio.Event(),
-            on_ask_user=on_ask_user,
-            runtime_tools=runtime_tools,
-            runtime_policy="ask_user_plan",
-            output_schema=output_schema_for("nlcompile_plan"),
-        )
+        workspace = nlcompile_workspace(session.user_id)
+        with runtime_upload_context(workspace, attachment_refs):
+            runtime_prompt = rewrite_runtime_upload_paths(prompt)
+            result = await runtime.execute(
+                prompt=runtime_prompt,
+                session_id=None,
+                allowed_tools=None,
+                model=None,
+                reasoning_effort=max_reasoning_effort_for_agent(agent),
+                cwd=workspace,
+                on_chunk=on_chunk,
+                cancel_event=session.cancel_event or asyncio.Event(),
+                on_ask_user=on_ask_user,
+                runtime_tools=runtime_tools,
+                runtime_policy="ask_user_plan",
+                output_schema=output_schema_for("nlcompile_plan"),
+            )
         ask_user_failure = _ask_user_tool_failure_detail([result.total_text, result.error, *diagnostic_chunks])
         if ask_user_failure:
             if await _preserve_waiting_plan_session_after_tool_failure(session):
@@ -733,10 +805,11 @@ async def _run_plan_session(
         plan = await _repair_plan_output_if_needed(
             runtime=runtime,
             agent=agent,
-            prompt=prompt,
+            prompt=runtime_prompt,
             raw_output=raw_output,
             user_id=session.user_id,
             cancel_event=session.cancel_event or asyncio.Event(),
+            attachment_refs=attachment_refs,
         )
         plan_markdown = render_nlcompile_plan_markdown(plan, session.instruction)
         session.confirmed_plan = plan
@@ -787,6 +860,7 @@ async def _repair_plan_output_if_needed(
     raw_output: str,
     user_id: str,
     cancel_event: asyncio.Event,
+    attachment_refs: list[RuntimeUploadRef],
 ) -> dict[str, Any]:
     try:
         return extract_plan(raw_output)
@@ -811,20 +885,22 @@ async def _repair_plan_output_if_needed(
             if chunk.type == "text" and chunk.text:
                 chunks.append(chunk.text)
 
-        result = await runtime.execute(
-            prompt=repair_prompt,
-            session_id=None,
-            allowed_tools=None,
-            model=None,
-            reasoning_effort=max_reasoning_effort_for_agent(agent),
-            cwd=nlcompile_workspace(user_id),
-            on_chunk=on_repair_chunk,
-            cancel_event=cancel_event,
-            on_ask_user=None,
-            runtime_tools=None,
-            runtime_policy="ask_user_plan",
-            output_schema=output_schema_for("nlcompile_plan"),
-        )
+        workspace = nlcompile_workspace(user_id)
+        with runtime_upload_context(workspace, attachment_refs):
+            result = await runtime.execute(
+                prompt=rewrite_runtime_upload_paths(repair_prompt),
+                session_id=None,
+                allowed_tools=None,
+                model=None,
+                reasoning_effort=max_reasoning_effort_for_agent(agent),
+                cwd=workspace,
+                on_chunk=on_repair_chunk,
+                cancel_event=cancel_event,
+                on_ask_user=None,
+                runtime_tools=None,
+                runtime_policy="ask_user_plan",
+                output_schema=output_schema_for("nlcompile_plan"),
+            )
         if result.finished_with != "done":
             raise HTTPException(status_code=502, detail="Agent 编译失败，请检查 Agent 配置或稍后重试")
         previous_output = result.total_text or "".join(chunks)
@@ -846,6 +922,7 @@ async def _execute_apply_session(
     prompt_assistant_template: str,
     graph_layout_template: str,
     user_id: str,
+    attachment_refs: list[RuntimeUploadRef],
 ) -> dict[str, Any]:
     async def on_ask_user(_: AskUserRequest) -> AskUserResult:
         return AskUserResult(ok=False, error="确认方案后不允许继续 ask_user")
@@ -861,19 +938,21 @@ async def _execute_apply_session(
             if chunk.type == "text" and chunk.text:
                 chunks.append(chunk.text)
 
-        result = await runtime.execute(
-            prompt=attempt_prompt,
-            session_id=None,
-            allowed_tools=None,
-            model=None,
-            reasoning_effort=max_reasoning_effort_for_agent(agent),
-            cwd=nlcompile_workspace(user_id),
-            on_chunk=on_chunk,
-            cancel_event=session.cancel_event or asyncio.Event(),
-            on_ask_user=on_ask_user,
-            runtime_policy="execute",
-            output_schema=output_schema_for("nlcompile_graph_patch"),
-        )
+        workspace = nlcompile_workspace(user_id)
+        with runtime_upload_context(workspace, attachment_refs):
+            result = await runtime.execute(
+                prompt=rewrite_runtime_upload_paths(attempt_prompt),
+                session_id=None,
+                allowed_tools=None,
+                model=None,
+                reasoning_effort=max_reasoning_effort_for_agent(agent),
+                cwd=workspace,
+                on_chunk=on_chunk,
+                cancel_event=session.cancel_event or asyncio.Event(),
+                on_ask_user=on_ask_user,
+                runtime_policy="execute",
+                output_schema=output_schema_for("nlcompile_graph_patch"),
+            )
         if result.finished_with != "done":
             logger.warning("nlcompile apply runtime non-done: status=%s error=%s", result.finished_with, result.error)
             raise HTTPException(status_code=502, detail="Agent 编译失败，请检查 Agent 配置或稍后重试")
@@ -906,6 +985,7 @@ async def _execute_apply_session(
             previous_output=previous_output,
             failure=failure,
         )
+        attempt_prompt = _append_initial_attachment_context(attempt_prompt, attachment_refs)
 
     _log_compile_final_failure(last_failure)
     raise HTTPException(status_code=502, detail=_NL_COMPILE_REPAIR_FAILED_DETAIL)
@@ -1695,10 +1775,6 @@ def _apply_patch(graph: dict[str, Any], patch: dict[str, Any]) -> bool:
 # --- patch 校验 -----------------------------------------------------------
 
 
-def validate_patch(graph: dict[str, Any], patch: dict[str, Any]) -> bool:
-    return _patch_validation_error(graph, patch) is None
-
-
 def _apply_valid_patch(graph: dict[str, Any], patch: dict[str, Any]) -> tuple[bool, str | None]:
     reason = _patch_validation_error(graph, patch)
     if reason is not None:
@@ -1784,10 +1860,6 @@ def _new_node_validation_error(node: Any, existing_ids: set[str]) -> str | None:
     if not _valid_existing_node(node):
         return "add_node.node 不符合节点类型约束"
     return None
-
-
-def _valid_new_node(node: Any, existing_ids: set[str]) -> bool:
-    return _new_node_validation_error(node, existing_ids) is None
 
 
 def _valid_existing_node(node: dict[str, Any]) -> bool:
@@ -1888,14 +1960,6 @@ def _new_edge_validation_error(graph: dict[str, Any], edge: Any) -> str | None:
     return _candidate_topology_error(graph, {"op": "add_edge", "edge": edge})
 
 
-def _valid_new_edge(graph: dict[str, Any], edge: Any) -> bool:
-    return _new_edge_validation_error(graph, edge) is None
-
-
-def _valid_candidate_graph(graph: dict[str, Any], patch: dict[str, Any]) -> bool:
-    return _candidate_graph_error(graph, patch) is None
-
-
 def _candidate_graph_error(graph: dict[str, Any], patch: dict[str, Any]) -> str | None:
     candidate = deepcopy(graph)
     if not _apply_patch(candidate, patch):
@@ -1905,10 +1969,6 @@ def _candidate_graph_error(graph: dict[str, Any], patch: dict[str, Any]) -> str 
     except GraphValidationError as exc:
         return str(exc) or "graph 结构校验失败"
     return None
-
-
-def _valid_candidate_topology(graph: dict[str, Any], patch: dict[str, Any]) -> bool:
-    return _candidate_topology_error(graph, patch) is None
 
 
 def _candidate_topology_error(graph: dict[str, Any], patch: dict[str, Any]) -> str | None:

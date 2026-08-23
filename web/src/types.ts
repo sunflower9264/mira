@@ -83,14 +83,14 @@ export interface WorkflowLintResult {
   issues: WorkflowLintIssue[];
 }
 
-export interface GraphNodeSize {
+interface GraphNodeSize {
   width: number;
   height: number;
 }
 
 export type GraphNodeSizeMap = Record<string, GraphNodeSize>;
 
-export interface NodeBase {
+interface NodeBase {
   id: string;
   type: NodeType;
   position: { x: number; y: number };
@@ -98,7 +98,7 @@ export interface NodeBase {
   description?: string;
 }
 
-export type OutputContractType = 'json' | 'html' | 'artifact';
+type OutputContractType = 'json' | 'html' | 'artifact';
 export type ArtifactContractKind =
   | 'image'
   | 'code'
@@ -155,25 +155,25 @@ export interface UploadRef {
   created_at: string;
 }
 
-export interface TextAssetNode extends NodeBase {
+interface TextAssetNode extends NodeBase {
   type: 'asset';
   asset_kind: 'text';
   content: string;
 }
 
-export interface UrlAssetNode extends NodeBase {
+interface UrlAssetNode extends NodeBase {
   type: 'asset';
   asset_kind: 'url';
   urls: string[];
 }
 
-export interface FileAssetNode extends NodeBase {
+interface FileAssetNode extends NodeBase {
   type: 'asset';
   asset_kind: 'file';
   uploads: UploadRef[];
 }
 
-export interface DrawingAssetNode extends NodeBase {
+interface DrawingAssetNode extends NodeBase {
   type: 'asset';
   asset_kind: 'drawing';
   upload: UploadRef | null;
@@ -271,14 +271,14 @@ export interface Step {
   logs: LogLine[];
 }
 
-export interface RunTraceChunk {
+interface RunTraceChunk {
   event_id: number;
   type: 'text' | 'tool_call' | 'tool_result' | 'error' | 'done';
   text?: string | null;
   raw?: Record<string, unknown> | null;
 }
 
-export interface RunTraceArtifact {
+interface RunTraceArtifact {
   id: string;
   name: string;
   size: number;
@@ -341,7 +341,7 @@ export interface RunStepTrace {
   artifacts_truncated: boolean;
 }
 
-export interface RunRecovery {
+interface RunRecovery {
   resumable: boolean;
   resume_from_node_id?: string | null;
   reason?: string | null;

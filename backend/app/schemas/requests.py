@@ -40,6 +40,7 @@ class NlCompileIn(BaseModel):
     instruction: str
     current_graph: dict[str, Any]
     compile_id: str | None = None
+    attachments: list[RunAttachmentRef] = Field(default_factory=list)
 
 
 class NlCompileResumeIn(BaseModel):

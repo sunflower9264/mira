@@ -17,7 +17,7 @@ type Density = 'compact' | 'spacious';
  * 单个 user_input 节点的提交值。简单字符串与带附件的 RunInputValue 形态都支持，
  * 后端 normalize_run_inputs 会统一处理。
  */
-export interface LaunchInputValue {
+interface LaunchInputValue {
   value: string;
   attachments?: { id: string; name?: string }[];
 }

@@ -109,31 +109,6 @@ def _redact_mcp_headers(mcp_servers: list[dict]) -> list[dict]:
     return redacted
 
 
-async def has_enabled_agent(db: AsyncSession) -> bool:
-    settings = await settings_out(db)
-    return any(agent.enabled for agent in settings.agents)
-
-
-async def require_enabled_agent(db: AsyncSession) -> None:
-    if not await has_enabled_agent(db):
-        raise HTTPException(status_code=400, detail=NO_ENABLED_AGENT_DETAIL)
-
-
-async def save_agent_enabled(db: AsyncSession, agent_id: str, enabled: bool, *, commit: bool = True) -> MiraSettings:
-    row = await get_or_create_settings_row(db)
-    agents = loads(row.agents_json, default_agents())
-    row.agents_json = dumps([
-        _clean_agent({**agent, "enabled": enabled}) if agent.get("id") == agent_id else _clean_agent(agent)
-        for agent in agents
-    ])
-    row.updated_at = now_utc()
-    if commit:
-        await db.commit()
-    else:
-        await db.flush()
-    return await settings_out(db, reveal_keys=True)
-
-
 async def save_agent_config_metadata(
     db: AsyncSession,
     agent_id: str,

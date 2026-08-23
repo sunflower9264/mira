@@ -82,7 +82,7 @@ def test_run_name_falls_back_to_app_name_and_can_be_renamed(auth_client, enable_
     assert renamed.status_code == 200, renamed.text
     assert renamed.json()["name"] == "手动命名"
 
-    listed = auth_client.get(f"/api/apps/{app['id']}/runs").json()
+    listed = auth_client.get(f"/api/apps/{app['id']}/runs/summary").json()
     assert listed[0]["name"] == "手动命名"
 
 

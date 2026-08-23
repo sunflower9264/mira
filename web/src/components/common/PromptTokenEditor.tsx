@@ -206,7 +206,7 @@ function renderPromptValue(editor: HTMLElement, value: string, tokens: PromptTok
     const tag = document.createElement('span');
     tag.setAttribute(TOKEN_ATTRIBUTE, part.value);
     tag.setAttribute('contenteditable', 'false');
-    tag.className = promptTokenClassName(part.kind);
+    tag.className = promptTokenClassName();
     tag.textContent = part.label;
     const kindLabel = promptTokenKindLabel(part.kind);
     tag.title = `${kindLabel}：${part.value}${part.description ? `\n${part.description}` : ''}`;
@@ -215,7 +215,7 @@ function renderPromptValue(editor: HTMLElement, value: string, tokens: PromptTok
   editor.replaceChildren(fragment);
 }
 
-function promptTokenClassName(_kind: PromptTokenDefinition['kind']): string {
+function promptTokenClassName(): string {
   return 'mx-0.5 inline-flex select-all items-center rounded-md border border-blue-200 bg-blue-50 px-1.5 py-0.5 text-xs font-medium leading-none text-blue-700';
 }
 

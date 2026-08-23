@@ -5,7 +5,7 @@ export interface AgentOption {
   value: AgentKind;
 }
 
-export const AGENT_NAME: Record<AgentKind, string> = {
+const AGENT_NAME: Record<AgentKind, string> = {
   claude: 'Claude Code',
   codex: 'Codex',
 };
@@ -61,7 +61,7 @@ export function agentName(agent: AppAgentKind | undefined): string {
   return agent ? AGENT_NAME[agent] : '未选择 Agent';
 }
 
-export function reasoningEffortsForAgent(agent: AppAgentKind | undefined): ReasoningEffort[] {
+function reasoningEffortsForAgent(agent: AppAgentKind | undefined): ReasoningEffort[] {
   if (agent === 'claude') return CLAUDE_REASONING_EFFORTS;
   if (agent === 'codex') return CODEX_REASONING_EFFORTS;
   return [];

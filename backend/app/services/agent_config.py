@@ -181,21 +181,6 @@ def normalize_codex_auth_content(content: str) -> str:
     return content
 
 
-def is_codex_auth_configured(content: str) -> bool:
-    data = _json_object(content, "Codex auth")
-    api_key = data.get("OPENAI_API_KEY")
-    if isinstance(api_key, str) and api_key.strip():
-        return True
-    for key in ("access_token", "refresh_token", "id_token"):
-        value = data.get(key)
-        if isinstance(value, str) and value.strip():
-            return True
-    tokens = data.get("tokens")
-    if isinstance(tokens, dict):
-        return any(isinstance(value, str) and value.strip() for value in tokens.values())
-    return False
-
-
 def _json_object(content: str, label: str) -> dict[str, Any]:
     try:
         data = json.loads(content or "{}")

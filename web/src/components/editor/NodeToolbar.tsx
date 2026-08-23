@@ -21,7 +21,7 @@ const ITEMS = [
   { type: 'output' as const, label: '输出', icon: OutputIcon },
 ];
 
-export const TOOLBAR_NODE_DRAG_TYPE = 'application/x-ai-mira-node-type';
+const TOOLBAR_NODE_DRAG_TYPE = 'application/x-ai-mira-node-type';
 const NODE_HALF_WIDTH = 110;
 const NODE_HALF_HEIGHT = 40;
 

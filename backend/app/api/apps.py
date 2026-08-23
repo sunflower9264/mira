@@ -59,7 +59,6 @@ def _redacted_lint_out(result: dict[str, Any]) -> WorkflowLintOut:
 
 @router.get("/apps")
 async def list_apps(
-    mine: bool = Query(False),
     gallery: bool = Query(False),
     market: bool = Query(False),
     user: User = Depends(get_current_user),

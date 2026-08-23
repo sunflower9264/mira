@@ -36,7 +36,6 @@ from app.services.runs import (
     create_rerun_from_record,
     delete_run_record,
     list_run_summaries_for_app,
-    list_runs_for_app,
     load_run_or_404,
     resume_groups_for_waiting_step,
     submit_persisted_resume,
@@ -65,7 +64,7 @@ def _protected_event_transform(run: Run, app: App | None, user_id: str):
         if node.get("type") == "output"
     }
 
-    def transform(event_id: int, event: str, data: dict) -> tuple[str, dict] | None:
+    def transform(_event_id: int, event: str, data: dict) -> tuple[str, dict] | None:
         node_id = data.get("node_id")
         if event == "run.end" and data.get("error"):
             return event, {**data, "error": REDACTED_RUN_ERROR}
@@ -166,16 +165,6 @@ async def patch_run(
     db: AsyncSession = Depends(get_db),
 ) -> RunOut:
     return await update_run_name(db, run_id, user.id, payload.name)
-
-
-@router.get("/apps/{app_id}/runs", response_model=list[RunOut])
-async def list_runs_for_app_endpoint(
-    app_id: str,
-    limit: int = Query(50, ge=1, le=200),
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-) -> list[RunOut]:
-    return await list_runs_for_app(db, app_id, user.id, limit=limit)
 
 
 @router.get("/apps/{app_id}/runs/summary", response_model=list[RunSummaryOut])

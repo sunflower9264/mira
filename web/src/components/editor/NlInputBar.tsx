@@ -321,6 +321,7 @@ export function NlInputBar({ empty }: { empty: boolean }) {
   const runCompile = async (
     instruction: string,
     kind: ActiveCompile['kind'] = 'initial',
+    uploaded: { id: string; name?: string }[] = [],
   ): Promise<boolean> => {
     if (!app || !instruction.trim()) return false;
     const compileId = `nlc_${uuid()}`;
@@ -332,6 +333,7 @@ export function NlInputBar({ empty }: { empty: boolean }) {
         compile_id: compileId,
         instruction,
         current_graph: app.graph,
+        attachments: uploaded,
       }, controller.signal);
       if (activeCompileRef.current?.id !== compileId) return false;
       if (response.status === 'planning' || response.status === 'applying') {
@@ -465,10 +467,18 @@ export function NlInputBar({ empty }: { empty: boolean }) {
       attachments.length > 0 ? `\n\n附件: ${attachments.map((a) => a.name).join('、')}` : '';
     const instruction = `${value}${attachmentNote}`.trim();
     if (!instruction) return;
-    const ok = await runCompile(instruction);
-    if (ok) {
-      setValue('');
-      setAttachments([]);
+    setSubmitting(true);
+    try {
+      const uploaded = attachments.length > 0 ? await uploadPending() : [];
+      const ok = await runCompile(instruction, 'initial', uploaded);
+      if (ok) {
+        setValue('');
+        setAttachments([]);
+      }
+    } catch (error) {
+      showCaughtError(error, '上传附件失败', '上传失败');
+    } finally {
+      if (!activeCompileRef.current) setSubmitting(false);
     }
   };
 

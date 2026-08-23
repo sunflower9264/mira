@@ -499,6 +499,49 @@ class SequenceRuntime:
         )
 
 
+class OutputContractRepairRuntime:
+    def __init__(self) -> None:
+        self.execute_calls: list[dict[str, Any]] = []
+
+    async def detect_status(self) -> AgentProviderStatus:
+        return AgentProviderStatus(
+            installed=True,
+            runnable=True,
+            identity="output-contract-repair",
+            method="test",
+            checked_at=now_utc(),
+        )
+
+    async def execute(self, **kwargs) -> AgentExecutionResult:
+        if kwargs["runtime_policy"] == "ask_user_plan":
+            text = '{"action":"complete","decision_summary":"无需额外提问。","reason":"测试场景不需要补充用户决策。"}'
+            return AgentExecutionResult(
+                session_id=kwargs["session_id"],
+                total_text=text,
+                finished_with="done",
+            )
+        self.execute_calls.append(
+            {
+                "prompt": kwargs["prompt"],
+                "session_id": kwargs["session_id"],
+                "cwd": kwargs["cwd"],
+                "output_schema": kwargs["output_schema"],
+            }
+        )
+        call_number = len(self.execute_calls)
+        text = {
+            1: "UPSTREAM",
+            2: "这不是 HTML 契约输出",
+            3: '{"html":"<section>RECOVERED</section>"}',
+        }[call_number]
+        await kwargs["on_chunk"](AgentChunk(type="text", text=text))
+        return AgentExecutionResult(
+            session_id=kwargs["session_id"] or "output_repair_session",
+            total_text=text,
+            finished_with="done",
+        )
+
+
 class ParallelProbeRuntime:
     def __init__(self, *, delay: float = 0.2) -> None:
         self.delay = delay
@@ -620,6 +663,55 @@ class SharedWorkspaceRuntime:
         await on_chunk(AgentChunk(type="text", text=text))
         return AgentExecutionResult(
             session_id=session_id or "shared_workspace_session",
+            total_text=text,
+            finished_with="done",
+        )
+
+
+class CheckpointRerunWorkspaceRuntime:
+    def __init__(self) -> None:
+        self.rerun_cut_initial_state: str | None = None
+
+    async def detect_status(self) -> AgentProviderStatus:
+        return AgentProviderStatus(
+            installed=True,
+            runnable=True,
+            identity="checkpoint-rerun-workspace",
+            method="test",
+            checked_at=now_utc(),
+        )
+
+    async def execute(self, **kwargs) -> AgentExecutionResult:
+        prompt = kwargs["prompt"]
+        session_id = kwargs["session_id"]
+        cwd = kwargs["cwd"]
+        on_chunk = kwargs["on_chunk"]
+        fork_session = kwargs["fork_session"]
+        if "你是 Mira RunAgent 的 fan-in 合并协调 Agent" in prompt:
+            text = _merge_workspace(cwd)
+        elif kwargs["runtime_policy"] == "ask_user_plan":
+            text = '{"action":"complete","decision_summary":"无需额外提问。","reason":"测试场景不需要补充用户决策。"}'
+        elif "checkpoint-before" in prompt:
+            (cwd / "checkpoint-state.txt").write_text("BEFORE_CUT", encoding="utf-8")
+            text = "BEFORE"
+        elif "source-cut" in prompt:
+            (cwd / "checkpoint-state.txt").write_text("SOURCE_CUT", encoding="utf-8")
+            text = "SOURCE_CUT"
+        elif "source-after-cut" in prompt:
+            (cwd / "checkpoint-state.txt").write_text("AFTER_CUT", encoding="utf-8")
+            text = "AFTER_CUT"
+        elif "rerun-cut" in prompt:
+            self.rerun_cut_initial_state = (cwd / "checkpoint-state.txt").read_text(encoding="utf-8")
+            (cwd / "checkpoint-state.txt").write_text("RERUN_CUT", encoding="utf-8")
+            text = "RERUN_CUT"
+        else:
+            text = _structured_text("<section>DONE</section>", kwargs["output_schema"])
+        await on_chunk(AgentChunk(type="text", text=text))
+        next_session_id = session_id or "checkpoint_rerun_session"
+        if fork_session and session_id:
+            next_session_id = f"{session_id}_fork"
+        return AgentExecutionResult(
+            session_id=next_session_id,
             total_text=text,
             finished_with="done",
         )
@@ -2295,6 +2387,68 @@ def test_rerun_from_forks_frozen_checkpoint_session_without_exposing_it(auth_cli
         set_runtime_override(MockRuntime())
 
 
+def test_rerun_from_restores_cut_checkpoint_when_same_branch_has_later_frozen_checkpoint(
+    auth_client,
+    enable_claude_agent,
+):
+    enable_claude_agent()
+    runtime = CheckpointRerunWorkspaceRuntime()
+    set_runtime_override(runtime)
+    source_graph = {
+        "agent": "claude",
+        "nodes": [
+            _generate_node("n_before", prompt="checkpoint-before"),
+            _generate_node("n_cut", prompt="source-cut"),
+            _generate_node("n_after", prompt="source-after-cut"),
+            _output_node("n_out", source="n_after", prompt="source-output"),
+        ],
+        "execution_edges": [
+            {"id": "e1", "source": "n_before", "target": "n_cut"},
+            {"id": "e2", "source": "n_cut", "target": "n_after"},
+            {"id": "e3", "source": "n_after", "target": "n_out"},
+        ],
+    }
+    try:
+        app_id = _build_app(auth_client, graph=source_graph)
+        source = auth_client.post("/api/runs", json={"app_id": app_id, "inputs": {}}).json()
+        source_final = _wait_for_terminal(auth_client, source["run_id"])
+        assert source_final["status"] == "success", source_final
+
+        current_graph = {
+            "agent": "claude",
+            "nodes": [
+                _generate_node("n_before", prompt="frozen-before"),
+                _generate_node("n_cut", prompt="rerun-cut"),
+                _generate_node("n_after", prompt="frozen-after"),
+                _output_node("n_out", source="n_cut", prompt="rerun-output"),
+            ],
+            "execution_edges": [
+                {"id": "e1", "source": "n_before", "target": "n_cut"},
+                {"id": "e2", "source": "n_before", "target": "n_after"},
+                {"id": "e3", "source": "n_cut", "target": "n_out"},
+                {"id": "e4", "source": "n_after", "target": "n_out"},
+            ],
+        }
+        response = auth_client.patch(f"/api/apps/{app_id}", json={"graph": current_graph})
+        assert response.status_code == 200, response.text
+
+        created = auth_client.post(
+            f"/api/runs/{source['run_id']}/rerun-from",
+            json={"app_id": app_id, "node_id": "n_cut"},
+        )
+        assert created.status_code == 200, created.text
+        final = _wait_for_terminal(auth_client, created.json()["run_id"])
+
+        assert final["status"] == "success", final
+        by_id = {step["node_id"]: step for step in final["steps"]}
+        assert by_id["n_before"]["status"] == "success"
+        assert by_id["n_after"]["status"] == "success"
+        assert by_id["n_cut"]["output"] == "RERUN_CUT"
+        assert runtime.rerun_cut_initial_state == "BEFORE_CUT"
+    finally:
+        set_runtime_override(MockRuntime())
+
+
 def test_rerun_cut_bypasses_new_upstream_and_ignores_upstream_input_override(auth_client, enable_claude_agent):
     enable_claude_agent()
     source_graph = {
@@ -3138,6 +3292,42 @@ def test_executor_repairs_generate_contract_output_once(auth_client, enable_clau
     assert "不要总结、翻译、润色或补充新事实" in repair_prompt
     assert runtime.session_ids == [None, "sequence_session_1"]
     assert any("输出契约校验失败，尝试自动修正" in log["text"] for log in step["logs"])
+
+
+def test_executor_repairs_output_contract_once_in_same_session_and_workspace(
+    auth_client,
+    enable_claude_agent,
+):
+    enable_claude_agent()
+    runtime = OutputContractRepairRuntime()
+    set_runtime_override(runtime)
+    try:
+        generate = _generate_node("n_gen", prompt="生成中间结果")
+        generate["ask_user_enabled"] = False
+        graph = {
+            "agent": "claude",
+            "nodes": [
+                generate,
+                _output_node("n_out", source="n_gen", prompt="展示最终 HTML"),
+            ],
+            "execution_edges": [{"id": "e1", "source": "n_gen", "target": "n_out"}],
+        }
+        app_id = _build_app(auth_client, graph=graph)
+        run = auth_client.post("/api/runs", json={"app_id": app_id, "inputs": {}}).json()
+        final = _wait_for_terminal(auth_client, run["run_id"])
+    finally:
+        set_runtime_override(MockRuntime())
+
+    assert final["status"] == "success", final
+    by_id = {step["node_id"]: step for step in final["steps"]}
+    assert by_id["n_out"]["output"] == "<section>RECOVERED</section>"
+    output_calls = [
+        call for call in runtime.execute_calls if call["output_schema"] is not None
+    ]
+    assert len(output_calls) == 2
+    assert output_calls[0]["session_id"] == output_calls[1]["session_id"] == "output_repair_session"
+    assert output_calls[0]["cwd"] == output_calls[1]["cwd"]
+    assert "这不是 HTML 契约输出" in output_calls[1]["prompt"]
 
 
 def test_executor_repairs_office_artifact_validation_once(

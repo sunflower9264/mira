@@ -6,7 +6,6 @@ from typing import Any
 
 from app.services.artifacts import file_sha256
 from app.services.output_contracts import artifact_output_for_storage, output_contract_for_node
-from app.services.runtime_uploads import RuntimeUploadRef
 from app.utils import new_id
 
 
@@ -122,36 +121,6 @@ def artifact_items(value: Any) -> list[dict[str, Any]]:
     if not is_output_envelope(value):
         return []
     return [item for item in value.get("artifacts", []) if isinstance(item, dict)]
-
-
-def runtime_input_refs(value: Any, *, run_workspace: Path) -> list[RuntimeUploadRef]:
-    refs: list[RuntimeUploadRef] = []
-    for item in artifact_items(value):
-        path_text = item.get("path")
-        artifact_id = item.get("artifact_id")
-        if not isinstance(path_text, str) or not isinstance(artifact_id, str):
-            continue
-        path = _resolve_declared_artifact(run_workspace, path_text)
-        expected_size = item.get("size")
-        expected_sha256 = item.get("sha256")
-        try:
-            current_size = path.stat().st_size if path is not None else None
-            current_sha256 = file_sha256(path) if path is not None else None
-        except OSError as exc:
-            raise WorkflowDataIntegrityError(
-                f"声明的上游 artifact 不可用：{path_text}"
-            ) from exc
-        if (
-            path is None
-            or not isinstance(expected_size, int)
-            or current_size != expected_size
-            or not isinstance(expected_sha256, str)
-            or current_sha256 != expected_sha256
-        ):
-            raise WorkflowDataIntegrityError(f"声明的上游 artifact 不可用：{path_text}")
-        name = item.get("name") if isinstance(item.get("name"), str) else path.name
-        refs.append(RuntimeUploadRef(id=artifact_id, path=path, name=name))
-    return refs
 
 
 def copy_reused_output_envelope(

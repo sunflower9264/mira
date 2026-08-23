@@ -34,4 +34,4 @@
 
 收益是线性任务不再因节点边界丢失上下文，节点图只负责控制流；并行仍有明确隔离，汇合决策拥有完整证据。代价是后端必须持久化 session tree、workspace checkpoint 和 join 操作，并承担 checkpoint 存储与 provider fork 能力差异。
 
-旧 Run 不做迁移兼容：可以只读查看，但不能伪造缺失的 session/workspace 状态继续执行。
+开发阶段不保留旧运行时或旧 Run 数据；数据库中的 Run 均使用本 ADR 定义的 session/workspace 架构。

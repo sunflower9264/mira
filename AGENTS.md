@@ -53,7 +53,7 @@ Mira 是一个参考 Google Opal 思路的可视化 AI app 搭建与运行项目
 - `backend/seeds/gallery.json` 同步出的内置模板归属 `system_gallery`，源应用只读；模板通过 `gallery=true` 获取，普通市场通过 `market=true` 获取且不包含 `system_gallery`。
 - Settings、Skills、MCP、Agent config、支持模型、Instructions 和 Prompt Templates 是全局共享数据；写操作必须走 admin 权限。
 - MCP/Skills 默认只在普通运行中按 App 允许列表注入；只有 `planning_enabled=true` 的 Tool 才能进入 NL compile、Prompt Assistant 和运行期 ask_user preflight 的 planning/read-only 阶段。
-- NL compile 是持久化两阶段流程：`POST /api/nlcompile` 只生成可确认方案，`POST /api/nlcompile/{compile_id}/apply` 才返回 `new_graph`；active/refine/resume/cancel 以 `nlcompile_sessions` 为事实来源。
+- NL compile 是持久化两阶段流程：`POST /api/nlcompile` 只生成可确认方案，`POST /api/nlcompile/{compile_id}/apply` 才返回 `new_graph`；active/refine/resume/cancel 以 `nlcompile_sessions` 为事实来源。首次请求可携带当前用户的 upload 引用，引用随会话历史持久化，并在 plan/apply Agent 调用时通过 `/mnt/inputs` 提供文件内容。
 - Prompt Assistant 使用统一 `/api/prompt-assistant` 接口和 `prompt_assistant_generations` 持久化等待态；不要新增旧式 `prompt_helper` 命名或 `/api/prompt-helper` 接口。
 - JSON output contract 和 strict `json_schema` 仍是内部校验契约，由 AI 根据节点任务维护；普通用户界面不展示 JSON Schema、字段大纲、字段引用或“可引用结果”入口。
 - `ask_user` 用于 NL compile 方案阶段、Prompt Assistant 和 app run 中段交互。请求必须包含 `context.title` 和 `context.summary`；模型选项必须是 2-3 个真实选项，包含 `label`、`description`、`recommended`；后端统一追加 `以上都不是`。只有 `generate` 可设置可选 bool `ask_user_enabled`；设为 `false` 时完全跳过该节点的运行期 ask_user preflight，省略或设为 `true` 时沿用默认判定。

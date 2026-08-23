@@ -12,7 +12,6 @@ from fastapi import HTTPException
 
 from app.config import get_settings
 from app.runtime.base import AskUserCallback, AskUserRequest, AskUserResult
-from app.utils import dumps
 
 
 _INTERNAL_BRIDGES: dict[str, "InternalAskUserBridge"] = {}
@@ -138,15 +137,6 @@ async def handle_internal_ask_user(session_id: str, authorization: str | None, p
         raise HTTPException(status_code=400, detail="invalid payload")
     result = await bridge.handle(payload)
     return result.model_dump(exclude_none=True)
-
-
-def serialize_ask_user_tool_result(result: AskUserResult) -> str:
-    payload = result.model_dump(exclude_none=True)
-    payload.pop("ok", None)
-    payload.pop("error", None)
-    return dumps(payload)
-
-
 def _write_json(handler: BaseHTTPRequestHandler, status: int, payload: dict[str, Any]) -> None:
     raw = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     handler.send_response(status)

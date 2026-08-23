@@ -28,7 +28,6 @@ class Run(Base):
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
-    runtime_version: Mapped[int] = mapped_column(Integer, default=2)
 
 
 class Step(Base):
