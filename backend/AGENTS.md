@@ -53,9 +53,9 @@
 - 后端启动除标记未完成 Run 为 `interrupted` 外，还会删除数据库中已不存在的普通 Run workspace，并保留 `_nlcompile` 等特殊 workspace。
 - Run Files 和 Step Trace 按需从成功 artifact contract Step 的声明产物组装，不扫描 workspace，也不新增 artifact 表。响应必须返回 `sha256` 和 `integrity`（`verified` / `modified`）以及 hash-bound 签名下载链接，不返回内部 `path`，禁止泄漏 runtime 本地绝对路径；`modified` 产物不可下载。
 - NL compile 使用 `nlcompile_sessions` 持久化两阶段流程：plan 返回可确认方案，apply 才生成 graph；active/resume/refine/cancel 必须校验会话归属。首次请求的附件只持久化当前用户 upload 引用，plan/apply 调用时重新校验归属并暂挂到 `/mnt/inputs`。
-- Prompt Assistant 使用 `prompt_assistant_generations` 持久化生成和等待态；按钮调用可 ask_user，一旦 waiting 应允许后续 resume 重放。
+- Prompt Assistant 使用 `prompt_assistant_generations` 持久化生成和等待态；生成过程可进入用户决策 waiting，一旦 waiting 应允许后续 resume 重放。
 - JSON Schema 是内部输出校验实现，由 Prompt Assistant 根据任务维护；面向普通用户的响应、计划和编辑界面不展示 Schema、字段大纲或字段引用控件。
-- Codex planning turn 使用 `collaborationMode=plan`；原生 `item/tool/requestUserInput` 在 runtime 层归一化并接入 waiting/resume/SSE，答案通过同一 JSON-RPC request 返回后继续原 turn。用户提问只走这条原生协议，不通过提示词约定工具或增加第二条传输通道。`ask_user_enabled` 只允许出现在 generate 节点且必须为 bool；`false` 跳过运行期提问规划，省略或 `true` 使用默认判定。
+- Codex planning turn 使用 `collaborationMode=plan`；原生 `item/tool/requestUserInput` 在 runtime 层归一化为 `DecisionRequest` 并接入 waiting/resume/SSE，答案通过同一 JSON-RPC request 返回后继续原 turn。用户提问只走这条原生协议，不通过提示词约定工具或增加第二条传输通道。Graph 不保存提问开关；运行期除 `output` 外的 LLM 节点统一先进入 Plan，由 Codex 自主判断是否需要用户决策。
 
 ## Commands
 

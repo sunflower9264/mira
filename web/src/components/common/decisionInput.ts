@@ -1,7 +1,7 @@
 import type { DecisionAnswer, DecisionGroup } from '../../types';
 import type { PillAttachment } from './PillInputBar';
 
-export const ASK_USER_NONE_OPTION = '以上都不是';
+export const DECISION_NONE_OPTION = '以上都不是';
 
 interface DecisionSupplementDraft {
   text: string;

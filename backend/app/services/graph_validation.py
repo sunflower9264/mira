@@ -45,12 +45,6 @@ def validate_graph_structure(graph: dict[str, Any]) -> None:
         node_type = node.get("type")
         if node_type not in NODE_TYPES:
             raise GraphValidationError(f"未知节点类型：{node_type}")
-        if "ask_user_enabled" in node:
-            label = node.get("title") or node.get("id") or "?"
-            if node_type != "generate":
-                raise GraphValidationError(f"节点「{label}」只有 generate 支持 ask_user_enabled")
-            if not isinstance(node.get("ask_user_enabled"), bool):
-                raise GraphValidationError(f"节点「{label}」ask_user_enabled 必须是 bool")
     output_count = sum(1 for node in by_id.values() if node.get("type") == "output")
     if output_count > 1:
         raise GraphValidationError("工作流只能有一个 output 节点")

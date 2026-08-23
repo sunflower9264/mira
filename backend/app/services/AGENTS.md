@@ -26,7 +26,7 @@
 - `tools.py` 管理 MCP/Skills 库存、App disabled tools、run snapshot allowed tools 和 planning-only `planning_enabled` 过滤。
 - NL compile 使用 `nlcompile_sessions` 持久化 plan/wait/apply/refine/cancel；首次请求附件以 upload 引用写入会话历史，并在 plan/apply 调用时校验归属后挂载到 `/mnt/inputs`；plan 阶段通过 Codex 原生 `requestUserInput` 交互，apply 阶段禁止继续交互。
 - NL compile apply 将 patches 作为整批在临时 graph 上模拟和校验，失败可让 Agent 重新生成；不得返回半应用 graph。
-- NL compile apply 返回前调用 Prompt Assistant 后处理 prompt，并调用 graph layout 美化；这些后处理不进入 ask_user。
+- NL compile apply 返回前调用 Prompt Assistant 后处理 prompt，并调用 graph layout 美化；这些后处理不进入 decision_request。
 - Prompt Assistant 使用 `prompt_assistant_generations` 持久化生成、waiting、resume、cancel、active；内存 session 只用于当前进程快速等待和取消。
 - Codex 原生 `requestUserInput` 在 runtime 层归一化为 Mira decision request；等待、resume、SSE 和附件落地仍由 service 层维护，不通过 prompt 或 MCP 约定工具路由。
 - `runtime_paths.py` 是 runtime 文件路径优先来源；现有少量直接使用 `runtime_dir()` 的清理逻辑不要继续扩散，新增路径 helper 优先放回 `runtime_paths.py`。

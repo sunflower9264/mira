@@ -201,7 +201,7 @@ async def resume_run(
     await validate_live_resume(db, user.id, run_id, payload, result)
     channel = get_run_hub().get(run_id)
     ack_future = (
-        channel.submit_resume(payload.node_id, payload.tool_use_id, result)
+        channel.submit_resume(payload.node_id, payload.request_id, result)
         if channel is not None
         else None
     )

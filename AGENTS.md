@@ -56,7 +56,7 @@ Mira 是一个参考 Google Opal 思路的可视化 AI app 搭建与运行项目
 - NL compile 是持久化两阶段流程：`POST /api/nlcompile` 只生成可确认方案，`POST /api/nlcompile/{compile_id}/apply` 才返回 `new_graph`；active/refine/resume/cancel 以 `nlcompile_sessions` 为事实来源。首次请求可携带当前用户的 upload 引用，引用随会话历史持久化，并在 plan/apply Agent 调用时通过 `/mnt/inputs` 提供文件内容。
 - Prompt Assistant 使用统一 `/api/prompt-assistant` 接口和 `prompt_assistant_generations` 持久化等待态；不要新增旧式 `prompt_helper` 命名或 `/api/prompt-helper` 接口。
 - JSON output contract 和 strict `json_schema` 仍是内部校验契约，由 AI 根据节点任务维护；普通用户界面不展示 JSON Schema、字段大纲、字段引用或“可引用结果”入口。
-- 用户提问用于 NL compile 方案阶段、Prompt Assistant 和 app run 中段交互。Codex planning turn 使用 `collaborationMode=plan`，原生 `item/tool/requestUserInput` 由 runtime 归一化为 Mira waiting 请求并把答案回填同一 JSON-RPC request；用户提问只走这条原生协议，不通过 prompt 约定工具或增加第二条传输通道。只有 `generate` 可设置可选 bool `ask_user_enabled`；设为 `false` 时跳过该节点的运行期提问规划，省略或设为 `true` 时沿用默认判定。
+- 用户提问用于 NL compile 方案阶段、Prompt Assistant 和 app run 中段交互。Codex planning turn 使用 `collaborationMode=plan`，原生 `item/tool/requestUserInput` 由 runtime 归一化为 Mira `DecisionRequest` waiting 请求并把答案回填同一 JSON-RPC request；用户提问只走这条原生协议，不通过 prompt 约定工具或增加第二条传输通道。Graph 不保存提问开关；运行期除 `output` 外的 LLM 节点统一先进入 Plan，由 Codex 自主判断是否需要用户决策。
 
 ## Editing Rules
 

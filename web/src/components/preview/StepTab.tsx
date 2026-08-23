@@ -167,20 +167,6 @@ function GenerateEditor({
         />
         <PromptToolInsertField node={node} editorRef={promptEditorRef} />
       </div>
-      <label className="inline-flex w-fit items-center gap-2 rounded-full bg-[#F9F9F9] px-3 py-2 text-xs font-medium text-black/65">
-        <input
-          type="checkbox"
-          checked={node.ask_user_enabled !== false}
-          onChange={(event) =>
-            patchNode(
-              node.id,
-              { ask_user_enabled: event.target.checked ? undefined : false } as Partial<WorkflowNode>,
-            )
-          }
-          className="h-3.5 w-3.5 accent-black"
-        />
-        运行前允许追问
-      </label>
       {settings && modelOptions.length === 0 && <div className="text-xs text-red-600">请先在设置中填写支持模型。</div>}
       <PromptField
         editorRef={promptEditorRef}

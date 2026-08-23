@@ -20,10 +20,10 @@ VAGUE_BOOK_INPUT = os.getenv("MIRA_REAL_AI_BOOK_INPUT", "我不知道看啥，�
 TIMEOUT_SECONDS = float(os.getenv("MIRA_REAL_AI_TIMEOUT", "120"))
 
 
-def test_deployed_book_recommendation_real_ai_enters_ask_user_waiting() -> None:
-    """真实部署环境回归测试：模糊书单输入应由真实 Agent 主动 ask_user。
+def test_deployed_book_recommendation_real_ai_enters_decision_request_waiting() -> None:
+    """真实部署环境回归测试：模糊书单输入应由真实 Agent 主动 decision_request。
 
-    这个测试故意不使用 MockRuntime，也不依赖 ``[[ask_user:...]]`` 测试标记。
+    这个测试故意不使用 MockRuntime，也不依赖 ``[[decision_request:...]]`` 测试标记。
     它通过部署版 HTTP API 创建真实 run，并等待运行进入 ``waiting_for_user``。
     """
 
@@ -36,7 +36,7 @@ def test_deployed_book_recommendation_real_ai_enters_ask_user_waiting() -> None:
         try:
             body = _wait_for_waiting(client, run_id)
             waiting_step = _waiting_step(body)
-            assert waiting_step["input"]["ask_user"]["groups"], _debug_run(body)
+            assert waiting_step["input"]["decision_request"]["groups"], _debug_run(body)
         finally:
             client.post(f"/api/runs/{run_id}/cancel")
 
@@ -102,7 +102,7 @@ def _wait_for_waiting(client: httpx.Client, run_id: str) -> dict[str, Any]:
         if body["status"] == "waiting_for_user":
             return body
         if body["status"] in terminal:
-            raise AssertionError(f"run ended before ask_user waiting: {_debug_run(body)}")
+            raise AssertionError(f"run ended before decision_request waiting: {_debug_run(body)}")
         time.sleep(1)
     raise AssertionError(f"run did not enter waiting_for_user within {TIMEOUT_SECONDS}s: {_debug_run(last)}")
 

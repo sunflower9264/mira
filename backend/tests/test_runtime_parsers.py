@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 import app.runtime.codex_runtime as codex_runtime
-from app.runtime.base import AskUserResult
+from app.runtime.base import DecisionResult
 from app.runtime.codex_runtime import (
     CodexRuntime,
     _clean_env,
@@ -43,7 +43,7 @@ def test_codex_thread_requests_start_resume_and_fork() -> None:
     resumed = _thread_request(
         session_id="thread_1",
         model=None,
-        runtime_policy="ask_user_plan",
+        runtime_policy="plan",
         fork_session=False,
     )
     assert resumed["method"] == "thread/resume"
@@ -73,7 +73,7 @@ def test_codex_turn_request_uses_native_plan_mode_and_output_schema() -> None:
         prompt="plan this",
         model="gpt-test",
         reasoning_effort="high",
-        runtime_policy="ask_user_plan",
+        runtime_policy="plan",
         output_schema=schema,
     )
     params = request["params"]
@@ -123,12 +123,12 @@ def test_request_user_input_normalizes_native_questions_and_answers() -> None:
             ],
         }
     )
-    assert request.tool_use_id == "item_1"
+    assert request.request_id == "item_1"
     assert request.context.title == "风格"
     assert request.groups[0].options[0].recommended is True
     assert request.groups[0].options[1].recommended is False
 
-    result = AskUserResult(
+    result = DecisionResult(
         answers=[DecisionAnswer(group_id="style", selected=["简洁"])],
         text="使用黑白配色",
     )

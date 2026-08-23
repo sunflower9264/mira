@@ -103,7 +103,7 @@ class RunResumeIn(BaseModel):
     """POST /api/runs/{id}/resume 请求体（阶段 4 启用）。"""
 
     node_id: str
-    tool_use_id: str
+    request_id: str
     answers: list[DecisionAnswer] = Field(default_factory=list)
     text: str | None = None
     attachments: list[RunAttachmentRef] = Field(default_factory=list)
@@ -208,7 +208,7 @@ class RunStepTraceOut(BaseModel):
 class RunWaitingRequestOut(BaseModel):
     context: DecisionRequestContext
     groups: list[DecisionGroup]
-    tool_use_id: str
+    request_id: str
 
 
 class RunRecoveryOut(BaseModel):

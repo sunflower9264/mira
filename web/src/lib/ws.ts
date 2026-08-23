@@ -230,7 +230,7 @@ function toRunEvent(frame: ParsedFrame): RunEvent | null {
           !request ||
           typeof context?.title !== 'string' ||
           typeof context.summary !== 'string' ||
-          typeof request.tool_use_id !== 'string'
+          typeof request.request_id !== 'string'
         ) {
           return null;
         }
@@ -265,7 +265,7 @@ function toRunEvent(frame: ParsedFrame): RunEvent | null {
                   }];
                 })
               : [],
-            tool_use_id: request.tool_use_id,
+            request_id: request.request_id,
           },
         };
       }

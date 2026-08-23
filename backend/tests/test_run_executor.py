@@ -19,7 +19,7 @@ from app.services import node_handlers, output_contracts, run_orchestrator
 from app.services.office_documents import OfficeValidationUnavailable
 from app.services.run_orchestrator import start_run
 from app.services.runtime_paths import run_workspace, uploads_dir
-from app.runtime.base import AgentChunk, AgentExecutionResult, AgentRuntimeStatus, AskUserRequest
+from app.runtime.base import AgentChunk, AgentExecutionResult, AgentRuntimeStatus, DecisionRequest
 from app.runtime.factory import set_runtime_override
 from app.schemas.decision import DecisionGroup
 from app.services.admin import ADMIN_USER_ID
@@ -52,7 +52,7 @@ class ReasoningCaptureRuntime:
         cwd: Path,
         on_chunk,
         cancel_event: asyncio.Event,
-        on_ask_user=None,
+        on_decision_request=None,
         runtime_tools=None,
         runtime_policy="execute",
         output_schema=None,
@@ -67,10 +67,9 @@ class ReasoningCaptureRuntime:
                 "runtime_policy": runtime_policy,
             }
         )
-        if runtime_policy == "ask_user_plan":
+        if runtime_policy == "plan":
             text = json.dumps(
                 {
-                    "action": "complete",
                     "decision_summary": "无需额外提问。",
                     "reason": "测试场景不需要补充用户决策。",
                 },
@@ -113,7 +112,7 @@ class LateSuccessAfterCancelRuntime:
         cwd: Path,
         on_chunk,
         cancel_event: asyncio.Event,
-        on_ask_user=None,
+        on_decision_request=None,
         runtime_tools=None,
         runtime_policy="execute",
         output_schema=None,
@@ -128,8 +127,8 @@ class LateSuccessAfterCancelRuntime:
                 total_text=text,
                 finished_with="done",
             )
-        if runtime_policy == "ask_user_plan":
-            text = '{"action":"complete","decision_summary":"无需额外提问。","reason":"测试场景不需要补充用户决策。"}'
+        if runtime_policy == "plan":
+            text = '{"decision_summary":"无需额外提问。","reason":"测试场景不需要补充用户决策。"}'
             await on_chunk(AgentChunk(type="text", text=text))
             return AgentExecutionResult(session_id=session_id, total_text=text, finished_with="done")
         self.started.set()
@@ -168,15 +167,15 @@ class WorkspacePathRuntime:
         cwd: Path,
         on_chunk,
         cancel_event: asyncio.Event,
-        on_ask_user=None,
+        on_decision_request=None,
         runtime_tools=None,
         runtime_policy="execute",
         output_schema=None,
         session_scope=None,
         fork_session=False,
     ) -> AgentExecutionResult:
-        if runtime_policy == "ask_user_plan":
-            text = '{"action":"complete","decision_summary":"无需额外提问。","reason":"测试场景不需要补充用户决策。"}'
+        if runtime_policy == "plan":
+            text = '{"decision_summary":"无需额外提问。","reason":"测试场景不需要补充用户决策。"}'
             await on_chunk(AgentChunk(type="text", text=text))
             return AgentExecutionResult(session_id=session_id, total_text=text, finished_with="done")
         artifact = cwd / "deliverable.zip"
@@ -211,15 +210,15 @@ class GeneratedImageRuntime:
         cwd: Path,
         on_chunk,
         cancel_event: asyncio.Event,
-        on_ask_user=None,
+        on_decision_request=None,
         runtime_tools=None,
         runtime_policy="execute",
         output_schema=None,
         session_scope=None,
         fork_session=False,
     ) -> AgentExecutionResult:
-        if runtime_policy == "ask_user_plan":
-            text = '{"action":"complete","decision_summary":"无需额外提问。","reason":"测试场景不需要补充用户决策。"}'
+        if runtime_policy == "plan":
+            text = '{"decision_summary":"无需额外提问。","reason":"测试场景不需要补充用户决策。"}'
             await on_chunk(AgentChunk(type="text", text=text))
             return AgentExecutionResult(session_id=session_id, total_text=text, finished_with="done")
         if "你正在生成 Mira output 节点" in prompt:
@@ -270,7 +269,7 @@ class ToolResultOnlyHtmlRuntime:
         cwd: Path,
         on_chunk,
         cancel_event: asyncio.Event,
-        on_ask_user=None,
+        on_decision_request=None,
         runtime_tools=None,
         runtime_policy="execute",
         output_schema=None,
@@ -283,8 +282,8 @@ class ToolResultOnlyHtmlRuntime:
                 "runtime_policy": runtime_policy,
             }
         )
-        if runtime_policy == "ask_user_plan":
-            text = '{"action":"complete","decision_summary":"无需额外提问。","reason":"测试场景不需要补充用户决策。"}'
+        if runtime_policy == "plan":
+            text = '{"decision_summary":"无需额外提问。","reason":"测试场景不需要补充用户决策。"}'
             await on_chunk(AgentChunk(type="text", text=text))
             return AgentExecutionResult(session_id=session_id, total_text=text, finished_with="done")
         if "你正在生成 Mira output 节点" not in prompt:
@@ -325,15 +324,15 @@ class ArtifactContractRuntime:
         cwd: Path,
         on_chunk,
         cancel_event: asyncio.Event,
-        on_ask_user=None,
+        on_decision_request=None,
         runtime_tools=None,
         runtime_policy="execute",
         output_schema=None,
         session_scope=None,
         fork_session=False,
     ) -> AgentExecutionResult:
-        if runtime_policy == "ask_user_plan":
-            text = '{"action":"complete","decision_summary":"无需额外提问。","reason":"测试场景不需要补充用户决策。"}'
+        if runtime_policy == "plan":
+            text = '{"decision_summary":"无需额外提问。","reason":"测试场景不需要补充用户决策。"}'
             await on_chunk(AgentChunk(type="text", text=text))
             return AgentExecutionResult(session_id=session_id, total_text=text, finished_with="done")
         if _is_output_prompt(prompt):
@@ -398,15 +397,15 @@ class OfficeArtifactRepairRuntime:
         cwd: Path,
         on_chunk,
         cancel_event: asyncio.Event,
-        on_ask_user=None,
+        on_decision_request=None,
         runtime_tools=None,
         runtime_policy="execute",
         output_schema=None,
         session_scope=None,
         fork_session=False,
     ) -> AgentExecutionResult:
-        if runtime_policy == "ask_user_plan":
-            text = '{"action":"complete","decision_summary":"无需额外提问。","reason":"测试无需用户决策。"}'
+        if runtime_policy == "plan":
+            text = '{"decision_summary":"无需额外提问。","reason":"测试无需用户决策。"}'
             await on_chunk(AgentChunk(type="text", text=text))
             return AgentExecutionResult(session_id=session_id, total_text=text, finished_with="done")
         if _is_output_prompt(prompt):
@@ -459,15 +458,15 @@ class SequenceRuntime:
         cwd: Path,
         on_chunk,
         cancel_event: asyncio.Event,
-        on_ask_user=None,
+        on_decision_request=None,
         runtime_tools=None,
         runtime_policy="execute",
         output_schema=None,
         session_scope=None,
         fork_session=False,
     ) -> AgentExecutionResult:
-        if runtime_policy == "ask_user_plan":
-            text = '{"action":"complete","decision_summary":"无需额外提问。","reason":"测试场景不需要补充用户决策。"}'
+        if runtime_policy == "plan":
+            text = '{"decision_summary":"无需额外提问。","reason":"测试场景不需要补充用户决策。"}'
             await on_chunk(AgentChunk(type="text", text=text))
             return AgentExecutionResult(session_id=session_id, total_text=text, finished_with="done")
         if _is_output_prompt(prompt):
@@ -503,8 +502,8 @@ class OutputContractRepairRuntime:
         )
 
     async def execute(self, **kwargs) -> AgentExecutionResult:
-        if kwargs["runtime_policy"] == "ask_user_plan":
-            text = '{"action":"complete","decision_summary":"无需额外提问。","reason":"测试场景不需要补充用户决策。"}'
+        if kwargs["runtime_policy"] == "plan":
+            text = '{"decision_summary":"无需额外提问。","reason":"测试场景不需要补充用户决策。"}'
             return AgentExecutionResult(
                 session_id=kwargs["session_id"],
                 total_text=text,
@@ -560,7 +559,7 @@ class ParallelProbeRuntime:
         cwd: Path,
         on_chunk,
         cancel_event: asyncio.Event,
-        on_ask_user=None,
+        on_decision_request=None,
         runtime_tools=None,
         runtime_policy="execute",
         output_schema=None,
@@ -575,7 +574,7 @@ class ParallelProbeRuntime:
                 total_text=text,
                 finished_with="done",
             )
-        if runtime_policy == "ask_user_plan":
+        if runtime_policy == "plan":
             self._next_session += 1
             next_session = (
                 f"{session_id}_fork_{self._next_session}"
@@ -592,7 +591,7 @@ class ParallelProbeRuntime:
                     "runtime_policy": runtime_policy,
                 }
             )
-            text = '{"action":"complete","decision_summary":"无需额外提问。","reason":"测试场景不需要补充用户决策。"}'
+            text = '{"decision_summary":"无需额外提问。","reason":"测试场景不需要补充用户决策。"}'
             await on_chunk(AgentChunk(type="text", text=text))
             return AgentExecutionResult(session_id=next_session, total_text=text, finished_with="done")
         async with self._lock:
@@ -639,8 +638,8 @@ class SharedWorkspaceRuntime:
         session_id = kwargs["session_id"]
         cwd = kwargs["cwd"]
         on_chunk = kwargs["on_chunk"]
-        if kwargs["runtime_policy"] == "ask_user_plan":
-            text = '{"action":"complete","decision_summary":"无需额外提问。","reason":"测试场景不需要补充用户决策。"}'
+        if kwargs["runtime_policy"] == "plan":
+            text = '{"decision_summary":"无需额外提问。","reason":"测试场景不需要补充用户决策。"}'
         elif "write-private-file" in prompt:
             (cwd / "private-upstream.txt").write_text("implicit context", encoding="utf-8")
             text = "A"
@@ -678,8 +677,8 @@ class CheckpointRerunWorkspaceRuntime:
         fork_session = kwargs["fork_session"]
         if "你是 Mira RunAgent 的 fan-in 合并协调 Agent" in prompt:
             text = _merge_workspace(cwd)
-        elif kwargs["runtime_policy"] == "ask_user_plan":
-            text = '{"action":"complete","decision_summary":"无需额外提问。","reason":"测试场景不需要补充用户决策。"}'
+        elif kwargs["runtime_policy"] == "plan":
+            text = '{"decision_summary":"无需额外提问。","reason":"测试场景不需要补充用户决策。"}'
         elif "checkpoint-before" in prompt:
             (cwd / "checkpoint-state.txt").write_text("BEFORE_CUT", encoding="utf-8")
             text = "BEFORE"
@@ -743,7 +742,7 @@ def _read_workspace_context(cwd: Path) -> str:
     )
 
 
-class AskUserJudgmentRuntime:
+class DecisionJudgmentRuntime:
     def __init__(self) -> None:
         self.calls: list[str] = []
         self.plan_prompts: list[str] = []
@@ -768,7 +767,7 @@ class AskUserJudgmentRuntime:
         cwd: Path,
         on_chunk,
         cancel_event: asyncio.Event,
-        on_ask_user=None,
+        on_decision_request=None,
         runtime_tools=None,
         runtime_policy="execute",
         output_schema=None,
@@ -776,16 +775,16 @@ class AskUserJudgmentRuntime:
         fork_session=False,
     ) -> AgentExecutionResult:
         self.calls.append(runtime_policy)
-        if runtime_policy == "ask_user_plan":
+        if runtime_policy == "plan":
             self.plan_prompts.append(prompt)
             context = prompt + "\n" + _read_workspace_context(cwd)
             should_ask = "我不知道看啥" in context and "直接推荐" not in context
             summary = "无需额外提问。"
-            if should_ask and on_ask_user is not None:
+            if should_ask and on_decision_request is not None:
                 self.ask_calls += 1
-                request = AskUserRequest(
+                request = DecisionRequest(
                     context={"title": "确认阅读偏好", "summary": "推荐书籍前需要确认用户希望优先考虑的阅读方向。"},
-                    tool_use_id="toolu_judgment",
+                    request_id="toolu_judgment",
                     groups=[
                         DecisionGroup.model_validate(
                             {
@@ -813,7 +812,7 @@ class AskUserJudgmentRuntime:
                         )
                     ],
                 )
-                result = await on_ask_user(request)
+                result = await on_decision_request(request)
                 if not result.ok:
                     return AgentExecutionResult(
                         session_id=session_id,
@@ -835,7 +834,7 @@ class AskUserJudgmentRuntime:
             text = "ASKED_RESULT" if self.ask_calls else "DIRECT_RESULT"
         await on_chunk(AgentChunk(type="text", text=text))
         return AgentExecutionResult(
-            session_id=session_id or "ask_user_judgment_session",
+            session_id=session_id or "decision_request_judgment_session",
             total_text=text,
             finished_with="done",
         )
@@ -864,14 +863,14 @@ class PlanningCaptureRuntime:
         cwd: Path,
         on_chunk,
         cancel_event: asyncio.Event,
-        on_ask_user=None,
+        on_decision_request=None,
         runtime_tools=None,
         runtime_policy="execute",
         output_schema=None,
         session_scope=None,
         fork_session=False,
     ) -> AgentExecutionResult:
-        if runtime_policy == "ask_user_plan":
+        if runtime_policy == "plan":
             self.plan_prompts.append(prompt)
             text = json.dumps(
                 {"decision_summary": "无需额外提问。", "reason": "测试输入信息充分。"},
@@ -913,7 +912,7 @@ class ParallelTemplateRuntime:
         cwd: Path,
         on_chunk,
         cancel_event: asyncio.Event,
-        on_ask_user=None,
+        on_decision_request=None,
         runtime_tools=None,
         runtime_policy="execute",
         output_schema=None,
@@ -929,13 +928,13 @@ class ParallelTemplateRuntime:
                 finished_with="done",
             )
         context = prompt + "\n" + _read_workspace_context(cwd)
-        if runtime_policy == "ask_user_plan":
+        if runtime_policy == "plan":
             self.plan_prompts.append(prompt)
             summary = "当前节点不需要额外提问。"
-            if "并行示例：必须先调用 ask_user" in context and on_ask_user is not None:
-                request = AskUserRequest(
+            if "信息不足时先确认关键偏好" in context and on_decision_request is not None:
+                request = DecisionRequest(
                     context={"title": "确认并行示例方向", "summary": "继续执行前需要确认并行示例的目标受众。"},
-                    tool_use_id="toolu_parallel_template",
+                    request_id="toolu_parallel_template",
                     groups=[
                         DecisionGroup.model_validate(
                             {
@@ -977,7 +976,7 @@ class ParallelTemplateRuntime:
                         ),
                     ],
                 )
-                result = await on_ask_user(request)
+                result = await on_decision_request(request)
                 if not result.ok:
                     return AgentExecutionResult(
                         session_id=session_id,
@@ -1008,28 +1007,24 @@ class ParallelTemplateRuntime:
         )
 
 
-def _ask_action(group_id: str, label: str, options: list[str]) -> dict[str, Any]:
+def _decision_request(group_id: str, label: str, options: list[str]) -> dict[str, Any]:
     return {
-        "action": "ask",
-        "rationale": f"需要补齐 {label}",
-        "request": {
-            "context": {"title": "确认运行方向", "summary": f"继续运行前需要确认：{label}"},
-            "groups": [
-                {
-                    "id": group_id,
-                    "label": label,
-                    "type": "single",
-                    "options": [
-                        {
-                            "label": option,
-                            "description": f"选择 {option} 会影响后续推荐。",
-                            "recommended": index == 0,
-                        }
-                        for index, option in enumerate(options)
-                    ],
-                }
-            ]
-        },
+        "context": {"title": "确认运行方向", "summary": f"继续运行前需要确认：{label}"},
+        "groups": [
+            {
+                "id": group_id,
+                "label": label,
+                "type": "single",
+                "options": [
+                    {
+                        "label": option,
+                        "description": f"选择 {option} 会影响后续推荐。",
+                        "recommended": index == 0,
+                    }
+                    for index, option in enumerate(options)
+                ],
+            }
+        ],
     }
 
 
@@ -1039,7 +1034,7 @@ def _execute_calls(runtime: ReasoningCaptureRuntime) -> list[dict[str, Any]]:
 
 
 def _planning_calls(runtime: ReasoningCaptureRuntime) -> list[dict[str, Any]]:
-    return [call for call in runtime.calls if call.get("runtime_policy") == "ask_user_plan"]
+    return [call for call in runtime.calls if call.get("runtime_policy") == "plan"]
 
 
 USER_INPUT_NODE = {
@@ -1402,7 +1397,7 @@ def test_executor_forks_sessions_only_for_real_fanout(auth_client, configure_cod
             marker: next(
                 call
                 for call in runtime.execute_calls
-                if marker in str(call["prompt"]) and call["runtime_policy"] == "ask_user_plan"
+                if marker in str(call["prompt"]) and call["runtime_policy"] == "plan"
             )
             for marker in ("root [[respond:ROOT]]", "child a [[respond:A]]", "child b [[respond:B]]")
         }
@@ -1510,12 +1505,12 @@ def test_executor_hides_sessions_on_diamond_fan_in(auth_client, configure_codex)
         set_runtime_override(MockRuntime())
 
 
-def test_parallel_ask_user_is_visible_before_sibling_finishes(auth_client, configure_codex):
+def test_parallel_decision_request_is_visible_before_sibling_finishes(auth_client, configure_codex):
     configure_codex()
-    ask = json.dumps(_ask_action("choice", "选择方向？", ["A", "B"])["request"], ensure_ascii=False)
+    ask = json.dumps(_decision_request("choice", "选择方向？", ["A", "B"]), ensure_ascii=False)
     graph = {
         "nodes": [
-            _generate_node("n_ask", prompt=f"ask now [[ask_user:{ask}]] [[respond:ASK_DONE]]"),
+            _generate_node("n_ask", prompt=f"ask now [[decision_request:{ask}]] [[respond:ASK_DONE]]"),
             _generate_node("n_delay", prompt="delayed sibling [[delay:0.8]] [[respond:SLOW_DONE]]"),
             _output_node("n_out", source="n_ask", prompt="render [[respond:<section>DONE</section>]]"),
         ],
@@ -1537,7 +1532,7 @@ def test_parallel_ask_user_is_visible_before_sibling_finishes(auth_client, confi
         f"/api/runs/{run['run_id']}/resume",
         json={
             "node_id": "n_ask",
-            "tool_use_id": by_id["n_ask"]["input"]["ask_user"]["tool_use_id"],
+            "request_id": by_id["n_ask"]["input"]["decision_request"]["request_id"],
             "answers": [{"group_id": "choice", "selected": ["A"]}],
         },
     )
@@ -1551,12 +1546,12 @@ def test_parallel_ask_user_is_visible_before_sibling_finishes(auth_client, confi
     assert by_id["n_out"]["output"] == "<section>DONE</section>"
 
 
-def test_parallel_sibling_failure_overrides_visible_ask_user(auth_client, configure_codex):
+def test_parallel_sibling_failure_overrides_visible_decision_request(auth_client, configure_codex):
     configure_codex()
-    ask = json.dumps(_ask_action("choice", "选择方向？", ["A", "B"])["request"], ensure_ascii=False)
+    ask = json.dumps(_decision_request("choice", "选择方向？", ["A", "B"]), ensure_ascii=False)
     graph = {
         "nodes": [
-            _generate_node("n_ask", prompt=f"ask now [[ask_user:{ask}]] [[respond:ASK_DONE]]"),
+            _generate_node("n_ask", prompt=f"ask now [[decision_request:{ask}]] [[respond:ASK_DONE]]"),
             _generate_node("n_fail", prompt="delayed failure [[delay:0.4]] fail-now"),
             _output_node("n_out", source="n_ask", prompt="render [[respond:<section>DONE</section>]]"),
         ],
@@ -1582,14 +1577,14 @@ def test_parallel_sibling_failure_overrides_visible_ask_user(auth_client, config
     assert by_id["n_out"]["status"] == "pending"
 
 
-def test_parallel_ask_user_requests_are_queued(auth_client, configure_codex):
+def test_parallel_decision_request_requests_are_queued(auth_client, configure_codex):
     configure_codex()
-    ask_a = json.dumps(_ask_action("choice_a", "选择 A？", ["A1", "A2"])["request"], ensure_ascii=False)
-    ask_b = json.dumps(_ask_action("choice_b", "选择 B？", ["B1", "B2"])["request"], ensure_ascii=False)
+    ask_a = json.dumps(_decision_request("choice_a", "选择 A？", ["A1", "A2"]), ensure_ascii=False)
+    ask_b = json.dumps(_decision_request("choice_b", "选择 B？", ["B1", "B2"]), ensure_ascii=False)
     graph = {
         "nodes": [
-            _generate_node("n_gen_a", prompt=f"ask a [[ask_user:{ask_a}]] [[respond:A_DONE]]"),
-            _generate_node("n_gen_b", prompt=f"ask b [[ask_user:{ask_b}]] [[respond:B_DONE]]"),
+            _generate_node("n_gen_a", prompt=f"ask a [[decision_request:{ask_a}]] [[respond:A_DONE]]"),
+            _generate_node("n_gen_b", prompt=f"ask b [[decision_request:{ask_b}]] [[respond:B_DONE]]"),
             _output_node("n_out", source="n_gen_a", prompt="render [[respond:<section>DONE</section>]]"),
         ],
         "execution_edges": [
@@ -1608,13 +1603,13 @@ def test_parallel_ask_user_requests_are_queued(auth_client, configure_codex):
         first_node = first["recovery"]["resume_from_node_id"]
         assert first_node in expected_groups
         first_step = {step["node_id"]: step for step in first["steps"]}[first_node]
-        first_group = first_step["input"]["ask_user"]["groups"][0]["id"]
+        first_group = first_step["input"]["decision_request"]["groups"][0]["id"]
         assert first_group == expected_groups[first_node]
         response = auth_client.post(
             f"/api/runs/{run_id}/resume",
             json={
                 "node_id": first_node,
-                "tool_use_id": first_step["input"]["ask_user"]["tool_use_id"],
+                "request_id": first_step["input"]["decision_request"]["request_id"],
                 "answers": [{"group_id": first_group, "selected": [expected_answers[first_group]]}],
             },
         )
@@ -1625,13 +1620,13 @@ def test_parallel_ask_user_requests_are_queued(auth_client, configure_codex):
         assert second_node in expected_groups
         assert second_node != first_node
         second_step = {step["node_id"]: step for step in second["steps"]}[second_node]
-        second_group = second_step["input"]["ask_user"]["groups"][0]["id"]
+        second_group = second_step["input"]["decision_request"]["groups"][0]["id"]
         assert second_group == expected_groups[second_node]
         response = auth_client.post(
             f"/api/runs/{run_id}/resume",
             json={
                 "node_id": second_node,
-                "tool_use_id": second_step["input"]["ask_user"]["tool_use_id"],
+                "request_id": second_step["input"]["decision_request"]["request_id"],
                 "answers": [{"group_id": second_group, "selected": [expected_answers[second_group]]}],
             },
         )
@@ -1648,14 +1643,14 @@ def test_parallel_ask_user_requests_are_queued(auth_client, configure_codex):
 
 def test_parallel_second_ask_after_resume_keeps_run_waiting(auth_client, configure_codex):
     configure_codex()
-    ask_first = json.dumps(_ask_action("choice_first", "选择第一步？", ["A1", "A2"])["request"], ensure_ascii=False)
-    ask_second = json.dumps(_ask_action("choice_second", "选择第二步？", ["B1", "B2"])["request"], ensure_ascii=False)
+    ask_first = json.dumps(_decision_request("choice_first", "选择第一步？", ["A1", "A2"]), ensure_ascii=False)
+    ask_second = json.dumps(_decision_request("choice_second", "选择第二步？", ["B1", "B2"]), ensure_ascii=False)
     graph = {
         "nodes": [
-            _generate_node("n_first", prompt=f"first ask [[ask_user:{ask_first}]] [[respond:FIRST_DONE]]"),
+            _generate_node("n_first", prompt=f"first ask [[decision_request:{ask_first}]] [[respond:FIRST_DONE]]"),
             _generate_node("n_short", prompt="short sibling [[delay:0.3]] [[respond:SHORT_DONE]]"),
             _generate_node("n_long", prompt="long sibling [[delay:3.0]] [[respond:LONG_DONE]]"),
-            _generate_node("n_second", prompt=f"second ask [[ask_user:{ask_second}]] [[respond:SECOND_DONE]]"),
+            _generate_node("n_second", prompt=f"second ask [[decision_request:{ask_second}]] [[respond:SECOND_DONE]]"),
             _output_node("n_out", source="n_second", prompt="render [[respond:<section>DONE</section>]]"),
         ],
         "execution_edges": [
@@ -1679,7 +1674,7 @@ def test_parallel_second_ask_after_resume_keeps_run_waiting(auth_client, configu
             f"/api/runs/{run_id}/resume",
             json={
                 "node_id": "n_first",
-                "tool_use_id": first_step["input"]["ask_user"]["tool_use_id"],
+                "request_id": first_step["input"]["decision_request"]["request_id"],
                 "answers": [{"group_id": "choice_first", "selected": ["A1"]}],
             },
         )
@@ -1694,7 +1689,7 @@ def test_parallel_second_ask_after_resume_keeps_run_waiting(auth_client, configu
             f"/api/runs/{run_id}/resume",
             json={
                 "node_id": "n_second",
-                "tool_use_id": by_id["n_second"]["input"]["ask_user"]["tool_use_id"],
+                "request_id": by_id["n_second"]["input"]["decision_request"]["request_id"],
                 "answers": [{"group_id": "choice_second", "selected": ["B1"]}],
             },
         )
@@ -1735,7 +1730,7 @@ def test_parallel_ask_gallery_template_runs_and_waits_for_user(auth_client, conf
         waiting = _wait_for_status(auth_client, run_id, {"waiting_for_user"})
         assert waiting["recovery"]["resume_from_node_id"] == "n_parallel_strategy"
         by_id = {step["node_id"]: step for step in waiting["steps"]}
-        ask = by_id["n_parallel_strategy"]["input"]["ask_user"]
+        ask = by_id["n_parallel_strategy"]["input"]["decision_request"]
         assert by_id["n_parallel_strategy"]["status"] == "waiting_for_user"
         assert by_id["n_parallel_research"]["status"] in {"running", "success"}, by_id["n_parallel_research"]
         assert [group["id"] for group in ask["groups"]] == ["target_audience", "output_style"]
@@ -1745,7 +1740,7 @@ def test_parallel_ask_gallery_template_runs_and_waits_for_user(auth_client, conf
             f"/api/runs/{run_id}/resume",
             json={
                 "node_id": "n_parallel_strategy",
-                "tool_use_id": ask["tool_use_id"],
+                "request_id": ask["request_id"],
                 "answers": [
                     {"group_id": "target_audience", "selected": ["创始团队"]},
                     {"group_id": "output_style", "selected": ["行动清单"]},
@@ -1767,9 +1762,9 @@ def test_parallel_ask_gallery_template_runs_and_waits_for_user(auth_client, conf
         set_runtime_override(MockRuntime())
 
 
-def test_vague_recommendation_input_enters_ask_user_waiting(auth_client, configure_codex):
+def test_vague_recommendation_input_enters_decision_request_waiting(auth_client, configure_codex):
     configure_codex()
-    runtime = AskUserJudgmentRuntime()
+    runtime = DecisionJudgmentRuntime()
     set_runtime_override(runtime)
     run_id: str | None = None
     graph = {
@@ -1790,10 +1785,10 @@ def test_vague_recommendation_input_enters_ask_user_waiting(auth_client, configu
 
         waiting = _wait_for_status(auth_client, run_id, {"waiting_for_user"})
         by_id = {step["node_id"]: step for step in waiting["steps"]}
-        ask = by_id["n_gen"]["input"]["ask_user"]
+        ask = by_id["n_gen"]["input"]["decision_request"]
         assert by_id["n_gen"]["status"] == "waiting_for_user"
         assert runtime.ask_calls == 1
-        assert ask["tool_use_id"] == "toolu_judgment"
+        assert ask["request_id"] == "toolu_judgment"
         assert [option["label"] for option in ask["groups"][0]["options"]] == [
             "轻松入门",
             "文学深度",
@@ -1805,7 +1800,7 @@ def test_vague_recommendation_input_enters_ask_user_waiting(auth_client, configu
             f"/api/runs/{run_id}/resume",
             json={
                 "node_id": "n_gen",
-                "tool_use_id": ask["tool_use_id"],
+                "request_id": ask["request_id"],
                 "answers": [{"group_id": "reading_taste", "selected": ["轻松入门"]}],
             },
         )
@@ -1814,7 +1809,7 @@ def test_vague_recommendation_input_enters_ask_user_waiting(auth_client, configu
         by_id = {step["node_id"]: step for step in final["steps"]}
         assert final["status"] == "success"
         assert by_id["n_gen"]["output"] == "ASKED_RESULT"
-        assert by_id["n_gen"]["input"]["resume"]["answers"] == [
+        assert by_id["n_gen"]["input"]["decision_response"]["answers"] == [
             {"group_id": "reading_taste", "selected": ["轻松入门"]}
         ]
     finally:
@@ -1823,9 +1818,9 @@ def test_vague_recommendation_input_enters_ask_user_waiting(auth_client, configu
         set_runtime_override(MockRuntime())
 
 
-def test_specific_recommendation_input_can_skip_ask_user(auth_client, configure_codex):
+def test_specific_recommendation_input_can_skip_decision_request(auth_client, configure_codex):
     configure_codex()
-    runtime = AskUserJudgmentRuntime()
+    runtime = DecisionJudgmentRuntime()
     set_runtime_override(runtime)
     graph = {
         "nodes": [
@@ -1851,7 +1846,7 @@ def test_specific_recommendation_input_can_skip_ask_user(auth_client, configure_
         assert runtime.ask_calls == 0
         assert by_id["n_gen"]["status"] == "success"
         assert by_id["n_gen"]["output"] == "DIRECT_RESULT"
-        assert "ask_user" not in by_id["n_gen"]["input"]
+        assert "decision_request" not in by_id["n_gen"]["input"]
     finally:
         set_runtime_override(MockRuntime())
 
@@ -2018,7 +2013,7 @@ def test_rerun_from_forks_frozen_checkpoint_session_without_exposing_it(auth_cli
         gen_b_plan_call = next(
             call
             for call in runtime.execute_calls
-            if "第二步" in str(call["prompt"]) and call["runtime_policy"] == "ask_user_plan"
+            if "第二步" in str(call["prompt"]) and call["runtime_policy"] == "plan"
         )
         assert gen_b_plan_call["session_id"] is not None
         assert gen_b_plan_call["fork_session"] == "True"
@@ -2770,51 +2765,6 @@ def test_executor_skips_decision_plan_for_output_node(auth_client, configure_cod
     assert by_id["n_out"]["output"] == "<section>OK</section>"
 
 
-def test_executor_skips_forced_decision_plan_when_disabled(auth_client, configure_codex):
-    configure_codex()
-    runtime = PlanningCaptureRuntime()
-    set_runtime_override(runtime)
-    try:
-        node = _generate_node("n_gen", prompt="必须先调用 ask_user，再生成纯文本结果")
-        node["ask_user_enabled"] = False
-        graph = {
-            "nodes": [node],
-            "execution_edges": [],
-        }
-        app_id = _build_app(auth_client, graph=graph)
-        run = auth_client.post("/api/runs", json={"app_id": app_id, "inputs": {}}).json()
-        final = _wait_for_terminal(auth_client, run["run_id"])
-    finally:
-        set_runtime_override(MockRuntime())
-
-    assert final["status"] == "success", final
-    assert runtime.plan_prompts == []
-    by_id = {step["node_id"]: step for step in final["steps"]}
-    assert by_id["n_gen"]["output"] == "SCRIPT_RESULT"
-
-
-def test_executor_keeps_decision_plan_when_explicitly_enabled(auth_client, configure_codex):
-    configure_codex()
-    runtime = PlanningCaptureRuntime()
-    set_runtime_override(runtime)
-    try:
-        node = _generate_node("n_gen", prompt="生成纯文本结果")
-        node["ask_user_enabled"] = True
-        graph = {
-            "nodes": [node],
-            "execution_edges": [],
-        }
-        app_id = _build_app(auth_client, graph=graph)
-        run = auth_client.post("/api/runs", json={"app_id": app_id, "inputs": {}}).json()
-        final = _wait_for_terminal(auth_client, run["run_id"])
-    finally:
-        set_runtime_override(MockRuntime())
-
-    assert final["status"] == "success", final
-    assert len(runtime.plan_prompts) == 1
-    assert "生成纯文本结果" in runtime.plan_prompts[0]
-
-
 def test_executor_runs_decision_plan_for_contract_generate_with_user_input(auth_client, configure_codex):
     configure_codex()
     runtime = PlanningCaptureRuntime()
@@ -2889,7 +2839,6 @@ def test_executor_repairs_output_contract_once_in_same_session_and_workspace(
     set_runtime_override(runtime)
     try:
         generate = _generate_node("n_gen", prompt="生成中间结果")
-        generate["ask_user_enabled"] = False
         graph = {
             "nodes": [
                 generate,
@@ -2941,7 +2890,6 @@ def test_executor_repairs_office_artifact_validation_once(
                 "validate_office_documents": True,
             },
         )
-        node["ask_user_enabled"] = False
         app_id = _build_app(auth_client, graph={"nodes": [node], "execution_edges": []})
         run = auth_client.post("/api/runs", json={"app_id": app_id, "inputs": {}}).json()
         final = _wait_for_terminal(auth_client, run["run_id"])
@@ -2982,7 +2930,6 @@ def test_executor_does_not_repair_when_office_validator_is_unavailable(
                 "validate_office_documents": True,
             },
         )
-        node["ask_user_enabled"] = False
         app_id = _build_app(auth_client, graph={"nodes": [node], "execution_edges": []})
         run = auth_client.post("/api/runs", json={"app_id": app_id, "inputs": {}}).json()
         final = _wait_for_terminal(auth_client, run["run_id"])
@@ -3351,9 +3298,9 @@ def test_executor_passes_upstream_output_into_generate_prompt(auth_client, confi
     # 其中要包含上游 asset 的 output 文本。
     prompt = by_id["n_gen"]["input"]["prompt"]
     assert "UPSTREAM_MARK" in prompt
-    assert "你拥有一个名为 `ask_user` 的工具" not in prompt
-    assert "# 用户决策摘要" in prompt
-    assert "不要再次向用户提问" in prompt
+    assert "你拥有一个名为 `decision_request` 的工具" not in prompt
+    assert "# 用户决策摘要" not in prompt
+    assert by_id["n_gen"]["input"]["planning_result"]["summary"] == "无需额外提问。"
 
 
 def test_executor_output_reads_all_ancestors_without_embedding_values_in_prompt(auth_client, configure_codex):
@@ -3389,7 +3336,7 @@ def test_executor_output_reads_all_ancestors_without_embedding_values_in_prompt(
     prompt = by_id["n_out"]["input"]["prompt"]
     assert "PRIMARY_MARK" not in prompt
     assert "OTHER_MARK" not in prompt
-    assert "你拥有一个名为 `ask_user` 的工具" not in prompt
+    assert "你拥有一个名为 `decision_request` 的工具" not in prompt
     assert "MIRA_DB_HTML_RULE" in prompt
     assert prompt.index("整理 [[respond:<section>FINAL</section>]]") < prompt.index("MIRA_DB_HTML_RULE")
     context_files = list(

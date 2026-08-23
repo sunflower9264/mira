@@ -660,20 +660,20 @@ export async function deleteRun(id: string): Promise<void> {
 }
 
 /**
- * POST /api/runs/:id/resume （ask_user 中段交互）
- * 请求体：{ node_id, tool_use_id, answers, text?, attachments? }
+ * POST /api/runs/:id/resume （decision_request 中段交互）
+ * 请求体：{ node_id, request_id, answers, text?, attachments? }
  * 响应：204 No Content；真正的运行进展由 SSE 续推。
  *
  * 错误码：
  *   404 运行记录不存在 / 附件不存在
- *   409 当前没有等待该节点的输入 / ask_user 已失效
+ *   409 当前没有等待该节点的输入 / 当前决策请求已失效
  *   400 选项不合法 / 必须至少提供一项输入 / 补充文本过长
  */
 export async function resumeRun(
   id: string,
   payload: {
     node_id: string;
-    tool_use_id: string;
+    request_id: string;
     answers?: DecisionAnswer[];
     text?: string | null;
     attachments?: { id: string; name?: string }[];

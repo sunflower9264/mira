@@ -230,11 +230,11 @@ def test_resume_waiting_run_without_memory_future_requires_continue(auth_client,
                 ],
             }
         ],
-        "tool_use_id": "toolu_persisted",
+        "request_id": "toolu_persisted",
     }
     graph = {
         "nodes": [
-            _generate_node("n_gen", f"[[respond:resumed]] [[ask_user:{dumps({'context': ask['context'], 'groups': ask['groups']})}]]"),
+            _generate_node("n_gen", f"[[respond:resumed]] [[decision_request:{dumps({'context': ask['context'], 'groups': ask['groups']})}]]"),
             _output_node("n_out", "n_gen"),
         ],
         "execution_edges": [{"id": "e_out", "source": "n_gen", "target": "n_out"}],
@@ -251,18 +251,18 @@ def test_resume_waiting_run_without_memory_future_requires_continue(auth_client,
                 await db.execute(select(Step).where(Step.run_id == run_id, Step.node_id == "n_gen"))
             ).scalar_one()
             step.status = "waiting_for_user"
-            step.input_json = dumps({"prompt": "waiting", "ask_user": ask})
+            step.input_json = dumps({"prompt": "waiting", "decision_request": ask})
             await db.commit()
 
     asyncio.run(seed_waiting())
     body = auth_client.get(f"/api/runs/{run_id}").json()
-    assert body["recovery"]["waiting_request"]["tool_use_id"] == "toolu_persisted"
+    assert body["recovery"]["waiting_request"]["request_id"] == "toolu_persisted"
 
     response = auth_client.post(
         f"/api/runs/{run_id}/resume",
         json={
             "node_id": "n_gen",
-            "tool_use_id": "toolu_persisted",
+            "request_id": "toolu_persisted",
             "answers": [{"group_id": "choice", "selected": ["A"]}],
         },
     )

@@ -41,7 +41,7 @@ class WorkflowInterfaceRuntime:
         cwd: Path,
         on_chunk,
         cancel_event: asyncio.Event,
-        on_ask_user=None,
+        on_decision_request=None,
         runtime_tools=None,
         runtime_policy="execute",
         output_schema=None,
@@ -62,10 +62,9 @@ class WorkflowInterfaceRuntime:
                 total_text=text,
                 finished_with="done",
             )
-        if runtime_policy == "ask_user_plan":
+        if runtime_policy == "plan":
             text = json.dumps(
                 {
-                    "action": "complete",
                     "decision_summary": "测试输入已经完整。",
                     "reason": "无需补充决策。",
                 },
@@ -141,7 +140,6 @@ def test_linear_nodes_share_workspace_and_fanout_is_isolated_until_join(auth_cli
                     "position": {"x": 0, "y": 0},
                     "title": "Producer",
                     "prompt": "PRODUCE_DECLARED",
-                    "ask_user_enabled": False,
                     "output_contract": {"type": "artifact", "artifact_kind": "file"},
                 },
                 {
@@ -150,7 +148,6 @@ def test_linear_nodes_share_workspace_and_fanout_is_isolated_until_join(auth_cli
                     "position": {"x": 300, "y": 0},
                     "title": "Relay",
                     "prompt": "RELAY_DECLARED",
-                    "ask_user_enabled": False,
                 },
                 {
                     "id": "output",
@@ -165,7 +162,6 @@ def test_linear_nodes_share_workspace_and_fanout_is_isolated_until_join(auth_cli
                     "position": {"x": 300, "y": 200},
                     "title": "Parallel unrelated to relay",
                     "prompt": "PARALLEL_UNRELATED",
-                    "ask_user_enabled": False,
                 },
             ],
             "execution_edges": [
@@ -214,7 +210,6 @@ def test_fan_in_rejects_unmanifested_workspace_changes(
                     "position": {"x": 0, "y": 0},
                     "title": "Producer",
                     "prompt": "PRODUCE_DECLARED",
-                    "ask_user_enabled": False,
                     "output_contract": {"type": "artifact", "artifact_kind": "file"},
                 },
                 {
@@ -223,7 +218,6 @@ def test_fan_in_rejects_unmanifested_workspace_changes(
                     "position": {"x": 300, "y": -100},
                     "title": "Relay",
                     "prompt": "RELAY_DECLARED",
-                    "ask_user_enabled": False,
                 },
                 {
                     "id": "unrelated",
@@ -231,7 +225,6 @@ def test_fan_in_rejects_unmanifested_workspace_changes(
                     "position": {"x": 300, "y": 100},
                     "title": "Parallel",
                     "prompt": "PARALLEL_UNRELATED",
-                    "ask_user_enabled": False,
                 },
                 {
                     "id": "output",
@@ -278,7 +271,6 @@ def test_checkpoint_rerun_restores_workspace_and_reuses_declared_artifact_manife
                     "position": {"x": 0, "y": 0},
                     "title": "Producer",
                     "prompt": "PRODUCE_DECLARED",
-                    "ask_user_enabled": False,
                     "output_contract": {"type": "artifact", "artifact_kind": "file"},
                 },
                 {
@@ -287,7 +279,6 @@ def test_checkpoint_rerun_restores_workspace_and_reuses_declared_artifact_manife
                     "position": {"x": 300, "y": 0},
                     "title": "Relay",
                     "prompt": "RELAY_DECLARED",
-                    "ask_user_enabled": False,
                 },
                 {
                     "id": "output",

@@ -71,15 +71,15 @@ class PromptCaptureRuntime:
         cwd: Path,
         on_chunk,
         cancel_event: asyncio.Event,
-        on_ask_user=None,
+        on_decision_request=None,
         runtime_tools=None,
         runtime_policy="execute",
         output_schema=None,
         session_scope=None,
         fork_session=False,
     ) -> AgentExecutionResult:
-        if runtime_policy == "ask_user_plan":
-            text = '{"action":"complete","decision_summary":"无需额外提问。","reason":"测试场景不需要补充用户决策。"}'
+        if runtime_policy == "plan":
+            text = '{"decision_summary":"无需额外提问。","reason":"测试场景不需要补充用户决策。"}'
         elif "你正在生成 Mira output 节点" in prompt:
             self.prompts.append(prompt)
             self.workspaces.append(cwd)

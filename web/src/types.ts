@@ -132,7 +132,6 @@ export interface GenerateNode extends NodeBase {
   prompt: string;
   model?: string;
   reasoning_effort?: ReasoningEffort;
-  ask_user_enabled?: boolean;
   output_contract?: NodeOutputContract;
 }
 
@@ -367,11 +366,11 @@ export type AgentChunk = {
   raw?: Record<string, unknown>;
 };
 
-/** ask_user 请求体；与后端 AskUserRequest / WaitingInputRequest 对齐。 */
+/** decision_request 请求体；与后端 DecisionRequest / WaitingInputRequest 对齐。 */
 export interface RunWaitingRequest {
   context: DecisionRequestContext;
   groups: DecisionGroup[];
-  tool_use_id: string;
+  request_id: string;
 }
 
 export type RunEvent =

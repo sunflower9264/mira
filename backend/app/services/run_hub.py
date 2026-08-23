@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Callable
 
 from app.db import SessionLocal
-from app.runtime.base import AskUserResult
+from app.runtime.base import DecisionResult
 from app.services.run_events import append_run_event
 from app.utils import dumps
 
@@ -61,19 +61,19 @@ class RunChannel:
         self.closed = False
         # orchestrator 通过这个 event 接收 cancel 信号；订阅者也能 await 它。
         self.cancel_event = asyncio.Event()
-        # 并行节点可能同时进入 ask_user；当前前端只支持一个等待面板，
+        # 并行节点可能同时进入 decision_request；当前前端只支持一个等待面板，
         # 因此每个 run channel 同一时间只发布一个 waiting request。
         self.waiting_lock = asyncio.Lock()
         self.waiting_node_id: str | None = None
-        self.waiting_tool_use_id: str | None = None
-        self._waiting_future: asyncio.Future[AskUserResult] | None = None
+        self.waiting_request_id: str | None = None
+        self._waiting_future: asyncio.Future[DecisionResult] | None = None
         self._waiting_ack_future: asyncio.Future[bool] | None = None
 
-    def begin_waiting(self, node_id: str, tool_use_id: str) -> asyncio.Future[AskUserResult]:
+    def begin_waiting(self, node_id: str, request_id: str) -> asyncio.Future[DecisionResult]:
         if self._waiting_future is not None and not self._waiting_future.done():
             raise RuntimeError("run 已有待回答的问题")
         self.waiting_node_id = node_id
-        self.waiting_tool_use_id = tool_use_id
+        self.waiting_request_id = request_id
         self._waiting_future = asyncio.get_running_loop().create_future()
         self._waiting_ack_future = asyncio.get_running_loop().create_future()
         return self._waiting_future
@@ -81,42 +81,42 @@ class RunChannel:
     def submit_resume(
         self,
         node_id: str,
-        tool_use_id: str,
-        result: AskUserResult,
+        request_id: str,
+        result: DecisionResult,
     ) -> asyncio.Future[bool] | None:
         future = self._waiting_future
         if (
             future is None
             or future.done()
             or self.waiting_node_id != node_id
-            or self.waiting_tool_use_id != tool_use_id
+            or self.waiting_request_id != request_id
         ):
             return None
         future.set_result(result)
         return self._waiting_ack_future
 
-    def acknowledge_resume(self, node_id: str, tool_use_id: str) -> None:
-        if self.waiting_node_id != node_id or self.waiting_tool_use_id != tool_use_id:
+    def acknowledge_resume(self, node_id: str, request_id: str) -> None:
+        if self.waiting_node_id != node_id or self.waiting_request_id != request_id:
             return
         future = self._waiting_ack_future
         if future is not None and not future.done():
             future.set_result(True)
 
-    def clear_waiting(self, node_id: str, tool_use_id: str) -> None:
-        if self.waiting_node_id != node_id or self.waiting_tool_use_id != tool_use_id:
+    def clear_waiting(self, node_id: str, request_id: str) -> None:
+        if self.waiting_node_id != node_id or self.waiting_request_id != request_id:
             return
         ack_future = self._waiting_ack_future
         if ack_future is not None and not ack_future.done():
             ack_future.set_result(False)
         self.waiting_node_id = None
-        self.waiting_tool_use_id = None
+        self.waiting_request_id = None
         self._waiting_future = None
         self._waiting_ack_future = None
 
     def abort_waiting(self, error: str) -> None:
         future = self._waiting_future
         if future is not None and not future.done():
-            future.set_result(AskUserResult(ok=False, error=error))
+            future.set_result(DecisionResult(ok=False, error=error))
 
     async def publish(self, event: str, data: dict[str, Any]) -> StoredEvent:
         """记录一条新事件，广播给所有当前订阅者。

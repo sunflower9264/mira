@@ -31,7 +31,7 @@
 - owner 应用的运行设置可写回 LLM 节点统一 model 和 `graph.tools.disabled_tool_ids`；不编辑节点 prompt、结构、分支、output contract 或 reasoning_effort。
 - `can_edit=false` 的市场只读应用不显示运行设置。
 - 手机端页面保持不可缩放体验，输入控件字号要避免 iOS 聚焦自动放大。
-- waiting/ask_user 的选项、补充文本、附件、摘要态和停止入口要与桌面 Preview 语义一致。
+- waiting/decision_request 的选项、补充文本、附件、摘要态和停止入口要与桌面 Preview 语义一致。
 
 ## Verification
 

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import type { DecisionAnswer, DecisionGroup, DecisionRequestContext } from '../../types';
-import { ASK_USER_NONE_OPTION, type DecisionSubmittedSummary } from './decisionInput';
+import { DECISION_NONE_OPTION, type DecisionSubmittedSummary } from './decisionInput';
 import { ChevronLeftIcon, ChevronRightIcon } from './Icons';
 
 export function completeDecisionAnswers(
@@ -166,13 +166,13 @@ export function DecisionPromptPanel({
     if (disabled) return;
     const nextSelected =
       group.type === 'multi'
-        ? optionLabel === ASK_USER_NONE_OPTION
+        ? optionLabel === DECISION_NONE_OPTION
           ? selected.includes(optionLabel)
             ? []
             : [optionLabel]
           : selected.includes(optionLabel)
             ? selected.filter((item) => item !== optionLabel)
-            : [...selected.filter((item) => item !== ASK_USER_NONE_OPTION), optionLabel]
+            : [...selected.filter((item) => item !== DECISION_NONE_OPTION), optionLabel]
         : selected.includes(optionLabel)
           ? []
           : [optionLabel];

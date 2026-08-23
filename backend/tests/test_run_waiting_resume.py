@@ -81,7 +81,7 @@ def _option_labels(group: dict[str, Any]) -> list[str]:
     return [option["label"] for option in group["options"]]
 
 
-def _ask_user_prompt(
+def _decision_request_prompt(
     *,
     groups: list[dict[str, Any]] | None = None,
     single: bool = True,
@@ -94,7 +94,7 @@ def _ask_user_prompt(
         "groups": groups
         or [_decision_group("choice", single=single, options=options or ["A", "B", "C"], placeholder=placeholder)],
     }
-    return f"[[ask_user:{json.dumps(payload, ensure_ascii=False)}]] [[respond:RESULT]] {extras}".strip()
+    return f"[[decision_request:{json.dumps(payload, ensure_ascii=False)}]] [[respond:RESULT]] {extras}".strip()
 
 
 def _start_run(auth_client, app_id: str, inputs: dict | None = None) -> str:
@@ -125,21 +125,21 @@ def _find_waiting_step(run_body: dict, node_id: str) -> dict:
     raise AssertionError(f"step for {node_id} not found")
 
 
-def _tool_use_id_for(auth_client, run_id: str, node_id: str) -> str:
+def _request_id_for(auth_client, run_id: str, node_id: str) -> str:
     body = _wait_for_status(auth_client, run_id, {"waiting_for_user"})
     step = _find_waiting_step(body, node_id)
-    ask = step["input"]["ask_user"]
-    return ask["tool_use_id"]
+    ask = step["input"]["decision_request"]
+    return ask["request_id"]
 
 
 # --- spec §7 矩阵 ------------------------------------------------------------
 
 
-def test_single_ask_user_emit_step_waiting_and_resume_success(auth_client, configure_codex):
+def test_single_decision_request_emit_step_waiting_and_resume_success(auth_client, configure_codex):
     configure_codex()
     graph = {
         "nodes": [
-            _generate_node("n_gen", prompt=_ask_user_prompt(single=True, options=["A", "B", "C"])),
+            _generate_node("n_gen", prompt=_decision_request_prompt(single=True, options=["A", "B", "C"])),
         ],
         "execution_edges": [],
     }
@@ -148,17 +148,17 @@ def test_single_ask_user_emit_step_waiting_and_resume_success(auth_client, confi
     body = _wait_for_status(auth_client, run_id, {"waiting_for_user"})
     step = _find_waiting_step(body, "n_gen")
     assert step["status"] == "waiting_for_user"
-    ask = step["input"]["ask_user"]
+    ask = step["input"]["decision_request"]
     assert ask["groups"][0]["type"] == "single"
     assert _option_labels(ask["groups"][0]) == ["A", "B", "C", "以上都不是"]
-    tool_use_id = ask["tool_use_id"]
+    request_id = ask["request_id"]
 
     # resume
     response = auth_client.post(
         f"/api/runs/{run_id}/resume",
         json={
             "node_id": "n_gen",
-            "tool_use_id": tool_use_id,
+            "request_id": request_id,
             "answers": [{"group_id": "choice", "selected": ["A"]}],
         },
     )
@@ -168,16 +168,16 @@ def test_single_ask_user_emit_step_waiting_and_resume_success(auth_client, confi
     step = _find_waiting_step(final, "n_gen")
     assert step["status"] == "success"
     # resume payload 落到 step.input
-    assert step["input"]["resume"]["answers"] == [{"group_id": "choice", "selected": ["A"]}]
+    assert step["input"]["decision_response"]["answers"] == [{"group_id": "choice", "selected": ["A"]}]
     # mock 把 ask 结果拼到 LLM 输出尾巴
     assert "answers=choice=A" in step["output"]
 
 
-def test_single_ask_user_can_resume_with_none_option(auth_client, configure_codex):
+def test_single_decision_request_can_resume_with_none_option(auth_client, configure_codex):
     configure_codex()
     graph = {
         "nodes": [
-            _generate_node("n_gen", prompt=_ask_user_prompt(single=True, options=["A", "B", "C"])),
+            _generate_node("n_gen", prompt=_decision_request_prompt(single=True, options=["A", "B", "C"])),
         ],
         "execution_edges": [],
     }
@@ -185,14 +185,14 @@ def test_single_ask_user_can_resume_with_none_option(auth_client, configure_code
     run_id = _start_run(auth_client, app_id)
     body = _wait_for_status(auth_client, run_id, {"waiting_for_user"})
     step = _find_waiting_step(body, "n_gen")
-    ask = step["input"]["ask_user"]
+    ask = step["input"]["decision_request"]
     assert _option_labels(ask["groups"][0]) == ["A", "B", "C", "以上都不是"]
 
     response = auth_client.post(
         f"/api/runs/{run_id}/resume",
         json={
             "node_id": "n_gen",
-            "tool_use_id": ask["tool_use_id"],
+            "request_id": ask["request_id"],
             "answers": [{"group_id": "choice", "selected": ["以上都不是"]}],
         },
     )
@@ -200,11 +200,11 @@ def test_single_ask_user_can_resume_with_none_option(auth_client, configure_code
     final = _wait_for_status(auth_client, run_id, {"success", "failed", "cancelled"})
     assert final["status"] == "success", final
     step = _find_waiting_step(final, "n_gen")
-    assert step["input"]["resume"]["answers"] == [{"group_id": "choice", "selected": ["以上都不是"]}]
+    assert step["input"]["decision_response"]["answers"] == [{"group_id": "choice", "selected": ["以上都不是"]}]
     assert "answers=choice=以上都不是" in step["output"]
 
 
-def test_multi_ask_user_with_text_and_attachments(auth_client, configure_codex):
+def test_multi_decision_request_with_text_and_attachments(auth_client, configure_codex):
     configure_codex()
     # 准备一个 upload，用于 attachments
     upload_resp = auth_client.post(
@@ -218,20 +218,20 @@ def test_multi_ask_user_with_text_and_attachments(auth_client, configure_codex):
         "nodes": [
             _generate_node(
                 "n_gen",
-                prompt=_ask_user_prompt(single=False, options=["X", "Y", "Z"]),
+                prompt=_decision_request_prompt(single=False, options=["X", "Y", "Z"]),
             ),
         ],
         "execution_edges": [],
     }
     app_id = _build_app(auth_client, graph=graph)
     run_id = _start_run(auth_client, app_id)
-    tool_use_id = _tool_use_id_for(auth_client, run_id, "n_gen")
+    request_id = _request_id_for(auth_client, run_id, "n_gen")
 
     response = auth_client.post(
         f"/api/runs/{run_id}/resume",
         json={
             "node_id": "n_gen",
-            "tool_use_id": tool_use_id,
+            "request_id": request_id,
             "answers": [{"group_id": "choice", "selected": ["X", "Z"]}],
             "text": "and please tighten the tone",
             "attachments": [{"id": upload_id, "name": "hint.txt"}],
@@ -241,7 +241,7 @@ def test_multi_ask_user_with_text_and_attachments(auth_client, configure_codex):
     final = _wait_for_status(auth_client, run_id, {"success", "failed", "cancelled"})
     assert final["status"] == "success"
     step = _find_waiting_step(final, "n_gen")
-    resume = step["input"]["resume"]
+    resume = step["input"]["decision_response"]
     assert resume["answers"] == [{"group_id": "choice", "selected": ["X", "Z"]}]
     assert resume["text"] == "and please tighten the tone"
     assert resume["attachments"][0]["id"] == upload_id
@@ -249,13 +249,13 @@ def test_multi_ask_user_with_text_and_attachments(auth_client, configure_codex):
     assert "answers=choice=X|Z" in step["output"]
 
 
-def test_multi_group_ask_user_answers_all_groups(auth_client, configure_codex):
+def test_multi_group_decision_request_answers_all_groups(auth_client, configure_codex):
     configure_codex()
     graph = {
         "nodes": [
             _generate_node(
                 "n_gen",
-                prompt=_ask_user_prompt(
+                prompt=_decision_request_prompt(
                     groups=[
                         _decision_group("intent", single=True, options=["写作", "翻译", "总结"], label="选择用途"),
                         _decision_group("tone", single=False, options=["正式", "简洁", "活泼"], label="选择语气"),
@@ -268,14 +268,14 @@ def test_multi_group_ask_user_answers_all_groups(auth_client, configure_codex):
     app_id = _build_app(auth_client, graph=graph)
     run_id = _start_run(auth_client, app_id)
     body = _wait_for_status(auth_client, run_id, {"waiting_for_user"})
-    ask = _find_waiting_step(body, "n_gen")["input"]["ask_user"]
+    ask = _find_waiting_step(body, "n_gen")["input"]["decision_request"]
     assert [group["id"] for group in ask["groups"]] == ["intent", "tone"]
 
     response = auth_client.post(
         f"/api/runs/{run_id}/resume",
         json={
             "node_id": "n_gen",
-            "tool_use_id": ask["tool_use_id"],
+            "request_id": ask["request_id"],
             "answers": [
                 {"group_id": "intent", "selected": ["写作"]},
                 {"group_id": "tone", "selected": ["正式", "简洁"]},
@@ -289,26 +289,26 @@ def test_multi_group_ask_user_answers_all_groups(auth_client, configure_codex):
     assert "answers=intent=写作,tone=正式|简洁" in step["output"]
 
 
-def test_ask_user_can_resume_with_text_instead_of_answers(auth_client, configure_codex):
+def test_decision_request_can_resume_with_text_instead_of_answers(auth_client, configure_codex):
     configure_codex()
     graph = {
         "nodes": [
             _generate_node(
                 "n_gen",
-                prompt=_ask_user_prompt(single=True, options=["A", "B", "C"]),
+                prompt=_decision_request_prompt(single=True, options=["A", "B", "C"]),
             ),
         ],
         "execution_edges": [],
     }
     app_id = _build_app(auth_client, graph=graph)
     run_id = _start_run(auth_client, app_id)
-    tool_use_id = _tool_use_id_for(auth_client, run_id, "n_gen")
+    request_id = _request_id_for(auth_client, run_id, "n_gen")
 
     response = auth_client.post(
         f"/api/runs/{run_id}/resume",
         json={
             "node_id": "n_gen",
-            "tool_use_id": tool_use_id,
+            "request_id": request_id,
             "answers": [],
             "text": "use my own answer",
         },
@@ -317,13 +317,13 @@ def test_ask_user_can_resume_with_text_instead_of_answers(auth_client, configure
     final = _wait_for_status(auth_client, run_id, {"success", "failed", "cancelled"})
     assert final["status"] == "success"
     step = _find_waiting_step(final, "n_gen")
-    resume = step["input"]["resume"]
+    resume = step["input"]["decision_response"]
     assert resume["answers"] == []
     assert resume["text"] == "use my own answer"
     assert "text=use my own answer" in step["output"]
 
 
-def test_ask_user_can_resume_with_attachment_instead_of_answers(auth_client, configure_codex):
+def test_decision_request_can_resume_with_attachment_instead_of_answers(auth_client, configure_codex):
     configure_codex()
     upload_resp = auth_client.post(
         "/api/uploads",
@@ -335,20 +335,20 @@ def test_ask_user_can_resume_with_attachment_instead_of_answers(auth_client, con
         "nodes": [
             _generate_node(
                 "n_gen",
-                prompt=_ask_user_prompt(single=True, options=["A", "B", "C"]),
+                prompt=_decision_request_prompt(single=True, options=["A", "B", "C"]),
             ),
         ],
         "execution_edges": [],
     }
     app_id = _build_app(auth_client, graph=graph)
     run_id = _start_run(auth_client, app_id)
-    tool_use_id = _tool_use_id_for(auth_client, run_id, "n_gen")
+    request_id = _request_id_for(auth_client, run_id, "n_gen")
 
     response = auth_client.post(
         f"/api/runs/{run_id}/resume",
         json={
             "node_id": "n_gen",
-            "tool_use_id": tool_use_id,
+            "request_id": request_id,
             "answers": [],
             "attachments": [{"id": upload_id, "name": "choice.txt"}],
         },
@@ -357,7 +357,7 @@ def test_ask_user_can_resume_with_attachment_instead_of_answers(auth_client, con
     final = _wait_for_status(auth_client, run_id, {"success", "failed", "cancelled"})
     assert final["status"] == "success"
     step = _find_waiting_step(final, "n_gen")
-    resume = step["input"]["resume"]
+    resume = step["input"]["decision_response"]
     assert resume["answers"] == []
     assert resume["attachments"][0]["id"] == upload_id
     assert "attachments=choice.txt" in step["output"]
@@ -369,7 +369,7 @@ def test_multi_group_missing_answer_returns_400(auth_client, configure_codex):
         "nodes": [
             _generate_node(
                 "n_gen",
-                prompt=_ask_user_prompt(
+                prompt=_decision_request_prompt(
                     groups=[
                         _decision_group("intent", single=True, options=["写作", "翻译", "总结"]),
                         _decision_group("tone", single=False, options=["正式", "简洁", "活泼"]),
@@ -381,13 +381,13 @@ def test_multi_group_missing_answer_returns_400(auth_client, configure_codex):
     }
     app_id = _build_app(auth_client, graph=graph)
     run_id = _start_run(auth_client, app_id)
-    tool_use_id = _tool_use_id_for(auth_client, run_id, "n_gen")
+    request_id = _request_id_for(auth_client, run_id, "n_gen")
 
     response = auth_client.post(
         f"/api/runs/{run_id}/resume",
         json={
             "node_id": "n_gen",
-            "tool_use_id": tool_use_id,
+            "request_id": request_id,
             "answers": [{"group_id": "intent", "selected": ["写作"]}],
         },
     )
@@ -401,19 +401,19 @@ def test_resume_selected_not_in_options_returns_400(auth_client, configure_codex
     configure_codex()
     graph = {
         "nodes": [
-            _generate_node("n_gen", prompt=_ask_user_prompt(single=True, options=["yes", "no", "later"])),
+            _generate_node("n_gen", prompt=_decision_request_prompt(single=True, options=["yes", "no", "later"])),
         ],
         "execution_edges": [],
     }
     app_id = _build_app(auth_client, graph=graph)
     run_id = _start_run(auth_client, app_id)
-    tool_use_id = _tool_use_id_for(auth_client, run_id, "n_gen")
+    request_id = _request_id_for(auth_client, run_id, "n_gen")
 
     response = auth_client.post(
         f"/api/runs/{run_id}/resume",
         json={
             "node_id": "n_gen",
-            "tool_use_id": tool_use_id,
+            "request_id": request_id,
             "answers": [{"group_id": "choice", "selected": ["maybe"]}],
         },
     )
@@ -427,23 +427,23 @@ def test_resume_selected_not_in_options_returns_400(auth_client, configure_codex
     _wait_for_status(auth_client, run_id, {"cancelled"})
 
 
-def test_multi_ask_user_none_option_is_mutually_exclusive(auth_client, configure_codex):
+def test_multi_decision_request_none_option_is_mutually_exclusive(auth_client, configure_codex):
     configure_codex()
     graph = {
         "nodes": [
-            _generate_node("n_gen", prompt=_ask_user_prompt(single=False, options=["A", "B", "C"])),
+            _generate_node("n_gen", prompt=_decision_request_prompt(single=False, options=["A", "B", "C"])),
         ],
         "execution_edges": [],
     }
     app_id = _build_app(auth_client, graph=graph)
     run_id = _start_run(auth_client, app_id)
-    tool_use_id = _tool_use_id_for(auth_client, run_id, "n_gen")
+    request_id = _request_id_for(auth_client, run_id, "n_gen")
 
     response = auth_client.post(
         f"/api/runs/{run_id}/resume",
         json={
             "node_id": "n_gen",
-            "tool_use_id": tool_use_id,
+            "request_id": request_id,
             "answers": [{"group_id": "choice", "selected": ["A", "以上都不是"]}],
         },
     )
@@ -457,19 +457,19 @@ def test_resume_wrong_node_id_returns_409(auth_client, configure_codex):
     configure_codex()
     graph = {
         "nodes": [
-            _generate_node("n_gen", prompt=_ask_user_prompt(single=True, options=["A", "B", "C"])),
+            _generate_node("n_gen", prompt=_decision_request_prompt(single=True, options=["A", "B", "C"])),
         ],
         "execution_edges": [],
     }
     app_id = _build_app(auth_client, graph=graph)
     run_id = _start_run(auth_client, app_id)
-    tool_use_id = _tool_use_id_for(auth_client, run_id, "n_gen")
+    request_id = _request_id_for(auth_client, run_id, "n_gen")
 
     response = auth_client.post(
         f"/api/runs/{run_id}/resume",
         json={
             "node_id": "n_wrong",
-            "tool_use_id": tool_use_id,
+            "request_id": request_id,
             "answers": [{"group_id": "choice", "selected": ["A"]}],
         },
     )
@@ -478,28 +478,28 @@ def test_resume_wrong_node_id_returns_409(auth_client, configure_codex):
     _wait_for_status(auth_client, run_id, {"cancelled"})
 
 
-def test_resume_wrong_tool_use_id_returns_409(auth_client, configure_codex):
+def test_resume_wrong_request_id_returns_409(auth_client, configure_codex):
     configure_codex()
     graph = {
         "nodes": [
-            _generate_node("n_gen", prompt=_ask_user_prompt(single=True, options=["A", "B", "C"])),
+            _generate_node("n_gen", prompt=_decision_request_prompt(single=True, options=["A", "B", "C"])),
         ],
         "execution_edges": [],
     }
     app_id = _build_app(auth_client, graph=graph)
     run_id = _start_run(auth_client, app_id)
-    _tool_use_id_for(auth_client, run_id, "n_gen")  # 确认进入 waiting
+    _request_id_for(auth_client, run_id, "n_gen")  # 确认进入 waiting
 
     response = auth_client.post(
         f"/api/runs/{run_id}/resume",
         json={
             "node_id": "n_gen",
-            "tool_use_id": "toolu_wrong",
+            "request_id": "toolu_wrong",
             "answers": [{"group_id": "choice", "selected": ["A"]}],
         },
     )
     assert response.status_code == 409
-    assert response.json()["detail"] == "ask_user 已失效，请重新发起运行"
+    assert response.json()["detail"] == "当前决策请求已失效，请重新发起运行"
     auth_client.post(f"/api/runs/{run_id}/cancel")
     _wait_for_status(auth_client, run_id, {"cancelled"})
 
@@ -508,19 +508,19 @@ def test_resume_empty_payload_returns_400(auth_client, configure_codex):
     configure_codex()
     graph = {
         "nodes": [
-            _generate_node("n_gen", prompt=_ask_user_prompt(single=True, options=["A", "B", "C"])),
+            _generate_node("n_gen", prompt=_decision_request_prompt(single=True, options=["A", "B", "C"])),
         ],
         "execution_edges": [],
     }
     app_id = _build_app(auth_client, graph=graph)
     run_id = _start_run(auth_client, app_id)
-    tool_use_id = _tool_use_id_for(auth_client, run_id, "n_gen")
+    request_id = _request_id_for(auth_client, run_id, "n_gen")
 
     response = auth_client.post(
         f"/api/runs/{run_id}/resume",
         json={
             "node_id": "n_gen",
-            "tool_use_id": tool_use_id,
+            "request_id": request_id,
             "answers": [],
         },
     )
@@ -534,13 +534,13 @@ def test_cancel_during_waiting(auth_client, configure_codex):
     configure_codex()
     graph = {
         "nodes": [
-            _generate_node("n_gen", prompt=_ask_user_prompt(single=True, options=["A", "B", "C"])),
+            _generate_node("n_gen", prompt=_decision_request_prompt(single=True, options=["A", "B", "C"])),
         ],
         "execution_edges": [],
     }
     app_id = _build_app(auth_client, graph=graph)
     run_id = _start_run(auth_client, app_id)
-    _tool_use_id_for(auth_client, run_id, "n_gen")
+    _request_id_for(auth_client, run_id, "n_gen")
 
     response = auth_client.post(f"/api/runs/{run_id}/cancel")
     assert response.status_code == 204
@@ -550,12 +550,12 @@ def test_cancel_during_waiting(auth_client, configure_codex):
     assert step["status"] == "cancelled"
 
 
-def test_ask_user_protocol_error_does_not_emit_waiting(auth_client, configure_codex):
+def test_decision_request_protocol_error_does_not_emit_waiting(auth_client, configure_codex):
     """spec §1.2 + §7：options 数量不足时不应 emit step.waiting，run 应直接失败。"""
 
     configure_codex()
     bad_prompt = (
-        '[[ask_user:{"context":{"title":"确认运行选择","summary":"继续运行前需要你选择一个处理方向。"},"groups":[{"id":"choice","type":"single","label":"x",'
+        '[[decision_request:{"context":{"title":"确认运行选择","summary":"继续运行前需要你选择一个处理方向。"},"groups":[{"id":"choice","type":"single","label":"x",'
         '"options":[{"label":"only-one","description":"只给一个选项。","recommended":true}]}]}]] [[respond:LATE]]'
     )
     graph = {
@@ -568,15 +568,15 @@ def test_ask_user_protocol_error_does_not_emit_waiting(auth_client, configure_co
     assert final["status"] == "failed"
     step = _find_waiting_step(final, "n_gen")
     assert step["status"] == "failed"
-    assert "ask_user" in (step["error"] or "")
-    # 协议错误不应给 step.input 写 ask_user 字段，因为我们根本没 emit step.waiting。
-    assert (step["input"] or {}).get("ask_user") is None
+    assert "decision_request" in (step["error"] or "")
+    # 协议错误不应给 step.input 写 decision_request 字段，因为我们根本没 emit step.waiting。
+    assert (step["input"] or {}).get("decision_request") is None
 
 
-def test_ask_user_protocol_error_for_too_many_options(auth_client, configure_codex):
+def test_decision_request_protocol_error_for_too_many_options(auth_client, configure_codex):
     configure_codex()
     bad_prompt = (
-        '[[ask_user:{"context":{"title":"确认运行选择","summary":"继续运行前需要你选择一个处理方向。"},"groups":[{"id":"choice","type":"single","label":"x",'
+        '[[decision_request:{"context":{"title":"确认运行选择","summary":"继续运行前需要你选择一个处理方向。"},"groups":[{"id":"choice","type":"single","label":"x",'
         '"options":['
         '{"label":"A","description":"选 A。","recommended":true},'
         '{"label":"B","description":"选 B。","recommended":false},'
@@ -594,8 +594,8 @@ def test_ask_user_protocol_error_for_too_many_options(auth_client, configure_cod
     assert final["status"] == "failed"
     step = _find_waiting_step(final, "n_gen")
     assert step["status"] == "failed"
-    assert "ask_user.groups.options 数量必须在 2-3 之间" in (step["error"] or "")
-    assert (step["input"] or {}).get("ask_user") is None
+    assert "decision_request.groups.options 数量必须在 2-3 之间" in (step["error"] or "")
+    assert (step["input"] or {}).get("decision_request") is None
 
 
 def test_resume_with_foreign_attachment_returns_404(auth_client, configure_codex):
@@ -616,19 +616,19 @@ def test_resume_with_foreign_attachment_returns_404(auth_client, configure_codex
 
     graph = {
         "nodes": [
-            _generate_node("n_gen", prompt=_ask_user_prompt(single=True, options=["A", "B", "C"])),
+            _generate_node("n_gen", prompt=_decision_request_prompt(single=True, options=["A", "B", "C"])),
         ],
         "execution_edges": [],
     }
     app_id = _build_app(auth_client, graph=graph)
     run_id = _start_run(auth_client, app_id)
-    tool_use_id = _tool_use_id_for(auth_client, run_id, "n_gen")
+    request_id = _request_id_for(auth_client, run_id, "n_gen")
 
     response = auth_client.post(
         f"/api/runs/{run_id}/resume",
         json={
             "node_id": "n_gen",
-            "tool_use_id": tool_use_id,
+            "request_id": request_id,
             "answers": [{"group_id": "choice", "selected": ["A"]}],
             "attachments": [{"id": foreign_id}],
         },

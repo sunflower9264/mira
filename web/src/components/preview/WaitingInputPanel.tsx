@@ -39,7 +39,7 @@ export function WaitingInputPanel() {
     setText('');
     setAttachments([]);
     setSubmittedDecisionSummary(null);
-  }, [waitingInput?.tool_use_id, waitingInput?.node_id, waitingInput?.groups]);
+  }, [waitingInput?.request_id, waitingInput?.node_id, waitingInput?.groups]);
 
   if (!waitingInput) return null;
 

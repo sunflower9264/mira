@@ -14,7 +14,7 @@
 - 默认测试不要依赖本机真实 Codex 登录状态、真实 MCP 服务、真实网络或 runtime 生成目录；真实部署回归必须显式 opt-in。
 - 涉及 run 的测试要覆盖状态、steps、logs/events、SSE replay、cancel/waiting/resume/recovery 中受影响的路径。
 - 涉及市场或 run_only 的测试要覆盖 owner 与非 owner 的可见性、克隆、运行、脱敏响应。
-- Prompt seed、NL compile、Prompt Assistant 或 ask_user 改动要覆盖结构化返回、waiting/resume、失败路径和变量名。
+- Prompt seed、NL compile、Prompt Assistant 或 decision_request 改动要覆盖结构化返回、waiting/resume、失败路径和变量名。
 - Migration/model/schema 改动需要测试新增字段的读写路径和迁移结果；本项目开发阶段不保留旧运行方案的运行时兼容代码。
 
 ## Verification

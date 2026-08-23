@@ -15,9 +15,9 @@ from app.runtime.base import (
     AgentChunk,
     AgentExecutionResult,
     AgentRuntimeStatus,
-    AskUserCallback,
-    AskUserRequest,
-    AskUserResult,
+    DecisionCallback,
+    DecisionRequest,
+    DecisionResult,
     RuntimePolicy,
 )
 from app.runtime.sandbox import (
@@ -30,7 +30,7 @@ from app.runtime.sandbox import (
 )
 from app.schemas.decision import DecisionGroup, DecisionOption, DecisionRequestContext
 from app.services.runtime_paths import codex_home, scoped_codex_home
-from app.services.runtime_uploads import current_runtime_upload_context, stage_ask_user_result_for_runtime
+from app.services.runtime_uploads import current_runtime_upload_context, stage_decision_request_result_for_runtime
 from app.services.skills_install import sync_runtime_skills
 from app.services.tools import RuntimeToolConfig
 from app.utils import now_utc
@@ -121,7 +121,7 @@ class CodexRuntime:
         cwd: Path,
         on_chunk,
         cancel_event: asyncio.Event,
-        on_ask_user: AskUserCallback | None = None,
+        on_decision_request: DecisionCallback | None = None,
         runtime_tools: RuntimeToolConfig | None = None,
         runtime_policy: RuntimePolicy = "execute",
         output_schema: dict | None = None,
@@ -137,7 +137,7 @@ class CodexRuntime:
         home = _prepare_scoped_home(codex_home(), cwd, runtime_tools, session_scope=session_scope)
         path_map = RuntimePathMap.for_call(workspace=cwd, home=home)
         effective_model = (model or "").strip() or _configured_model(home)
-        if runtime_policy == "ask_user_plan" and not effective_model:
+        if runtime_policy == "plan" and not effective_model:
             detail = "Codex Plan 模式需要配置模型"
             await on_chunk(AgentChunk(type="error", text=detail))
             return AgentExecutionResult(session_id=session_id, finished_with="error", error=detail)
@@ -225,7 +225,7 @@ class CodexRuntime:
             if method == "item/tool/requestUserInput":
                 response = await _request_user_input_response(
                     message,
-                    on_ask_user,
+                    on_decision_request,
                     sandbox_cancel_event,
                 )
                 if sandbox_cancel_event.is_set():
@@ -393,7 +393,7 @@ def _thread_request(
     params: dict[str, Any] = {
         "cwd": str(CONTAINER_WORKSPACE),
         "approvalPolicy": "never",
-        "sandbox": "read-only" if runtime_policy == "ask_user_plan" else "danger-full-access",
+        "sandbox": "read-only" if runtime_policy == "plan" else "danger-full-access",
     }
     if model:
         params["model"] = model
@@ -422,7 +422,7 @@ def _turn_request(
         "approvalPolicy": "never",
         "sandboxPolicy": (
             {"type": "readOnly", "networkAccess": False}
-            if runtime_policy == "ask_user_plan"
+            if runtime_policy == "plan"
             else {"type": "dangerFullAccess"}
         ),
     }
@@ -432,7 +432,7 @@ def _turn_request(
         params["effort"] = reasoning_effort
     if output_schema is not None:
         params["outputSchema"] = output_schema
-    if runtime_policy == "ask_user_plan":
+    if runtime_policy == "plan":
         params["collaborationMode"] = {
             "mode": "plan",
             "settings": {
@@ -457,7 +457,7 @@ def _runtime_mcp_config(runtime_tools: RuntimeToolConfig | None) -> dict[str, An
 
 async def _request_user_input_response(
     message: dict[str, Any],
-    callback: AskUserCallback | None,
+    callback: DecisionCallback | None,
     cancel_event: asyncio.Event,
 ) -> str:
     request_id = message.get("id")
@@ -484,13 +484,13 @@ async def _request_user_input_response(
     result = await callback_task
     upload_context = current_runtime_upload_context()
     if upload_context is not None:
-        result = stage_ask_user_result_for_runtime(upload_context, result)
+        result = stage_decision_request_result_for_runtime(upload_context, result)
     if not result.ok:
         return _jsonl(_jsonrpc_error(request_id, result.error or "用户输入未通过校验"))
     return _jsonl({"id": request_id, "result": _native_answers(request, result)})
 
 
-def _normalize_request_user_input(params: Any) -> AskUserRequest:
+def _normalize_request_user_input(params: Any) -> DecisionRequest:
     if not isinstance(params, dict):
         raise ValueError("request_user_input 缺少 params")
     questions = params.get("questions")
@@ -536,14 +536,14 @@ def _normalize_request_user_input(params: Any) -> AskUserRequest:
     first = questions[0]
     title = _clip(str(first.get("header") or "需要补充信息"), 80)
     summary = _clip("；".join(str(item.get("question") or "").strip() for item in questions), 240)
-    return AskUserRequest(
+    return DecisionRequest(
         context=DecisionRequestContext(title=title, summary=summary),
         groups=groups,
-        tool_use_id=str(params.get("itemId") or "request_user_input"),
+        request_id=str(params.get("itemId") or "request_user_input"),
     )
 
 
-def _native_answers(request: AskUserRequest, result: AskUserResult) -> dict[str, Any]:
+def _native_answers(request: DecisionRequest, result: DecisionResult) -> dict[str, Any]:
     selected_by_group = {answer.group_id: list(answer.selected) for answer in result.answers}
     extras: list[str] = []
     if result.text:

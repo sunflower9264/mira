@@ -946,56 +946,6 @@ def test_patch_app_rejects_json_field_level_output_contract(auth_client):
     assert "不支持的字段" in response.json()["detail"]
 
 
-def test_patch_app_rejects_non_boolean_ask_user_enabled(auth_client):
-    created = auth_client.post("/api/apps", json={"name": "InvalidAskUserEnabled"}).json()
-    response = auth_client.patch(
-        f"/api/apps/{created['id']}",
-        json={
-            "graph": {
-                "nodes": [
-                    {
-                        "id": "n_gen",
-                        "type": "generate",
-                        "position": {"x": 0, "y": 0},
-                        "title": "Generate",
-                        "prompt": "ok",
-                        "ask_user_enabled": "false",
-                    },
-                ],
-                "execution_edges": [],
-            }
-        },
-    )
-
-    assert response.status_code == 400
-    assert "ask_user_enabled 必须是 bool" in response.json()["detail"]
-
-
-def test_patch_app_rejects_ask_user_enabled_on_non_generate_node(auth_client):
-    created = auth_client.post("/api/apps", json={"name": "UnsupportedAskUserEnabled"}).json()
-    response = auth_client.patch(
-        f"/api/apps/{created['id']}",
-        json={
-            "graph": {
-                "nodes": [
-                    {
-                        "id": "n_input",
-                        "type": "user_input",
-                        "position": {"x": 0, "y": 0},
-                        "title": "Input",
-                        "input_schema": {"label": "input", "kind": "text"},
-                        "ask_user_enabled": False,
-                    },
-                ],
-                "execution_edges": [],
-            }
-        },
-    )
-
-    assert response.status_code == 400
-    assert "只有 generate 支持 ask_user_enabled" in response.json()["detail"]
-
-
 def test_artifact_kind_prompt_suffix_specializes_file_hint():
     suffix = contract_prompt_suffix(
         {

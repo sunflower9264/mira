@@ -11,7 +11,7 @@ from typing import Any
 
 from app.db import SessionLocal
 from app.models import NlCompileSessionRow
-from app.runtime.base import AgentChunk, AgentExecutionResult, AgentRuntimeStatus, AskUserRequest
+from app.runtime.base import AgentChunk, AgentExecutionResult, AgentRuntimeStatus, DecisionRequest
 from app.runtime.factory import set_runtime_override
 from app.services import nlcompile as nlcompile_service
 from app.services.structured_output import (
@@ -106,7 +106,7 @@ class ScriptedRuntime:
         cwd: Path,
         on_chunk,
         cancel_event: asyncio.Event,
-        on_ask_user=None,
+        on_decision_request=None,
         runtime_tools=None,
         runtime_policy="execute",
         output_schema=None,
@@ -185,7 +185,7 @@ class AssistantFailsOnceRuntime(ScriptedRuntime):
         cwd: Path,
         on_chunk,
         cancel_event: asyncio.Event,
-        on_ask_user=None,
+        on_decision_request=None,
         runtime_tools=None,
         runtime_policy="execute",
         output_schema=None,
@@ -199,7 +199,7 @@ class AssistantFailsOnceRuntime(ScriptedRuntime):
                 cwd=cwd,
                 on_chunk=on_chunk,
                 cancel_event=cancel_event,
-                on_ask_user=on_ask_user,
+                on_decision_request=on_decision_request,
                 runtime_tools=runtime_tools,
                 runtime_policy=runtime_policy,
                 output_schema=output_schema,
@@ -229,7 +229,7 @@ class PlanRepairRuntime(ScriptedRuntime):
         cwd: Path,
         on_chunk,
         cancel_event: asyncio.Event,
-        on_ask_user=None,
+        on_decision_request=None,
         runtime_tools=None,
         runtime_policy="execute",
         output_schema=None,
@@ -243,7 +243,7 @@ class PlanRepairRuntime(ScriptedRuntime):
                 cwd=cwd,
                 on_chunk=on_chunk,
                 cancel_event=cancel_event,
-                on_ask_user=on_ask_user,
+                on_decision_request=on_decision_request,
                 runtime_tools=runtime_tools,
                 runtime_policy=runtime_policy,
                 output_schema=output_schema,
@@ -271,7 +271,7 @@ class LayoutFailsRuntime(ScriptedRuntime):
         cwd: Path,
         on_chunk,
         cancel_event: asyncio.Event,
-        on_ask_user=None,
+        on_decision_request=None,
         runtime_tools=None,
         runtime_policy="execute",
         output_schema=None,
@@ -285,7 +285,7 @@ class LayoutFailsRuntime(ScriptedRuntime):
                 cwd=cwd,
                 on_chunk=on_chunk,
                 cancel_event=cancel_event,
-                on_ask_user=on_ask_user,
+                on_decision_request=on_decision_request,
                 runtime_tools=runtime_tools,
                 runtime_policy=runtime_policy,
                 output_schema=output_schema,
@@ -316,7 +316,7 @@ class AssistantContractRuntime(ScriptedRuntime):
         cwd: Path,
         on_chunk,
         cancel_event: asyncio.Event,
-        on_ask_user=None,
+        on_decision_request=None,
         runtime_tools=None,
         runtime_policy="execute",
         output_schema=None,
@@ -330,7 +330,7 @@ class AssistantContractRuntime(ScriptedRuntime):
                 cwd=cwd,
                 on_chunk=on_chunk,
                 cancel_event=cancel_event,
-                on_ask_user=on_ask_user,
+                on_decision_request=on_decision_request,
                 runtime_tools=runtime_tools,
                 runtime_policy=runtime_policy,
                 output_schema=output_schema,
@@ -404,7 +404,7 @@ def _is_plan_response(text: str) -> bool:
 
 
 class AnswerAwareRuntime:
-    """测试用 runtime：根据 ask_user resume 回来的选项生成不同 patch。"""
+    """测试用 runtime：根据 decision_request resume 回来的选项生成不同 patch。"""
 
     def __init__(self) -> None:
         self.call_count = 0
@@ -433,7 +433,7 @@ class AnswerAwareRuntime:
         cwd: Path,
         on_chunk,
         cancel_event: asyncio.Event,
-        on_ask_user=None,
+        on_decision_request=None,
         runtime_tools=None,
         runtime_policy="execute",
         output_schema=None,
@@ -441,15 +441,15 @@ class AnswerAwareRuntime:
         self.prompts.append(prompt)
         if "你是 Mira 工作流编辑器的 NL 编译方案助手" in prompt:
             self.call_count += 1
-            if on_ask_user is None:
+            if on_decision_request is None:
                 return AgentExecutionResult(
                     session_id=session_id,
                     total_text="",
                     finished_with="error",
-                    error="missing ask_user callback",
+                    error="missing decision_request callback",
                 )
 
-            request = AskUserRequest(
+            request = DecisionRequest(
                 context={"title": "确认应用用途", "summary": "生成方案前需要确认这个应用主要服务哪类任务。"},
                 groups=[
                     {
@@ -459,9 +459,9 @@ class AnswerAwareRuntime:
                         "options": _decision_options(["写作", "翻译", "总结"]),
                     }
                 ],
-                tool_use_id=f"toolu_answer_{self.call_count}",
+                request_id=f"toolu_answer_{self.call_count}",
             )
-            result = await on_ask_user(request)
+            result = await on_decision_request(request)
             if cancel_event.is_set():
                 return AgentExecutionResult(session_id=session_id, total_text="", finished_with="cancelled")
             if not result.ok:
@@ -469,7 +469,7 @@ class AnswerAwareRuntime:
                     session_id=session_id,
                     total_text="",
                     finished_with="error",
-                    error=result.error or "ask_user failed",
+                    error=result.error or "decision_request failed",
                 )
 
             self.answers_seen.append([answer.model_dump() for answer in result.answers])
@@ -538,7 +538,7 @@ class ReplayAwareRuntime(AnswerAwareRuntime):
         cwd: Path,
         on_chunk,
         cancel_event: asyncio.Event,
-        on_ask_user=None,
+        on_decision_request=None,
         runtime_tools=None,
         runtime_policy="execute",
         output_schema=None,
@@ -572,7 +572,7 @@ class ReplayAwareRuntime(AnswerAwareRuntime):
             cwd=cwd,
             on_chunk=on_chunk,
             cancel_event=cancel_event,
-            on_ask_user=on_ask_user,
+            on_decision_request=on_decision_request,
             runtime_tools=runtime_tools,
             runtime_policy=runtime_policy,
             output_schema=output_schema,
@@ -590,7 +590,7 @@ class ApplyAsksRuntime(ScriptedRuntime):
         cwd: Path,
         on_chunk,
         cancel_event: asyncio.Event,
-        on_ask_user=None,
+        on_decision_request=None,
         runtime_tools=None,
         runtime_policy="execute",
         output_schema=None,
@@ -608,16 +608,16 @@ class ApplyAsksRuntime(ScriptedRuntime):
                 cwd=cwd,
                 on_chunk=on_chunk,
                 cancel_event=cancel_event,
-                on_ask_user=on_ask_user,
+                on_decision_request=on_decision_request,
                 runtime_tools=runtime_tools,
                 runtime_policy=runtime_policy,
                 output_schema=output_schema,
             )
         self.call_count += 1
-        if on_ask_user is None:
-            return AgentExecutionResult(session_id=session_id, total_text="", finished_with="error", error="missing ask_user")
-        result = await on_ask_user(
-            AskUserRequest(
+        if on_decision_request is None:
+            return AgentExecutionResult(session_id=session_id, total_text="", finished_with="error", error="missing decision_request")
+        result = await on_decision_request(
+            DecisionRequest(
                 context={"title": "确认应用用途", "summary": "生成方案前需要确认这个应用主要服务哪类任务。"},
                 groups=[
                     {
@@ -627,14 +627,14 @@ class ApplyAsksRuntime(ScriptedRuntime):
                         "options": _decision_options(["写作", "翻译", "总结"]),
                     }
                 ],
-                tool_use_id="toolu_apply_forbidden",
+                request_id="toolu_apply_forbidden",
             )
         )
         return AgentExecutionResult(
             session_id=session_id,
             total_text="",
             finished_with="error",
-            error=result.error or "ask_user failed",
+            error=result.error or "decision_request failed",
         )
 
 
@@ -1580,7 +1580,7 @@ def test_nlcompile_waiting_resume_returns_completed_plan(auth_client, configure_
         "/api/nlcompile",
         json={
             "app_id": app_id,
-            "instruction": f"[[ask_user:{json.dumps(ask_payload, ensure_ascii=False)}]] [[respond:{patch_text}]]",
+            "instruction": f"[[decision_request:{json.dumps(ask_payload, ensure_ascii=False)}]] [[respond:{patch_text}]]",
             "current_graph": {"nodes": [], "execution_edges": []},
         },
     )
@@ -1638,7 +1638,7 @@ def test_nlcompile_waiting_resume_with_none_option_continues_to_plan(auth_client
         "/api/nlcompile",
         json={
             "app_id": app_id,
-            "instruction": f"[[ask_user:{json.dumps(ask_payload, ensure_ascii=False)}]] [[respond:{patch_text}]]",
+            "instruction": f"[[decision_request:{json.dumps(ask_payload, ensure_ascii=False)}]] [[respond:{patch_text}]]",
             "current_graph": {"nodes": [], "execution_edges": []},
         },
     )
@@ -1702,7 +1702,7 @@ def test_nlcompile_waiting_resume_answers_drive_runtime_patch(auth_client, confi
             [{"group_id": "intent", "selected": ["写作"]}],
             [{"group_id": "intent", "selected": ["翻译"]}],
         ]
-        # 精化阶段必须看到方案上下文与 ask_user 问答摘要。
+        # 精化阶段必须看到方案上下文与 decision_request 问答摘要。
         assert len(runtime.assistant_prompts) == 2
         assert "已确认方案摘要" in runtime.assistant_prompts[0]
         assert "创建写作用途节点" in runtime.assistant_prompts[0]
@@ -1951,7 +1951,7 @@ def test_nlcompile_waiting_resume_with_text_returns_completed_plan(auth_client, 
         "/api/nlcompile",
         json={
             "app_id": app_id,
-            "instruction": f"[[ask_user:{json.dumps(ask_payload, ensure_ascii=False)}]] [[respond:{patch_text}]]",
+            "instruction": f"[[decision_request:{json.dumps(ask_payload, ensure_ascii=False)}]] [[respond:{patch_text}]]",
             "current_graph": {"nodes": [], "execution_edges": []},
         },
     )
@@ -2017,7 +2017,7 @@ def test_nlcompile_cancel_waiting_session_removes_resume(auth_client, configure_
         "/api/nlcompile",
         json={
             "app_id": app_id,
-            "instruction": f"[[ask_user:{json.dumps(ask_payload, ensure_ascii=False)}]] [[respond:{patch_text}]]",
+            "instruction": f"[[decision_request:{json.dumps(ask_payload, ensure_ascii=False)}]] [[respond:{patch_text}]]",
             "current_graph": {"nodes": [], "execution_edges": []},
         },
     )
@@ -2103,7 +2103,7 @@ def test_nlcompile_apply_owned_by_other_user_returns_404(client, auth_client, co
         set_runtime_override(MockRuntime())
 
 
-def test_nlcompile_apply_rejects_ask_user(auth_client, configure_codex):
+def test_nlcompile_apply_rejects_decision_request(auth_client, configure_codex):
     configure_codex()
     app_id = _create_app(auth_client)
     runtime = ApplyAsksRuntime(text=json.dumps({"patches": []}))

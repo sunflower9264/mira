@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Iterator
 
-from app.runtime.base import AskUserAttachment, AskUserResult
+from app.runtime.base import DecisionAttachment, DecisionResult
 
 
 @dataclass(frozen=True)
@@ -65,8 +65,8 @@ class RuntimeUploadContext:
             result = result.replace(source, target)
         return result
 
-    def stage_ask_user_result(self, result: AskUserResult) -> AskUserResult:
-        attachments: list[AskUserAttachment] = []
+    def stage_decision_request_result(self, result: DecisionResult) -> DecisionResult:
+        attachments: list[DecisionAttachment] = []
         for attachment in result.attachments:
             path = attachment.path
             staged_path: str | None = None
@@ -112,8 +112,8 @@ def rewrite_runtime_upload_paths(value: str) -> str:
     return context.rewrite_text(value) if context is not None else value
 
 
-def stage_ask_user_result_for_runtime(context: RuntimeUploadContext, result: AskUserResult) -> AskUserResult:
-    return context.stage_ask_user_result(result)
+def stage_decision_request_result_for_runtime(context: RuntimeUploadContext, result: DecisionResult) -> DecisionResult:
+    return context.stage_decision_request_result(result)
 
 
 def _safe_segment(value: str) -> str:

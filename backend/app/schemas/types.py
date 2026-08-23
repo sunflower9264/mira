@@ -180,7 +180,7 @@ class NlCompileCompletedOut(BaseModel):
 class NlCompileWaitingRequest(BaseModel):
     context: DecisionRequestContext
     groups: list[DecisionGroup]
-    tool_use_id: str
+    request_id: str
 
 
 class NlCompileWaitingOut(BaseModel):

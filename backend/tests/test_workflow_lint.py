@@ -36,7 +36,6 @@ def _lint(auth_client, app_id: str, graph: dict) -> dict:
 def test_workflow_lint_valid_graph_has_no_errors(auth_client):
     app_id = _create_app(auth_client)
     generate = _generate_node("n_gen")
-    generate["ask_user_enabled"] = False
     graph = {
         "nodes": [
             {
@@ -59,38 +58,6 @@ def test_workflow_lint_valid_graph_has_no_errors(auth_client):
 
     assert body["ok"] is True
     assert body["summary"]["errors"] == 0
-
-
-def test_workflow_lint_rejects_non_boolean_ask_user_enabled(auth_client):
-    app_id = _create_app(auth_client)
-    gen = _generate_node("n_gen")
-    gen["ask_user_enabled"] = "false"
-    graph = {
-        "nodes": [gen, _output_node("n_out", "n_gen")],
-        "execution_edges": [{"id": "e1", "source": "n_gen", "target": "n_out"}],
-    }
-
-    body = _lint(auth_client, app_id, graph)
-    error_codes = {issue["code"] for issue in body["issues"] if issue["severity"] == "error"}
-
-    assert body["ok"] is False
-    assert "ask_user_enabled_invalid" in error_codes
-
-
-def test_workflow_lint_rejects_ask_user_enabled_on_non_generate_node(auth_client):
-    app_id = _create_app(auth_client)
-    output = _output_node("n_out", "n_gen")
-    output["ask_user_enabled"] = False
-    graph = {
-        "nodes": [_generate_node("n_gen"), output],
-        "execution_edges": [{"id": "e1", "source": "n_gen", "target": "n_out"}],
-    }
-
-    body = _lint(auth_client, app_id, graph)
-    error_codes = {issue["code"] for issue in body["issues"] if issue["severity"] == "error"}
-
-    assert body["ok"] is False
-    assert "ask_user_enabled_unsupported" in error_codes
 
 
 def test_workflow_lint_normalizes_stale_output_contract_fields(auth_client):

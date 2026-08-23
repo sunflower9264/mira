@@ -20,8 +20,8 @@ export interface WaitingInputRequest {
   node_id: string;
   context: DecisionRequestContext;
   groups: DecisionGroup[];
-  /** 后端 ask_user.tool_use_id；阶段 4 提交 resume 时回传。 */
-  tool_use_id: string;
+  /** 后端 decision_request.request_id；阶段 4 提交 resume 时回传。 */
+  request_id: string;
 }
 
 interface RunStoreState {
@@ -141,7 +141,7 @@ function waitingInputFromRun(run: Run): WaitingInputRequest | null {
     node_id: nodeId,
     context: req.context,
     groups: req.groups ?? [],
-    tool_use_id: req.tool_use_id,
+    request_id: req.request_id,
   };
 }
 
@@ -398,9 +398,9 @@ export const useRunStore = create<RunStoreState>((set, get) => ({
     const waitingInput = state.waitingInput;
     const runId = state.runId;
     if (!waitingInput || !runId) return;
-    if (!waitingInput.tool_use_id) {
-      // 后端 spec §2.1 必带 tool_use_id；缺失视为协议异常，让 UI 提示再次发起运行。
-      set({ error: 'ask_user 已失效，请重新发起运行' });
+    if (!waitingInput.request_id) {
+      // 后端 spec §2.1 必带 request_id；缺失视为协议异常，让 UI 提示再次发起运行。
+      set({ error: '当前决策请求已失效，请重新发起运行' });
       return;
     }
     // 提交后切回 running，等待后端继续推 step.start / delta；失败时恢复 waiting 面板。
@@ -408,7 +408,7 @@ export const useRunStore = create<RunStoreState>((set, get) => ({
     try {
       await api.resumeRun(runId, {
         node_id: waitingInput.node_id,
-        tool_use_id: waitingInput.tool_use_id,
+        request_id: waitingInput.request_id,
         answers: payload.answers ?? [],
         text: payload.text ?? null,
         attachments: payload.attachments ?? [],
@@ -570,7 +570,7 @@ function handleRunEvent(
           node_id: evt.node_id,
           context: req.context,
           groups: req.groups ?? [],
-          tool_use_id: req.tool_use_id,
+          request_id: req.request_id,
         },
       });
       return;

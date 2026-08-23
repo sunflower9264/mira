@@ -18,11 +18,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.db import SessionLocal
 from app.models import NlCompileSessionRow
-from app.runtime.base import AgentChunk, AskUserAttachment, AskUserRequest, AskUserResult
+from app.runtime.base import AgentChunk, DecisionAttachment, DecisionRequest, DecisionResult
 from app.runtime.factory import get_runtime
 from app.schemas.requests import NlCompileRefineIn, NlCompileResumeIn
 from app.schemas.runs import RunAttachmentRef
-from app.services.decision_prompts import append_ask_user_none_option, validate_ask_request_groups, validate_decision_answers
+from app.services.decision_prompts import append_none_option, validate_decision_groups, validate_decision_answers
 from app.services.execution_plan import ExecutionPlanError, compile_execution_plan
 from app.services.graph_validation import (
     GraphValidationError,
@@ -77,8 +77,8 @@ class NlCompileSession:
     history: list[dict[str, Any]] = field(default_factory=list)
     qa_history: list[dict[str, Any]] = field(default_factory=list)
     task: asyncio.Task[None] | None = None
-    resume_future: asyncio.Future[AskUserResult] | None = None
-    current_request: AskUserRequest | None = None
+    resume_future: asyncio.Future[DecisionResult] | None = None
+    current_request: DecisionRequest | None = None
     cancel_event: asyncio.Event | None = None
     waiter_count: int = 0
 
@@ -137,7 +137,7 @@ def _history_from_row(row: NlCompileSessionRow) -> list[dict[str, Any]]:
 
 
 def _qa_history_from_history(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [entry for entry in history if entry.get("kind") == "ask_user"]
+    return [entry for entry in history if entry.get("kind") == "decision_request"]
 
 
 def _initial_attachment_history(
@@ -488,11 +488,11 @@ async def resume_compile(
     if session is not None and session.current_request is not None:
         request = session.current_request
     elif isinstance(request_payload, dict):
-        request = AskUserRequest.model_validate(request_payload)
+        request = DecisionRequest.model_validate(request_payload)
     else:
         raise HTTPException(status_code=409, detail="当前没有等待输入")
 
-    result = _build_ask_user_result(user_id, request, payload)
+    result = _build_decision_request_result(user_id, request, payload)
     history = session.history if session is not None else _history_from_row(row)
     entry = _qa_history_entry(request, result)
     history.append(entry)
@@ -516,11 +516,11 @@ async def resume_compile(
     return await _await_compile_response(session)
 
 
-def _build_ask_user_result(
+def _build_decision_request_result(
     user_id: str,
-    request: AskUserRequest,
+    request: DecisionRequest,
     payload: NlCompileResumeIn,
-) -> AskUserResult:
+) -> DecisionResult:
     text = (payload.text or "").strip() or None
     attachment_refs = list(payload.attachments or [])
     if not payload.answers and not text and not attachment_refs:
@@ -534,13 +534,13 @@ def _build_ask_user_result(
     if text is not None and len(text.encode("utf-8")) > max_text:
         raise HTTPException(status_code=400, detail="补充文本过长")
 
-    attachments: list[AskUserAttachment] = []
+    attachments: list[DecisionAttachment] = []
     for ref in attachment_refs:
         resolved = resolve_upload(user_id, ref.id)
         if resolved is None:
             raise HTTPException(status_code=404, detail="附件不存在")
         attachments.append(
-            AskUserAttachment(
+            DecisionAttachment(
                 id=resolved.id,
                 name=ref.name or resolved.name,
                 path=str(resolved.path),
@@ -549,7 +549,7 @@ def _build_ask_user_result(
                 size=resolved.size,
             )
         )
-    return AskUserResult(ok=True, answers=payload.answers, text=text, attachments=attachments)
+    return DecisionResult(ok=True, answers=payload.answers, text=text, attachments=attachments)
 
 
 async def refine_compile(
@@ -659,13 +659,13 @@ async def _run_plan_session(
     runtime_tools: RuntimeToolConfig | None,
     attachment_refs: list[RuntimeUploadRef],
 ) -> None:
-    async def on_ask_user(request: AskUserRequest) -> AskUserResult:
-        protocol_error = validate_ask_request_groups(request.groups)
+    async def on_decision_request(request: DecisionRequest) -> DecisionResult:
+        protocol_error = validate_decision_groups(request.groups)
         if protocol_error:
-            return AskUserResult(ok=False, error=protocol_error)
-        request = request.model_copy(update={"groups": append_ask_user_none_option(request.groups)})
+            return DecisionResult(ok=False, error=protocol_error)
+        request = request.model_copy(update={"groups": append_none_option(request.groups)})
         if session.resume_future is not None and not session.resume_future.done():
-            return AskUserResult(ok=False, error="不允许并发 ask_user")
+            return DecisionResult(ok=False, error="不允许并发 decision_request")
         loop = asyncio.get_running_loop()
         session.current_request = request
         session.resume_future = loop.create_future()
@@ -707,9 +707,9 @@ async def _run_plan_session(
                 cwd=workspace,
                 on_chunk=on_chunk,
                 cancel_event=session.cancel_event or asyncio.Event(),
-                on_ask_user=on_ask_user,
+                on_decision_request=on_decision_request,
                 runtime_tools=runtime_tools,
-                runtime_policy="ask_user_plan",
+                runtime_policy="plan",
                 output_schema=output_schema_for("nlcompile_plan"),
             )
         if result.finished_with != "done":
@@ -818,9 +818,9 @@ async def _repair_plan_output_if_needed(
                 cwd=workspace,
                 on_chunk=on_repair_chunk,
                 cancel_event=cancel_event,
-                on_ask_user=None,
+                on_decision_request=None,
                 runtime_tools=None,
-                runtime_policy="ask_user_plan",
+                runtime_policy="plan",
                 output_schema=output_schema_for("nlcompile_plan"),
             )
         if result.finished_with != "done":
@@ -845,8 +845,8 @@ async def _execute_apply_session(
     user_id: str,
     attachment_refs: list[RuntimeUploadRef],
 ) -> dict[str, Any]:
-    async def on_ask_user(_: AskUserRequest) -> AskUserResult:
-        return AskUserResult(ok=False, error="确认方案后不允许继续 ask_user")
+    async def on_decision_request(_: DecisionRequest) -> DecisionResult:
+        return DecisionResult(ok=False, error="确认方案后不允许继续 decision_request")
 
     attempt_prompt = prompt
     previous_output = ""
@@ -869,7 +869,7 @@ async def _execute_apply_session(
                 cwd=workspace,
                 on_chunk=on_chunk,
                 cancel_event=session.cancel_event or asyncio.Event(),
-                on_ask_user=on_ask_user,
+                on_decision_request=on_decision_request,
                 runtime_policy="execute",
                 output_schema=output_schema_for("nlcompile_graph_patch"),
             )
@@ -1179,9 +1179,9 @@ async def _apply_prompt_assistant_to_patches(
     return None
 
 
-def _qa_history_entry(request: AskUserRequest, result: AskUserResult) -> dict[str, Any]:
+def _qa_history_entry(request: DecisionRequest, result: DecisionResult) -> dict[str, Any]:
     return {
-        "kind": "ask_user",
+        "kind": "decision_request",
         "request": request.model_dump(exclude_none=True),
         "answers": [answer.model_dump() for answer in result.answers],
         "text": result.text,

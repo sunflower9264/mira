@@ -213,7 +213,7 @@ def test_real_ai_run_artifact_contract_with_codex(real_ai_client: httpx.Client) 
     assert downloaded.text == "REAL_AI_ARTIFACT_OK"
 
 
-def test_real_ai_run_ask_user_plan_with_codex(real_ai_client: httpx.Client) -> None:
+def test_real_ai_run_plan_with_codex(real_ai_client: httpx.Client) -> None:
     graph = {
         "tools": {"disabled_tool_ids": []},
         "nodes": [
@@ -238,13 +238,13 @@ def test_real_ai_run_ask_user_plan_with_codex(real_ai_client: httpx.Client) -> N
     app_id = _create_app(real_ai_client, graph, name="real-ai-codex-ask-user")
     run_id = _create_run(real_ai_client, app_id, {"n_input": {"value": "ask user input"}})
     waiting = _wait_for_status(real_ai_client, run_id, {"waiting_for_user"})
-    ask = _steps_by_id(waiting)["n_gen"]["input"]["ask_user"]
+    ask = _steps_by_id(waiting)["n_gen"]["input"]["decision_request"]
     selected = ask["groups"][0]["options"][0]["label"]
     response = real_ai_client.post(
         f"/api/runs/{run_id}/resume",
         json={
             "node_id": "n_gen",
-            "tool_use_id": ask["tool_use_id"],
+            "request_id": ask["request_id"],
             "answers": [{"group_id": ask["groups"][0]["id"], "selected": [selected]}],
         },
     )
@@ -679,7 +679,7 @@ async def main():
         cwd=prompt_assistant_workspace(user.id),
         on_chunk=on_chunk,
         cancel_event=asyncio.Event(),
-        on_ask_user=None,
+        on_decision_request=None,
         runtime_policy="execute",
         output_schema=SCHEMA,
     )

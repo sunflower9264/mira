@@ -336,7 +336,7 @@ class RunAgent:
             cwd=workspace,
             on_chunk=on_chunk,
             cancel_event=self.channel.cancel_event,
-            on_ask_user=None,
+            on_decision_request=None,
             runtime_tools=self.runtime_tools,
             runtime_policy="execute",
             output_schema=MERGE_RECEIPT_SCHEMA,

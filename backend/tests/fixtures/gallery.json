@@ -54,7 +54,7 @@
           "type": "generate",
           "position": {"x": 360, "y": 100},
           "title": "偏好确认分支",
-          "prompt": "并行示例：必须先调用 ask_user，确认目标受众和输出风格。"
+          "prompt": "并行示例：请为目标受众和输出风格制定策略；信息不足时先确认关键偏好。"
         },
         {
           "id": "n_parallel_research",

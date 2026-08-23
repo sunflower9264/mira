@@ -139,10 +139,10 @@ def _recovery_to_out(run: Run, steps: list[Step]) -> RunRecoveryOut | None:
     waiting_step = next((step for step in steps if step.status == "waiting_for_user"), None)
     if waiting_step is not None:
         payload = loads(waiting_step.input_json, {}) or {}
-        ask = payload.get("ask_user") if isinstance(payload, dict) else None
-        if isinstance(ask, dict):
+        request = payload.get("decision_request") if isinstance(payload, dict) else None
+        if isinstance(request, dict):
             try:
-                waiting_request = RunWaitingRequestOut.model_validate(ask)
+                waiting_request = RunWaitingRequestOut.model_validate(request)
             except Exception:  # noqa: BLE001
                 waiting_request = None
     return RunRecoveryOut(

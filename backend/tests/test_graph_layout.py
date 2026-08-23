@@ -14,7 +14,7 @@ class LayoutRuntime:
     def __init__(self, positions: list[dict] | None = None) -> None:
         self.positions = positions
         self.prompts: list[str] = []
-        self.on_ask_user_values: list[object] = []
+        self.on_decision_request_values: list[object] = []
 
     async def detect_status(self) -> AgentRuntimeStatus:
         return AgentRuntimeStatus(
@@ -35,13 +35,13 @@ class LayoutRuntime:
         cwd: Path,
         on_chunk,
         cancel_event: asyncio.Event,
-        on_ask_user=None,
+        on_decision_request=None,
         runtime_tools=None,
         runtime_policy="execute",
         output_schema=None,
     ) -> AgentExecutionResult:
         self.prompts.append(prompt)
-        self.on_ask_user_values.append(on_ask_user)
+        self.on_decision_request_values.append(on_decision_request)
         text = json.dumps({"positions": self.positions or []}, ensure_ascii=False)
         await on_chunk(AgentChunk(type="text", text=text))
         return AgentExecutionResult(session_id=session_id, total_text=text, finished_with="done")
@@ -126,7 +126,7 @@ def test_graph_layout_beautify_updates_positions_only(auth_client):
     assert graph["execution_edges"] == _graph()["execution_edges"]
     assert "_runtime_tools" not in graph
     assert graph["nodes"][1]["prompt"] == "生成 A"
-    assert runtime.on_ask_user_values == [None]
+    assert runtime.on_decision_request_values == [None]
     assert "节点尺寸 JSON" in runtime.prompts[0]
     assert "_runtime_tools" not in runtime.prompts[0]
     assert '"n_a": {"width": 220.0, "height": 92.0}' in runtime.prompts[0]

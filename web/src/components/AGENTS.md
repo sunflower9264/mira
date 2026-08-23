@@ -21,7 +21,7 @@
 - 组件不直接散落后端请求；优先调用 store、`lib/api.ts` 或调用方传入的 handler。
 - Props 使用 `types.ts` 或明确局部类型；不要用宽泛 `any` 绕过契约。
 - 复杂业务流程放 store/helper/page 容器，展示组件只承担 UI 和局部交互。
-- `DecisionPromptPanel` 渲染后端返回的 ask_user context/groups/options；前端只处理标题摘要展示、选择、补充文本/附件、摘要态和多选互斥，不硬编码模型后续策略。
+- `DecisionPromptPanel` 渲染后端返回的 decision_request context/groups/options；前端只处理标题摘要展示、选择、补充文本/附件、摘要态和多选互斥，不硬编码模型后续策略。
 - 跨桌面和手机复用的基础能力放 `common/`；手机端专用 shell/sheet 放 `mobile/`。
 - 视觉改动沿用现有 Tailwind、黑白灰和少量状态色，不引入新的设计系统。
 

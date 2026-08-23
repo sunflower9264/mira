@@ -12,20 +12,23 @@ from app.runtime.base import (
     AgentChunk,
     AgentExecutionResult,
     AgentRuntimeStatus,
-    AskUserRequest,
+    DecisionRequest,
 )
 from app.utils import now_utc
 
 
 # prompt 中允许测试用 ``[[respond:xxx]]`` 注入想要的 LLM 文本输出；
 # ``[[delay:0.2]]`` 让 mock 在返回前停顿一段时间（用于触发 cancel 竞速）。
-# ``[[ask_user:{...json...}]]`` 让 mock 发起一次 ask_user 调用，json 字段对齐
-# AskUserRequest（不需要写 tool_use_id，mock 会自动生成）。
+# ``[[decision_request:{...json...}]]`` 让 mock 发起一次 decision_request 调用，json 字段对齐
+# DecisionRequest（不需要写 request_id，mock 会自动生成）。
 _RESPOND_RE = re.compile(r"\[\[respond:(.*?)\]\]", re.DOTALL)
 _DELAY_RE = re.compile(r"\[\[delay:([0-9.]+)\]\]")
 
 
 class MockRuntime:
+    def __init__(self) -> None:
+        self._decision_segments_by_session: dict[str, list[str]] = {}
+
     async def detect_status(self) -> AgentRuntimeStatus:
         return AgentRuntimeStatus(
             installed=True,
@@ -45,7 +48,7 @@ class MockRuntime:
         cwd: Path,
         on_chunk,
         cancel_event: asyncio.Event,
-        on_ask_user=None,
+        on_decision_request=None,
         runtime_tools=None,
         runtime_policy="execute",
         output_schema=None,
@@ -115,13 +118,13 @@ class MockRuntime:
 
         is_plan_prompt = "你是 Mira 工作流编辑器的 NL 编译方案助手" in prompt
         is_apply_prompt = "你是 Mira 工作流编辑器的 NL 编译实施器" in prompt
-        # 处理 ask_user 调用：可以多次触发（mock 用「带 respond 的 ask_user 返回结果」拼到最后输出里）。
+        # 处理 decision_request 调用：可以多次触发（mock 用「带 respond 的 decision_request 返回结果」拼到最后输出里）。
         collected_segments: list[str] = []
         remaining = prompt
         ask_index = 0
         while True:
             ask_marker = _find_ask_marker(remaining)
-            if ask_marker is None or on_ask_user is None or is_apply_prompt:
+            if ask_marker is None or on_decision_request is None or is_apply_prompt:
                 break
             ask_start, ask_end, ask_payload = ask_marker
             ask_index += 1
@@ -129,8 +132,8 @@ class MockRuntime:
                 payload = json.loads(ask_payload)
             except json.JSONDecodeError:
                 payload = {}
-            request = _build_ask_request(payload)
-            result = await on_ask_user(request)
+            request = _build_decision_request(payload)
+            result = await on_decision_request(request)
             if cancel_event.is_set():
                 return AgentExecutionResult(
                     session_id=session_id, total_text="", finished_with="cancelled"
@@ -138,7 +141,7 @@ class MockRuntime:
             if not result.ok:
                 # 协议错误：spec §1.2 由后端回 is_error=true 的 tool_result。
                 # 这里 mock 简化为直接报告失败。
-                err = result.error or "ask_user 协议错误"
+                err = result.error or "decision_request 协议错误"
                 await on_chunk(AgentChunk(type="error", text=err))
                 return AgentExecutionResult(
                     session_id=session_id,
@@ -149,7 +152,9 @@ class MockRuntime:
             collected_segments.append(_serialize_ask_result(result))
             remaining = remaining[:ask_start] + remaining[ask_end:]
 
-        if runtime_policy == "ask_user_plan" and not is_plan_prompt:
+        if runtime_policy == "plan" and not is_plan_prompt:
+            next_session_id = session_id or "mock_session"
+            self._decision_segments_by_session[next_session_id] = collected_segments
             summary = "\n".join(collected_segments) or "无需额外提问。"
             text = json.dumps(
                 {"decision_summary": summary, "reason": "测试 planning turn 已完成决策收敛。"},
@@ -157,7 +162,7 @@ class MockRuntime:
             )
             await on_chunk(AgentChunk(type="text", text=text))
             return AgentExecutionResult(
-                session_id=session_id or "mock_session",
+                session_id=next_session_id,
                 total_text=text,
                 finished_with="done",
             )
@@ -178,9 +183,9 @@ class MockRuntime:
         if _is_html_schema(output_schema) and text.lstrip().startswith("<"):
             text = json.dumps({"html": text}, ensure_ascii=False)
         if runtime_policy == "execute":
-            summary_segments = _decision_summary_segments(remaining)
-            if summary_segments:
-                text = text + "\n" + "\n".join(summary_segments)
+            session_segments = self._decision_segments_by_session.pop(session_id or "mock_session", [])
+            if session_segments:
+                text = text + "\n" + "\n".join(session_segments)
         await on_chunk(AgentChunk(type="text", text=text))
         return AgentExecutionResult(
             session_id=session_id or "mock_session",
@@ -189,10 +194,10 @@ class MockRuntime:
         )
 
 
-def _build_ask_request(payload: dict) -> AskUserRequest:
+def _build_decision_request(payload: dict) -> DecisionRequest:
     request_payload = dict(payload)
-    request_payload["tool_use_id"] = str(payload.get("tool_use_id") or f"toolu_mock_{uuid.uuid4().hex[:8]}")
-    return AskUserRequest.model_validate(request_payload)
+    request_payload["request_id"] = str(payload.get("request_id") or f"toolu_mock_{uuid.uuid4().hex[:8]}")
+    return DecisionRequest.model_validate(request_payload)
 
 
 def _merge_workspace(cwd: Path) -> str:
@@ -260,7 +265,7 @@ def _extract_assistant_current_prompt(prompt: str) -> str:
 
 
 def _find_ask_marker(text: str) -> tuple[int, int, str] | None:
-    marker = "[[ask_user:"
+    marker = "[[decision_request:"
     start = text.find(marker)
     if start == -1:
         return None
@@ -285,14 +290,6 @@ def _serialize_ask_result(result) -> str:  # noqa: ANN001 - simple test helper
             "attachments=" + "|".join(att.name or att.id for att in result.attachments)
         )
     return "ask_result " + "; ".join(parts) if parts else "ask_result empty"
-
-
-def _decision_summary_segments(prompt: str) -> list[str]:
-    marker = "# 用户决策摘要"
-    if marker not in prompt:
-        return []
-    tail = prompt.split(marker, 1)[1]
-    return [line.strip() for line in tail.splitlines() if line.strip().startswith("ask_result ")]
 
 
 def _layout_response(prompt: str) -> str:

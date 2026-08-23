@@ -1413,7 +1413,7 @@ info 16:21:13 Streaming HTML sections</div>
       <header class="topbar">
         <div class="top-row">
           <button class="icon-button" data-screen-target="edit-canvas" aria-label="返回">‹</button>
-          <div class="title"><strong>AI 改造</strong><span>两阶段确认 · ask_user ready</span></div>
+          <div class="title"><strong>AI 改造</strong><span>两阶段确认 · 支持中途提问</span></div>
           <button class="icon-button" data-open-sheet="ai-plan">✦</button>
         </div>
       </header>
@@ -1785,7 +1785,7 @@ command = "uvx"</textarea></div>
         <div class="sheet-body stack">
           <div class="notice neutral">key: prompt_assistant · 变量：$prompt / $node / $context · 更新：07-05 22:32</div>
           <div class="field"><label>描述</label><input value="帮助用户稳定生成和改写节点 Prompt" /></div>
-          <div class="field"><label>Prompt Template</label><textarea>你是 Mira 的 Prompt Assistant。必须输出严格 JSON，并在信息不足时使用 ask_user。
+          <div class="field"><label>Prompt Template</label><textarea>你是 Mira 的 Prompt Assistant。必须输出严格 JSON；仅在关键信息无法可靠推断时向用户提问。
 
 输入：
 - 当前节点：$node

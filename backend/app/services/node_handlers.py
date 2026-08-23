@@ -23,10 +23,10 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Run, RunAgentBranch, Step, StepLog
-from app.runtime.base import AgentChunk, AskUserRequest, AskUserResult
+from app.runtime.base import AgentChunk, DecisionRequest, DecisionResult
 from app.runtime.factory import get_runtime
 from app.schemas import RunInputValue
-from app.services.decision_prompts import append_ask_user_none_option, validate_ask_request_groups
+from app.services.decision_prompts import append_none_option, validate_decision_groups
 from app.services.execution_plan import ExecutionPlan, compile_execution_plan
 from app.services.output_contracts import (
     ContractValidationResult,
@@ -55,7 +55,7 @@ _OFFICE_VALIDATION_CONCURRENCY = 2
 _OFFICE_VALIDATION_SEMAPHORE = asyncio.Semaphore(_OFFICE_VALIDATION_CONCURRENCY)
 _UNICODE_REPAIR_MARKER = "[[MIRA_CORRUPTED_TEXT]]"
 _UNICODE_REPLACEMENT_ESCAPE_RE = re.compile(r"\\u[fF]{3}[dD]")
-_ASK_USER_PLAN_OUTPUT_SCHEMA: dict[str, Any] = {
+_PLANNING_OUTPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
     "properties": {
@@ -354,9 +354,9 @@ async def _run_llm_with_upload_context(
     model = str(node.get("model") or "").strip() or None
     reasoning_effort = normalize_reasoning_effort(node.get("reasoning_effort"))
 
-    decision_summary: str | NodeResult = ""
-    if _should_run_decision_plan(node):
-        decision_summary = await _run_decision_plan(
+    planning_result: NodeResult | None = None
+    if node.get("type") != "output":
+        planning_result = await _run_planning_turn(
             ctx,
             node,
             step,
@@ -366,23 +366,11 @@ async def _run_llm_with_upload_context(
             reasoning_effort=reasoning_effort,
             cwd=cwd,
         )
-    if isinstance(decision_summary, NodeResult):
-        return decision_summary
+    if planning_result is not None:
+        return planning_result
     input_payload = loads(step.input_json, {}) or {}
     if not isinstance(input_payload, dict):
         input_payload = {}
-    if decision_summary:
-        prompt = _append_prompt(
-            prompt,
-            "\n".join(
-                [
-                    "# 用户决策摘要",
-                    decision_summary,
-                    "# 执行要求",
-                    "请基于上述用户决策完成当前节点；不要再次向用户提问。",
-                ]
-            ),
-        )
     input_payload["prompt"] = prompt
     step.input_json = dumps(input_payload)
     chunks: list[str] = []
@@ -411,7 +399,7 @@ async def _run_llm_with_upload_context(
             cwd=cwd,
             on_chunk=on_chunk,
             cancel_event=ctx.channel.cancel_event,
-            on_ask_user=None,
+            on_decision_request=None,
             runtime_tools=ctx.runtime_tools,
             runtime_policy="execute",
             output_schema=output_schema,
@@ -509,7 +497,7 @@ async def _run_llm_with_upload_context(
     return NodeResult(status="success", output=output, agent_session_id=next_session_id)
 
 
-async def _run_decision_plan(
+async def _run_planning_turn(
     ctx: ExecutionContext,
     node: dict[str, Any],
     step: Step,
@@ -519,8 +507,8 @@ async def _run_decision_plan(
     model: str | None,
     reasoning_effort: str | None,
     cwd: Path,
-) -> str | NodeResult:
-    plan_prompt = _build_decision_plan_prompt(prompt)
+) -> NodeResult | None:
+    plan_prompt = _build_planning_prompt(prompt)
     chunks: list[str] = []
 
     async def on_plan_chunk(chunk: AgentChunk) -> None:
@@ -530,23 +518,23 @@ async def _run_decision_plan(
         if chunk.type == "text" and chunk.text:
             chunks.append(chunk.text)
 
-    async def on_ask_user(request: AskUserRequest) -> AskUserResult:
-        protocol_error = _validate_ask_request(request)
+    async def on_decision_request(request: DecisionRequest) -> DecisionResult:
+        protocol_error = _validate_decision_request(request)
         if protocol_error:
-            return AskUserResult(ok=False, error=protocol_error)
-        request = request.model_copy(update={"groups": append_ask_user_none_option(request.groups)})
+            return DecisionResult(ok=False, error=protocol_error)
+        request = request.model_copy(update={"groups": append_none_option(request.groups)})
         async with ctx.channel.waiting_lock:
             if ctx.channel.cancel_event.is_set():
-                return AskUserResult(ok=False, error="运行已取消")
-            future = ctx.channel.begin_waiting(node["id"], request.tool_use_id)
+                return DecisionResult(ok=False, error="运行已取消")
+            future = ctx.channel.begin_waiting(node["id"], request.request_id)
             try:
-                await _persist_live_ask_user(ctx, step, request)
+                await _persist_live_decision_request(ctx, step, request)
                 answer = await future
-                await _persist_live_ask_user_answer(ctx, step, request, answer)
-                ctx.channel.acknowledge_resume(node["id"], request.tool_use_id)
+                await _persist_live_decision_request_answer(ctx, step, request, answer)
+                ctx.channel.acknowledge_resume(node["id"], request.request_id)
                 return answer
             finally:
-                ctx.channel.clear_waiting(node["id"], request.tool_use_id)
+                ctx.channel.clear_waiting(node["id"], request.request_id)
 
     try:
         result = await runtime.execute(
@@ -557,17 +545,17 @@ async def _run_decision_plan(
             cwd=cwd,
             on_chunk=on_plan_chunk,
             cancel_event=ctx.channel.cancel_event,
-            on_ask_user=on_ask_user,
+            on_decision_request=on_decision_request,
             runtime_tools=ctx.planning_runtime_tools,
-            runtime_policy="ask_user_plan",
-            output_schema=_ASK_USER_PLAN_OUTPUT_SCHEMA,
+            runtime_policy="plan",
+            output_schema=_PLANNING_OUTPUT_SCHEMA,
             session_scope=f"run:{ctx.run_id}",
             fork_session=ctx.fork_session,
         )
     except asyncio.CancelledError:
         raise
     except Exception as exc:  # noqa: BLE001
-        logger.exception("runtime ask_user plan crashed for node=%s", node.get("id"))
+        logger.exception("runtime decision_request plan crashed for node=%s", node.get("id"))
         return NodeResult(
             status="failed",
             error=f"Agent 提问规划异常: {exc}",
@@ -602,25 +590,17 @@ async def _run_decision_plan(
     input_payload = loads(step.input_json, {}) or {}
     if not isinstance(input_payload, dict):
         input_payload = {}
-    input_payload["ask_user_plan"] = {
+    input_payload["planning_result"] = {
         "summary": summary,
         "reason": str(payload.get("reason") or "").strip(),
     }
-    input_payload.pop("ask_user", None)
+    input_payload.pop("decision_request", None)
     step.input_json = dumps(input_payload)
     await ctx.db.commit()
-    return summary
+    return None
 
 
-def _should_run_decision_plan(node: dict[str, Any]) -> bool:
-    if node.get("type") == "output":
-        return False
-    if node.get("type") == "generate" and node.get("ask_user_enabled") is False:
-        return False
-    return True
-
-
-def _build_decision_plan_prompt(prompt: str) -> str:
+def _build_planning_prompt(prompt: str) -> str:
     return "\n\n".join(
         [
             prompt,
@@ -657,15 +637,15 @@ def _json_object_from_text(text: str) -> dict[str, Any] | None:
     return None
 
 
-async def _persist_live_ask_user(
+async def _persist_live_decision_request(
     ctx: ExecutionContext,
     step: Step,
-    request: AskUserRequest,
+    request: DecisionRequest,
 ) -> None:
     input_payload = loads(step.input_json, {}) or {}
     if not isinstance(input_payload, dict):
         input_payload = {}
-    input_payload["ask_user"] = request.model_dump(exclude_none=True)
+    input_payload["decision_request"] = request.model_dump(exclude_none=True)
     step.input_json = dumps(input_payload)
     step.status = "waiting_for_user"
     run = await ctx.db.get(Run, ctx.run_id)
@@ -695,16 +675,16 @@ async def _persist_session_id(ctx: ExecutionContext, step: Step, session_id: str
     await ctx.db.commit()
 
 
-async def _persist_live_ask_user_answer(
+async def _persist_live_decision_request_answer(
     ctx: ExecutionContext,
     step: Step,
-    request: AskUserRequest,
-    result: AskUserResult,
+    request: DecisionRequest,
+    result: DecisionResult,
 ) -> None:
     input_payload = loads(step.input_json, {}) or {}
     if not isinstance(input_payload, dict):
         input_payload = {}
-    history = input_payload.get("ask_user_history")
+    history = input_payload.get("decision_history")
     if not isinstance(history, list):
         history = []
     history.append(
@@ -713,9 +693,9 @@ async def _persist_live_ask_user_answer(
             "response": result.model_dump(exclude_none=True),
         }
     )
-    input_payload["ask_user_history"] = history
-    input_payload["resume"] = result.model_dump(exclude_none=True)
-    input_payload.pop("ask_user", None)
+    input_payload["decision_history"] = history
+    input_payload["decision_response"] = result.model_dump(exclude_none=True)
+    input_payload.pop("decision_request", None)
     step.input_json = dumps(input_payload)
     step.status = "running"
     run = await ctx.db.get(Run, ctx.run_id)
@@ -794,7 +774,7 @@ async def _repair_contract_output(
             cwd=cwd,
             on_chunk=on_repair_chunk,
             cancel_event=ctx.channel.cancel_event,
-            on_ask_user=None,
+            on_decision_request=None,
             runtime_tools=ctx.runtime_tools,
             runtime_policy="execute",
             output_schema=output_schema,
@@ -899,13 +879,13 @@ def _contract_failure_message(node: dict[str, Any], validation_error: str) -> st
     return f"节点输出无效。请调整提示词后重试。技术细节：{validation_error}"
 
 
-# --- ask_user 中段交互 -------------------------------------------------------
+# --- decision_request 中段交互 -------------------------------------------------------
 
 
-def _validate_ask_request(request: AskUserRequest) -> str | None:
+def _validate_decision_request(request: DecisionRequest) -> str | None:
     """spec §1.2 的校验。返回非 None 即代表协议错误。"""
 
-    return validate_ask_request_groups(request.groups)
+    return validate_decision_groups(request.groups)
 
 
 async def _compose_prompt(ctx: ExecutionContext, node: dict[str, Any]) -> str:
@@ -994,17 +974,17 @@ def _append_prompt(prompt: str, suffix: str) -> str:
 
 def _runtime_upload_refs_for_node(ctx: ExecutionContext, node: dict[str, Any], step: Step) -> list[RuntimeUploadRef]:
     refs: dict[str, RuntimeUploadRef] = {}
-    _collect_resume_upload_refs(ctx, step, refs)
+    _collect_decision_upload_refs(ctx, step, refs)
     return list(refs.values())
 
 
-def _collect_resume_upload_refs(ctx: ExecutionContext, step: Step, refs: dict[str, RuntimeUploadRef]) -> None:
+def _collect_decision_upload_refs(ctx: ExecutionContext, step: Step, refs: dict[str, RuntimeUploadRef]) -> None:
     payload = loads(step.input_json, {}) or {}
     if not isinstance(payload, dict):
         return
-    resume = payload.get("resume")
-    if isinstance(resume, dict):
-        _collect_upload_refs_from_value(ctx.user_id, resume.get("attachments"), refs)
+    response = payload.get("decision_response")
+    if isinstance(response, dict):
+        _collect_upload_refs_from_value(ctx.user_id, response.get("attachments"), refs)
 
 
 def _collect_upload_refs_from_value(owner_id: str, value: Any, refs: dict[str, RuntimeUploadRef]) -> None:

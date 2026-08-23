@@ -36,11 +36,11 @@
 - Workflow 节点类型是 `user_input`、`asset`、`generate`、`condition`、`output`。最多一个 `user_input` 和一个 `output`；`output` 是终点节点，不能出边。
 - Graph 使用 `execution_edges` 表达执行顺序；画布连线不表达字段绑定。一次 Run 的线性节点共享 Agent 会话和 workspace，真正并行时由后端 fork/merge；不要为了数据引用添加已有传递路径覆盖的冗余直连线。
 - 素材节点字段必须遵守 `types.ts`：文本 `content`，URL `urls[]`，文件 `uploads[]`，画板 `upload`。
-- 所有应用固定使用 Codex；Graph 不保存运行时选择字段。`generate` / `condition` / `output` 节点只保存 prompt、model、reasoning_effort、output_contract 等节点级字段，`ask_user_enabled` 仅允许出现在 `generate`。
+- 所有应用固定使用 Codex；Graph 不保存运行时选择字段或提问开关。`generate` / `condition` / `output` 节点只保存 prompt、model、reasoning_effort、output_contract 等节点级字段。
 - App 级 Tools 排除项写入 `graph.tools.disabled_tool_ids`。Preview、App View 和 Mobile Run 可展示/调整 App 级 Tools；不要把 Tools 重新做成 generate 节点配置。
 - `generate.output_contract` 只在 generate 节点配置，支持 json/html/artifact；普通 generate 默认自由文本且不保存契约。只有下游需要稳定字段、当前节点明确输出 HTML 片段或需要可下载文件产物时才使用契约。JSON 契约必须携带 strict object `json_schema`，artifact 必须携带 `artifact_kind`；`zip` kind 表示只接受真实 `.zip` 文件，`validate_office_documents` 是 artifact-only 的可选严格打开校验；`output` 节点固定为 HTML 最终展示。
 - JSON output contract 和 Schema 仅作为内部校验契约，由 Prompt Assistant 根据提示词维护；普通用户界面不展示 JSON Schema、字段大纲、字段引用或“可引用结果”选项。
-- `generate.ask_user_enabled` 是可选 bool；`false` 完全跳过该节点的运行期决策 Plan，省略或 `true` 沿用后端默认判定。不要把该字段扩展到 condition 或 output。
+- 运行期除 `output` 外的 LLM 节点统一先进入 Codex Plan，由原生 `requestUserInput` 决定是否等待用户输入；前端不提供节点级提问开关。
 - 条件分支 edge 必须保持 `branch_key` 与分支 key 对齐；`CONDITION_DEFAULT_BRANCH_KEY` 是系统保留 fallback key。
 - 从历史 run 节点重新执行、失败修复和 condition 分支测试走 `useRunStore.rerunFrom`，创建 checkpoint rerun：cut 前状态冻结，当前 App graph 只用于 cut 及下游；不修改来源 run 或 App graph。
 
@@ -50,7 +50,7 @@
 - App View 遇到 `can_edit=false` 或 `/market/apps/:id` 路由必须保持只读，不显示编辑、发布、版本管理等 owner-only 入口。
 - Mobile 路由通过 viewport media query 切换到 `/m`，不要改成 UA 判断。手机端只承载登录、应用列表、最近运行、市场、运行、历史、结果和 owner 运行设置，不加节点编辑器或 Settings。
 - Mobile Run 不使用 `useEditorStore`；owner 运行设置可写回节点 model 和 `graph.tools.disabled_tool_ids`，不编辑节点 prompt、结构或 reasoning_effort。
-- `ask_user` UI 统一使用后端返回的 context/groups/options。面板先显示 `context.title` 和 `context.summary`；每组必须选择选项，补充文字和附件始终可用；多问题只在最后一题提交；提交后显示“已选择 / 已补充”摘要并保留停止入口。
+- `decision_request` UI 统一使用后端返回的 context/groups/options。面板先显示 `context.title` 和 `context.summary`；每组必须选择选项，补充文字和附件始终可用；多问题只在最后一题提交；提交后显示“已选择 / 已补充”摘要并保留停止入口。
 - 自然语言编辑首次提交允许附件；必须先通过 uploads API 获得 upload id，再随 `POST /api/nlcompile` 发送引用，不能只把文件名拼进 instruction。
 - HTML 输出只通过 `HtmlOutputFrame` iframe 隔离渲染；滚动应由外层 Preview/App View/Mobile 容器承载。
 - 视觉改动保持现有 Tailwind、黑白灰和少量强调色体系；图标优先使用现有组件或 `lucide-react`。

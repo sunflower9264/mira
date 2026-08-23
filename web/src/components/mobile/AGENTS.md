@@ -14,7 +14,7 @@
 - 不直接调用 `lib/api.ts`、`useRunStore`、`useAppStore`、`useEditorStore` 或 `useAuthStore`，除非组件职责明确升级为业务容器。
 - 跨桌面和手机都可复用的基础能力应放入 `components/common/`，不要在 mobile 目录重复实现。
 - 手机端 sheet 使用现有 `vaul` 依赖和 Tailwind 风格；按钮尺寸、底部安全区和滚动区域要适配窄屏。
-- 不在组件内写运行历史、Codex 设置、上传、SSE 或 ask_user 业务状态。
+- 不在组件内写运行历史、Codex 设置、上传、SSE 或 decision_request 业务状态。
 
 ## Verification
 

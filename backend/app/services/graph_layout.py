@@ -129,7 +129,7 @@ async def _run_layout_agent(
         cwd=graph_layout_workspace(user_id),
         on_chunk=on_chunk,
         cancel_event=cancel_event,
-        on_ask_user=None,
+        on_decision_request=None,
         runtime_policy="execute",
     )
     if cancel_event.is_set() or result.finished_with == "cancelled":

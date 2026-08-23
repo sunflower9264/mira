@@ -13,11 +13,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.db import SessionLocal
 from app.models import App, PromptAssistantGenerationRow
-from app.runtime.base import AgentChunk, AskUserAttachment, AskUserRequest, AskUserResult
+from app.runtime.base import AgentChunk, DecisionAttachment, DecisionRequest, DecisionResult
 from app.runtime.factory import get_runtime
 from app.schemas.requests import PromptAssistantGenerateIn, PromptAssistantResumeIn
 from app.services import runtime_config
-from app.services.decision_prompts import append_ask_user_none_option, validate_ask_request_groups, validate_decision_answers
+from app.services.decision_prompts import append_none_option, validate_decision_groups, validate_decision_answers
 from app.services.execution_plan import ExecutionPlanError, compile_execution_plan
 from app.services.graph_inputs import prepare_planning_graph
 from app.services.output_contracts import validate_output_contract_config
@@ -47,7 +47,7 @@ _ASSISTANT_PROMPT_MAX_BYTES = 200 * 1024
 _RELATED_PROMPT_LIMIT = 1200
 
 _CANCELLED_DETAIL = "提示词生成已取消"
-_ASK_USER_WAITING_STOPPED_DETAIL = "ask_user runtime stopped while waiting; resume from persisted pending request"
+_DECISION_WAITING_STOPPED_DETAIL = "decision_request runtime stopped while waiting; resume from persisted pending request"
 _PROMPT_ASSISTANT_TERMINAL_STATUSES = {"completed", "failed", "cancelled"}
 _PROMPT_ASSISTANT_ACTIVE_STATUSES = {"running", "waiting_for_user", "interrupted"}
 
@@ -64,8 +64,8 @@ class PromptAssistantSession:
     reasoning_effort: str | None
     graph: dict[str, Any]
     task: asyncio.Task[None] | None = None
-    resume_future: asyncio.Future[AskUserResult] | None = None
-    current_request: AskUserRequest | None = None
+    resume_future: asyncio.Future[DecisionResult] | None = None
+    current_request: DecisionRequest | None = None
     waiter_count: int = 0
 
 
@@ -167,7 +167,7 @@ async def _start_prompt_assistant_session_from_row(
     db: AsyncSession,
     row: PromptAssistantGenerationRow,
     *,
-    replay_result: AskUserResult | None = None,
+    replay_result: DecisionResult | None = None,
 ) -> PromptAssistantSession:
     payload = _prompt_payload(row)
     prompt = str(payload.get("prompt") or "")
@@ -206,22 +206,22 @@ async def _run_prompt_assistant_session(
     session: PromptAssistantSession,
     runtime: object,
     runtime_tools: RuntimeToolConfig | None,
-    replay_result: AskUserResult | None = None,
+    replay_result: DecisionResult | None = None,
 ) -> None:
     replayed_result = replay_result
 
-    async def on_ask_user(request: AskUserRequest) -> AskUserResult:
+    async def on_decision_request(request: DecisionRequest) -> DecisionResult:
         nonlocal replayed_result
         if replayed_result is not None:
             result = replayed_result
             replayed_result = None
             return result
-        protocol_error = validate_ask_request_groups(request.groups)
+        protocol_error = validate_decision_groups(request.groups)
         if protocol_error:
-            return AskUserResult(ok=False, error=protocol_error)
-        request = request.model_copy(update={"groups": append_ask_user_none_option(request.groups)})
+            return DecisionResult(ok=False, error=protocol_error)
+        request = request.model_copy(update={"groups": append_none_option(request.groups)})
         if session.resume_future is not None and not session.resume_future.done():
-            return AskUserResult(ok=False, error="不允许并发 ask_user")
+            return DecisionResult(ok=False, error="不允许并发 decision_request")
         session.current_request = request
         session.resume_future = asyncio.get_running_loop().create_future()
         request_payload = request.model_dump(exclude_none=True)
@@ -253,9 +253,9 @@ async def _run_prompt_assistant_session(
             model=session.model,
             reasoning_effort=session.reasoning_effort,
             cancel_event=session.cancel_event,
-            on_ask_user=on_ask_user,
+            on_decision_request=on_decision_request,
             runtime_tools=runtime_tools,
-            runtime_policy="ask_user_plan",
+            runtime_policy="plan",
         )
         completed = {
             "status": "completed",
@@ -309,11 +309,11 @@ async def resume_prompt_assistant(
     if session is not None and session.current_request is not None:
         request = session.current_request
     elif isinstance(request_payload, dict):
-        request = AskUserRequest.model_validate(request_payload)
+        request = DecisionRequest.model_validate(request_payload)
     else:
         raise HTTPException(status_code=409, detail="当前没有等待输入")
 
-    result = _build_ask_user_result(user_id, request, payload)
+    result = _build_decision_request_result(user_id, request, payload)
     history = _history_from_row(row)
     history.append(_qa_history_entry(request, result))
     _apply_row_update(row, status="running", history=history, pending_request=None, error=None)
@@ -328,11 +328,11 @@ async def resume_prompt_assistant(
     return await _await_prompt_assistant_response(session)
 
 
-def _build_ask_user_result(
+def _build_decision_request_result(
     user_id: str,
-    request: AskUserRequest,
+    request: DecisionRequest,
     payload: PromptAssistantResumeIn,
-) -> AskUserResult:
+) -> DecisionResult:
     text = (payload.text or "").strip() or None
     attachment_refs = list(payload.attachments or [])
     if not payload.answers and not text and not attachment_refs:
@@ -346,13 +346,13 @@ def _build_ask_user_result(
     if text is not None and len(text.encode("utf-8")) > max_text:
         raise HTTPException(status_code=400, detail="补充文本过长")
 
-    attachments: list[AskUserAttachment] = []
+    attachments: list[DecisionAttachment] = []
     for ref in attachment_refs:
         resolved = resolve_upload(user_id, ref.id)
         if resolved is None:
             raise HTTPException(status_code=404, detail="附件不存在")
         attachments.append(
-            AskUserAttachment(
+            DecisionAttachment(
                 id=resolved.id,
                 name=ref.name or resolved.name,
                 path=str(resolved.path),
@@ -361,12 +361,12 @@ def _build_ask_user_result(
                 size=resolved.size,
             )
         )
-    return AskUserResult(ok=True, answers=payload.answers, text=text, attachments=attachments)
+    return DecisionResult(ok=True, answers=payload.answers, text=text, attachments=attachments)
 
 
-def _qa_history_entry(request: AskUserRequest, result: AskUserResult) -> dict[str, Any]:
+def _qa_history_entry(request: DecisionRequest, result: DecisionResult) -> dict[str, Any]:
     return {
-        "kind": "ask_user",
+        "kind": "decision_request",
         "request": request.model_dump(exclude_none=True),
         "result": result.model_dump(exclude_none=True),
     }
@@ -404,7 +404,7 @@ async def _preserve_waiting_prompt_assistant_session(session: PromptAssistantSes
             return False
 
     if session.resume_future is not None and not session.resume_future.done():
-        session.resume_future.set_result(AskUserResult(ok=False, error=_ASK_USER_WAITING_STOPPED_DETAIL))
+        session.resume_future.set_result(DecisionResult(ok=False, error=_DECISION_WAITING_STOPPED_DETAIL))
     if not session.response_future.done():
         session.response_future.set_result(
             {
@@ -425,7 +425,7 @@ async def run_prompt_assistant(
     model: str | None,
     reasoning_effort: str | None,
     cancel_event: asyncio.Event,
-    on_ask_user=None,
+    on_decision_request=None,
     runtime_tools: RuntimeToolConfig | None = None,
     runtime_policy: str = "execute",
 ) -> PromptAssistantResult:
@@ -441,7 +441,7 @@ async def run_prompt_assistant(
             model=model,
             reasoning_effort=reasoning_effort,
             cancel_event=cancel_event,
-            on_ask_user=on_ask_user if attempt == 1 else None,
+            on_decision_request=on_decision_request if attempt == 1 else None,
             runtime_tools=runtime_tools if attempt == 1 else None,
             runtime_policy=runtime_policy if attempt == 1 else "execute",
         )
@@ -471,7 +471,7 @@ async def _execute_prompt_assistant_once(
     model: str | None,
     reasoning_effort: str | None,
     cancel_event: asyncio.Event,
-    on_ask_user=None,
+    on_decision_request=None,
     runtime_tools: RuntimeToolConfig | None = None,
     runtime_policy: str = "execute",
 ) -> str:
@@ -489,7 +489,7 @@ async def _execute_prompt_assistant_once(
         cwd=prompt_assistant_workspace(user_id),
         on_chunk=on_chunk,
         cancel_event=cancel_event,
-        on_ask_user=on_ask_user,
+        on_decision_request=on_decision_request,
         runtime_tools=runtime_tools,
         runtime_policy=runtime_policy,
         output_schema=output_schema_for("prompt_assistant"),
@@ -517,7 +517,7 @@ async def cancel_prompt_assistant(db: AsyncSession, user_id: str, generation_id:
         return
     session.cancel_event.set()
     if session.resume_future is not None and not session.resume_future.done():
-        session.resume_future.set_result(AskUserResult(ok=False, error=_CANCELLED_DETAIL))
+        session.resume_future.set_result(DecisionResult(ok=False, error=_CANCELLED_DETAIL))
     _generation_sessions.pop(generation_id, None)
 
 

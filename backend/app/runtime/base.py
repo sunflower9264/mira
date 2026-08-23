@@ -35,23 +35,23 @@ class AgentRuntimeStatus(BaseModel):
     checked_at: datetime
 
 
-# --- ask_user 中段交互协议 ---------------------------------------------------
+# --- decision_request 中段交互协议 ---------------------------------------------------
 #
 # Codex 在 Plan mode 中通过原生 requestUserInput 发起单选 / 多选问题；runtime
-# 归一化后调用 ``on_ask_user``，等待用户 resume，再按原 JSON-RPC request id
+# 归一化后调用 ``on_decision_request``，等待用户 resume，再按原 JSON-RPC request id
 # 把结果回填给同一 turn 继续生成。
 
 
-class AskUserRequest(BaseModel):
+class DecisionRequest(BaseModel):
     """Codex 原生 requestUserInput 归一化后的 Mira 提问请求。"""
 
     context: DecisionRequestContext
     groups: list[DecisionGroup]
-    tool_use_id: str
+    request_id: str
 
 
-class AskUserAttachment(BaseModel):
-    """resume 回填 tool_result 时给 Agent 的附件视图（路径给 runtime 读，URL 给浏览器下载）。"""
+class DecisionAttachment(BaseModel):
+    """resume 回填原生请求时给 Agent 的附件视图（路径给 runtime 读，URL 给浏览器下载）。"""
 
     id: str
     name: str
@@ -61,18 +61,18 @@ class AskUserAttachment(BaseModel):
     size: int | None = None
 
 
-class AskUserResult(BaseModel):
+class DecisionResult(BaseModel):
     """用户提交回来的内容；``ok=False`` 时 runtime 返回 JSON-RPC error。"""
 
     ok: bool = True
     answers: list[DecisionAnswer] = Field(default_factory=list)
     text: str | None = None
-    attachments: list[AskUserAttachment] = Field(default_factory=list)
+    attachments: list[DecisionAttachment] = Field(default_factory=list)
     error: str | None = None
 
 
-AskUserCallback = Callable[[AskUserRequest], Awaitable[AskUserResult]]
-RuntimePolicy = Literal["execute", "ask_user_plan"]
+DecisionCallback = Callable[[DecisionRequest], Awaitable[DecisionResult]]
+RuntimePolicy = Literal["execute", "plan"]
 
 
 class AgentRuntime(Protocol):
@@ -86,7 +86,7 @@ class AgentRuntime(Protocol):
         cwd: Path,
         on_chunk: Callable[[AgentChunk], Awaitable[None]],
         cancel_event: asyncio.Event,
-        on_ask_user: AskUserCallback | None = None,
+        on_decision_request: DecisionCallback | None = None,
         runtime_tools: RuntimeToolConfig | None = None,
         runtime_policy: RuntimePolicy = "execute",
         output_schema: dict | None = None,

@@ -109,7 +109,7 @@ def workflow_data_prompt() -> str:
             "整个应用的一次运行由同一个 RunAgent 推进；顺序节点延续同一会话，并共享同一个可写 `/workspace`。",
             "上游已经完成的分析、决策和文件都保留在当前会话与 workspace 中；不要等待额外的显式结果注入。",
             "应用输入和素材在 Agent 首次启动前写入 `/workspace/.mira/run-context/`；需要时直接读取该目录，附件副本位于 `/workspace/inputs/`。",
-            "`/mnt/inputs` 只用于当前 ask_user 恢复时新增的附件。",
+            "`/mnt/inputs` 只用于当前 decision_request 恢复时新增的附件。",
             "可以在 `/workspace` 中维护跨节点工作文件；需要出现在节点正式结果或用户下载区的内容仍必须满足当前节点的强输出契约。",
             "节点最终回复只提交当前节点契约要求的结果，不要用隐藏 sidecar、handoff 或 manifest 文件代替正式节点输出。",
             "业务验收完成但结论不通过时，仍须返回符合契约的 failed/blocked 业务结果；只有工具、程序或契约无法执行时才属于节点执行失败。",

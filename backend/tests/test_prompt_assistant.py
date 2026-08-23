@@ -11,7 +11,7 @@ from sqlalchemy import select
 
 from app.db import SessionLocal
 from app.models import PromptAssistantGenerationRow, User
-from app.runtime.base import AgentChunk, AgentExecutionResult, AgentRuntimeStatus, AskUserRequest
+from app.runtime.base import AgentChunk, AgentExecutionResult, AgentRuntimeStatus, DecisionRequest
 from app.runtime.factory import set_runtime_override
 from app.services.structured_output import PROMPT_ASSISTANT_OUTPUT_SCHEMA
 from app.utils import now_utc
@@ -63,7 +63,7 @@ class PromptAssistantRuntime:
         cwd: Path,
         on_chunk,
         cancel_event: asyncio.Event,
-        on_ask_user=None,
+        on_decision_request=None,
         runtime_tools=None,
         runtime_policy="execute",
         output_schema=None,
@@ -108,7 +108,7 @@ class PromptAssistantAskRuntime(PromptAssistantRuntime):
         cwd: Path,
         on_chunk,
         cancel_event: asyncio.Event,
-        on_ask_user=None,
+        on_decision_request=None,
         runtime_tools=None,
         runtime_policy="execute",
         output_schema=None,
@@ -118,9 +118,9 @@ class PromptAssistantAskRuntime(PromptAssistantRuntime):
         self.reasoning_effort = reasoning_effort
         self.runtime_policy = runtime_policy
         self.output_schema = output_schema
-        if on_ask_user is None:
-            return AgentExecutionResult(session_id=session_id, total_text="", finished_with="error", error="missing ask_user")
-        request = AskUserRequest(
+        if on_decision_request is None:
+            return AgentExecutionResult(session_id=session_id, total_text="", finished_with="error", error="missing decision_request")
+        request = DecisionRequest(
             context={"title": "确认提示词语气", "summary": "生成提示词前需要确认输出内容应该采用哪种语气。"},
             groups=[
                 {
@@ -133,9 +133,9 @@ class PromptAssistantAskRuntime(PromptAssistantRuntime):
                     ],
                 }
             ],
-            tool_use_id="toolu_prompt_assistant",
+            request_id="toolu_prompt_assistant",
         )
-        result = await on_ask_user(request)
+        result = await on_decision_request(request)
         if not result.ok:
             return AgentExecutionResult(session_id=session_id, total_text="", finished_with="error", error=result.error)
         self.answers_seen.append([answer.model_dump() for answer in result.answers])
@@ -253,7 +253,7 @@ def test_prompt_assistant_uses_ai_with_graph_context_and_user_request(auth_clien
     assert response.json() == {"status": "completed", "prompt": "新的完整提示词", "output_contract": None}
     assert runtime.model == "test-model"
     assert runtime.reasoning_effort == "high"
-    assert runtime.runtime_policy == "ask_user_plan"
+    assert runtime.runtime_policy == "plan"
     assert runtime.output_schema == PROMPT_ASSISTANT_OUTPUT_SCHEMA
     assert runtime.last_prompt is not None
     assert "生成草稿" in runtime.last_prompt
@@ -482,7 +482,7 @@ def test_prompt_assistant_accepts_prompt_with_inner_codeblock(auth_client, confi
     assert response.json() == {"status": "completed", "prompt": prompt, "output_contract": None}
 
 
-def test_prompt_assistant_uses_conservative_ask_user_default(
+def test_prompt_assistant_uses_conservative_decision_request_default(
     auth_client,
     configure_codex,
 ):
@@ -524,7 +524,7 @@ def test_prompt_assistant_uses_conservative_ask_user_default(
 
     assert response.status_code == 200, response.text
     assert runtime.last_prompt is not None
-    assert runtime.runtime_policy == "ask_user_plan"
+    assert runtime.runtime_policy == "plan"
 
 
 def test_prompt_assistant_allows_intermediate_graph_and_strips_runtime_snapshot(auth_client, configure_codex):
@@ -645,7 +645,7 @@ def test_prompt_assistant_waits_for_user_and_resumes(auth_client, configure_code
         assert waiting["generation_id"] == generation_id
         labels = [option["label"] for option in waiting["request"]["groups"][0]["options"]]
         assert labels == ["专业", "轻松", "以上都不是"]
-        assert runtime.runtime_policy == "ask_user_plan"
+        assert runtime.runtime_policy == "plan"
 
         resumed = auth_client.post(
             f"/api/prompt-assistant/{generation_id}/resume",

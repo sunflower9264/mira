@@ -19,7 +19,7 @@
 - Console Trace 只面向桌面编辑器调试，支持 `generate`、`condition`、`output`；不要扩展到 App View 或手机端，除非用户明确要求。
 - 从历史 run 指定节点重新执行、失败节点修复和 condition 分支测试走 `useRunStore.rerunFrom`，从节点前 checkpoint 创建新 run；cut 前状态冻结，来源 run 保持只读。
 - condition 分支测试只放在桌面编辑器 Console，使用 `condition_branch_override` 写入新 run snapshot，不修改 App graph。
-- waiting/ask_user 面板使用后端 context/groups/options；先展示 `context.title` 和 `context.summary`，补充文本和附件按题目隔离，多问题只在最后一题提交，提交后显示摘要并保留停止入口。
+- waiting/decision_request 面板使用后端 context/groups/options；先展示 `context.title` 和 `context.summary`，补充文本和附件按题目隔离，多问题只在最后一题提交，提交后显示摘要并保留停止入口。
 - StepTab 的“生成提示词”调用 Prompt Assistant API，只写回目标节点 prompt/可选 output_contract；生成态按节点 id 存在 editor store，切换节点不自动取消。
 - StepTab 不展示 JSON output contract、Schema、字段大纲或祖先字段引用；内部 JSON 契约由 Prompt Assistant 根据任务维护。
 - live run 中正在执行的画布节点显示跑马灯边框，收到 step 终态后立即停止；历史 replay 不显示运行动画，并遵守 `prefers-reduced-motion`。

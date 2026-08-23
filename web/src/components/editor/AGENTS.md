@@ -10,7 +10,7 @@
 
 - `Canvas.tsx`：React Flow 画布、本地选择/拖拽/连线交互。
 - `NodeToolbar.tsx`：新增节点和画布工具入口。
-- `NlInputBar.tsx`：自然语言编排、ask_user 方案追问、方案确认/应用。
+- `NlInputBar.tsx`：自然语言编排、decision_request 方案追问、方案确认/应用。
 - `nodes/`：各节点视图。
 
 ## Rules

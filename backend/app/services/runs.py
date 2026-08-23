@@ -27,7 +27,7 @@ from app.models import (
     Step,
     StepLog,
 )
-from app.runtime.base import AskUserAttachment, AskUserResult
+from app.runtime.base import DecisionAttachment, DecisionResult
 from app.schemas.decision import DecisionGroup
 from app.schemas import RunInputValue, RunOut, RunResumeIn, RunSummaryOut
 from app.services.apps import EMPTY_GRAPH, can_run_app, get_owned_app_or_404, get_visible_app_or_404, graph_for_viewer, should_redact_app_source
@@ -535,7 +535,7 @@ async def delete_run_record(db: AsyncSession, run_id: str, user_id: str) -> None
         delete_upload(user_id, upload_id)
 
 
-# --- resume （ask_user 续接）-----------------------------------------------
+# --- resume （decision_request 续接）-----------------------------------------------
 
 
 async def submit_resume(
@@ -543,10 +543,10 @@ async def submit_resume(
     user_id: str,
     run_id: str,
     payload: RunResumeIn,
-) -> AskUserResult:
-    """校验 POST /api/runs/{id}/resume 请求体并返回打包好的 AskUserResult。
+) -> DecisionResult:
+    """校验 POST /api/runs/{id}/resume 请求体并返回打包好的 DecisionResult。
 
-    本函数只打包 AskUserResult；调用方校验当前 waiting request 后，
+    本函数只打包 DecisionResult；调用方校验当前 waiting request 后，
     直接完成仍在运行的原生提问 Future。
 
     校验顺序：
@@ -556,7 +556,7 @@ async def submit_resume(
     4. ``attachments`` 内每个 id 归属当前用户、未过期 → 否则 404；
     5. ``text`` 长度 ≤ ``max_resume_text_bytes`` → 否则 400。
 
-    ``answers`` 是否匹配 ask_user.groups、node_id / tool_use_id 是否匹配
+    ``answers`` 是否匹配 decision_request.groups、node_id / request_id 是否匹配
     由 ``validate_live_resume`` 基于 step.input 中的 waiting request 校验。
     """
 
@@ -578,13 +578,13 @@ async def submit_resume(
     if text is not None and len(text.encode("utf-8")) > max_text:
         raise HTTPException(status_code=400, detail="补充文本过长")
 
-    metas: list[AskUserAttachment] = []
+    metas: list[DecisionAttachment] = []
     for ref in attachment_refs:
         resolved = resolve_upload(user_id, ref.id)
         if resolved is None:
             raise HTTPException(status_code=404, detail="附件不存在")
         metas.append(
-            AskUserAttachment(
+            DecisionAttachment(
                 id=resolved.id,
                 name=ref.name or resolved.name,
                 path=str(resolved.path),
@@ -594,7 +594,7 @@ async def submit_resume(
             )
         )
 
-    return AskUserResult(ok=True, answers=answers, text=text, attachments=metas)
+    return DecisionResult(ok=True, answers=answers, text=text, attachments=metas)
 
 
 async def continue_run_record(db: AsyncSession, run_id: str, user_id: str) -> RunOut:
@@ -660,7 +660,7 @@ async def validate_live_resume(
     user_id: str,
     run_id: str,
     payload: RunResumeIn,
-    result: AskUserResult,
+    result: DecisionResult,
 ) -> None:
     run = (
         await db.execute(select(Run).where(Run.id == run_id, Run.owner_id == user_id))
@@ -676,10 +676,10 @@ async def validate_live_resume(
     ).scalar_one_or_none()
     if step is None or step.status != "waiting_for_user":
         raise HTTPException(status_code=409, detail="当前没有等待该节点的输入")
-    ask = _ask_user_payload(step)
-    if not ask or ask.get("tool_use_id") != payload.tool_use_id:
-        raise HTTPException(status_code=409, detail="ask_user 已失效，请重新发起运行")
-    groups_payload = ask.get("groups")
+    request = _decision_request_payload(step)
+    if not request or request.get("request_id") != payload.request_id:
+        raise HTTPException(status_code=409, detail="当前决策请求已失效，请重新发起运行")
+    groups_payload = request.get("groups")
     try:
         groups = [DecisionGroup.model_validate(item) for item in groups_payload]
     except Exception:  # noqa: BLE001
@@ -968,9 +968,9 @@ def _condition_branch_run_name(branch_test: dict[str, str]) -> str:
     )
 
 
-def _ask_user_payload(step: Step) -> dict[str, Any] | None:
+def _decision_request_payload(step: Step) -> dict[str, Any] | None:
     payload = loads(step.input_json, {}) or {}
     if not isinstance(payload, dict):
         return None
-    ask = payload.get("ask_user")
-    return ask if isinstance(ask, dict) else None
+    request = payload.get("decision_request")
+    return request if isinstance(request, dict) else None
