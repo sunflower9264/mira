@@ -19,7 +19,7 @@
 - sandbox stdout 必须增量解码 UTF-8，禁止按 Docker log frame 单独 `errors=ignore`，以免三字节汉字被拆开。
 - App Server 必须按 `initialize`、`initialized`、thread start/resume/fork、`turn/start` 的顺序驱动，并处理 notification 与 server request；`turn/completed` 后主动停止短生命周期容器。
 - 运行期提问使用 `collaborationMode=plan` 和原生 `item/tool/requestUserInput`。runtime 负责归一化问题、等待 Mira 回答并以原 request id 写回结果；不在 prompt 中指定工具名，也不增加第二条传输通道。
-- 普通执行 turn 必须显式使用可写 sandbox policy；planning turn 使用 read-only policy，避免同 thread 的上一次模式泄漏到下一 turn。
+- 普通执行 turn 必须显式使用可写 sandbox policy；planning turn 的外层 Docker workspace 挂载必须为只读，App Server 使用 `externalSandbox`，避免在受限容器中嵌套 Linux sandbox。不得为此放宽 capability、启用 privileged 或修改宿主 user namespace。
 - Adapter 不做 UI 模型兜底；model、reasoning_effort 和 runtime policy 由 service 层准备并传入。
 - LLM thread lineage 由 RunAgent 决定；adapter 必须支持线性 `thread/resume` 与原生 `thread/fork`，并行 branch 绝不能继续写同一物理 thread。
 

@@ -65,6 +65,7 @@ class WorkflowInterfaceRuntime:
         if runtime_policy == "plan":
             text = json.dumps(
                 {
+                    "decision_state": "ready",
                     "decision_summary": "测试输入已经完整。",
                     "reason": "无需补充决策。",
                 },

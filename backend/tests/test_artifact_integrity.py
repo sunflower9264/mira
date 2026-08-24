@@ -59,7 +59,7 @@ class ArtifactCatalogRuntime:
         fork_session=False,
     ) -> AgentExecutionResult:
         if runtime_policy == "plan":
-            text = '{"decision_summary":"无需额外提问。","reason":"测试场景信息完整。"}'
+            text = '{"decision_state":"ready","decision_summary":"无需额外提问。","reason":"测试场景信息完整。"}'
         elif "你正在生成 Mira output 节点" in prompt:
             text = '{"html":"<section>OK</section>"}'
         else:

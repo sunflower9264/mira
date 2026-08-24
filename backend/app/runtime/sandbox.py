@@ -108,6 +108,7 @@ class DockerSandboxSpec:
     prompt: str
     env: dict[str, str]
     path_map: RuntimePathMap
+    workspace_read_only: bool = False
 
 
 @dataclass(frozen=True)
@@ -195,7 +196,7 @@ class DockerSandboxRunner:
     ) -> DockerSandboxResult:
         client = self._client_or_create()
         settings = get_settings()
-        volumes = _volumes(spec.path_map)
+        volumes = _volumes(spec.path_map, workspace_read_only=spec.workspace_read_only)
         host_config = {
             "mem_limit": settings.runtime_container_memory,
             "pids_limit": settings.runtime_container_pids_limit,
@@ -357,9 +358,16 @@ def _container_user() -> str:
     return f"{getuid()}:{getgid()}"
 
 
-def _volumes(path_map: RuntimePathMap) -> dict[str, dict[str, str]]:
+def _volumes(
+    path_map: RuntimePathMap,
+    *,
+    workspace_read_only: bool = False,
+) -> dict[str, dict[str, str]]:
     volumes = {
-        str(path_map.workspace_host): {"bind": str(path_map.workspace_container), "mode": "rw"},
+        str(path_map.workspace_host): {
+            "bind": str(path_map.workspace_container),
+            "mode": "ro" if workspace_read_only else "rw",
+        },
         str(path_map.home_host): {"bind": str(path_map.home_container), "mode": "rw"},
     }
     if path_map.uploads_host is not None and path_map.uploads_host.exists():

@@ -157,7 +157,11 @@ class MockRuntime:
             self._decision_segments_by_session[next_session_id] = collected_segments
             summary = "\n".join(collected_segments) or "无需额外提问。"
             text = json.dumps(
-                {"decision_summary": summary, "reason": "测试 planning turn 已完成决策收敛。"},
+                {
+                    "decision_state": "ready",
+                    "decision_summary": summary,
+                    "reason": "测试 planning turn 已完成决策收敛。",
+                },
                 ensure_ascii=False,
             )
             await on_chunk(AgentChunk(type="text", text=text))

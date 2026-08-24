@@ -42,7 +42,7 @@ class TraceRuntime:
         fork_session=False,
     ) -> AgentExecutionResult:
         if runtime_policy == "plan":
-            text = '{"decision_summary":"无需额外提问。","reason":"测试 trace 场景不需要补充用户决策。"}'
+            text = '{"decision_state":"ready","decision_summary":"无需额外提问。","reason":"测试 trace 场景不需要补充用户决策。"}'
             await on_chunk(AgentChunk(type="text", text=text))
             return AgentExecutionResult(
                 session_id=session_id,

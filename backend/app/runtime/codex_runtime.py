@@ -273,6 +273,7 @@ class CodexRuntime:
                         prompt=initial_input,
                         env=_clean_env(CONTAINER_HOME),
                         path_map=path_map,
+                        workspace_read_only=runtime_policy == "plan",
                     ),
                     on_stdout_line=on_stdout_line,
                     cancel_event=sandbox_cancel_event,
@@ -421,7 +422,7 @@ def _turn_request(
         "input": [{"type": "text", "text": prompt}],
         "approvalPolicy": "never",
         "sandboxPolicy": (
-            {"type": "readOnly", "networkAccess": False}
+            {"type": "externalSandbox", "networkAccess": "restricted"}
             if runtime_policy == "plan"
             else {"type": "dangerFullAccess"}
         ),

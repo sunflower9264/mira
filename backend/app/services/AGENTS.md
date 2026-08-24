@@ -28,7 +28,7 @@
 - NL compile apply 将 patches 作为整批在临时 graph 上模拟和校验，失败可让 Agent 重新生成；不得返回半应用 graph。
 - NL compile apply 返回前调用 Prompt Assistant 后处理 prompt，并调用 graph layout 美化；这些后处理不进入 decision_request。
 - Prompt Assistant 使用 `prompt_assistant_generations` 持久化生成、waiting、resume、cancel、active；内存 session 只用于当前进程快速等待和取消。
-- Codex 原生 `requestUserInput` 在 runtime 层归一化为 Mira decision request；等待、resume、SSE 和附件落地仍由 service 层维护，不通过 prompt 或 MCP 约定工具路由。
+- Codex 原生 `requestUserInput` 在 runtime 层归一化为 Mira decision request；等待、resume、SSE 和附件落地仍由 service 层维护，不通过 prompt 或 MCP 约定工具路由。planning 若仍声明缺少用户决策却没有发起原生提问，只重试一次，随后按 contract 失败并禁止进入执行阶段。
 - `runtime_paths.py` 是 runtime 文件路径优先来源；现有少量直接使用 `runtime_dir()` 的清理逻辑不要继续扩散，新增路径 helper 优先放回 `runtime_paths.py`。
 - Prompt Templates 以 `backend/seeds/prompts/` 为源码事实来源；seed 同步会覆盖数据库同名模板，Settings 保存 Prompt Template 时必须同步写回同名 seed 文件。
 - Settings、Codex、MCP、Skill、Instruction、Prompt Template 写操作保持 admin-only。

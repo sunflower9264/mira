@@ -180,6 +180,33 @@ async def test_interactive_runner_honors_cancel_event_and_cleans_up(tmp_path) ->
     container.remove.assert_called_once_with(force=True)
 
 
+async def test_interactive_runner_mounts_planning_workspace_read_only(tmp_path) -> None:
+    client, _container, _attached = _fake_docker_client()
+    workspace = tmp_path / "workspace"
+    home = tmp_path / "home"
+    workspace.mkdir()
+    home.mkdir()
+    cancel_event = asyncio.Event()
+    cancel_event.set()
+    runner = DockerSandboxRunner(client=client)
+
+    await runner.run_interactive(
+        DockerSandboxSpec(
+            command=["codex", "app-server"],
+            prompt="initialize\n",
+            env={"HOME": "/home/mira"},
+            path_map=RuntimePathMap(workspace_host=workspace, home_host=home),
+            workspace_read_only=True,
+        ),
+        on_stdout_line=lambda _line: None,
+        cancel_event=cancel_event,
+    )
+
+    volumes = client.containers.create.call_args.kwargs["volumes"]
+    assert volumes[str(workspace)] == {"bind": "/workspace", "mode": "ro"}
+    assert volumes[str(home)] == {"bind": "/home/mira", "mode": "rw"}
+
+
 def _expected_container_user() -> str:
     getuid = getattr(os, "getuid", None)
     getgid = getattr(os, "getgid", None)

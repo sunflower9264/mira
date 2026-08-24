@@ -81,7 +81,10 @@ def test_codex_turn_request_uses_native_plan_mode_and_output_schema() -> None:
     assert params["input"] == [{"type": "text", "text": "plan this"}]
     assert params["effort"] == "high"
     assert params["outputSchema"] == schema
-    assert params["sandboxPolicy"] == {"type": "readOnly", "networkAccess": False}
+    assert params["sandboxPolicy"] == {
+        "type": "externalSandbox",
+        "networkAccess": "restricted",
+    }
     assert params["collaborationMode"] == {
         "mode": "plan",
         "settings": {
@@ -245,6 +248,60 @@ def test_codex_runtime_drives_app_server_json_rpc(tmp_path, monkeypatch) -> None
     assert result.session_id == "thread_new"
     assert result.total_text == "hello"
     assert [chunk.type for chunk in chunks] == ["session", "text", "text"]
+
+
+def test_codex_plan_runtime_uses_read_only_outer_workspace(tmp_path, monkeypatch) -> None:
+    shared_home = tmp_path / "shared-home"
+    shared_home.mkdir()
+    (shared_home / "config.toml").write_text('model = "gpt-test"\n', encoding="utf-8")
+    (shared_home / "auth.json").write_text("{}\n", encoding="utf-8")
+    monkeypatch.setattr(codex_runtime, "codex_home", lambda: shared_home)
+
+    class FakeRunner:
+        def __init__(self) -> None:
+            self.spec = None
+
+        async def check_available(self):
+            return DockerSandboxStatus(ok=True)
+
+        async def run_interactive(self, spec, *, on_stdout_line, cancel_event):
+            self.spec = spec
+            await on_stdout_line('{"id":1,"result":{}}')
+            reply = await on_stdout_line('{"id":2,"result":{"thread":{"id":"thread_plan"}}}')
+            turn = json.loads(reply.input)
+            assert turn["params"]["sandboxPolicy"] == {
+                "type": "externalSandbox",
+                "networkAccess": "restricted",
+            }
+            await on_stdout_line(
+                '{"method":"item/completed","params":{"item":{"type":"agentMessage",'
+                '"text":"{\\"decision_state\\":\\"ready\\",\\"decision_summary\\":'
+                '\\"输入充分\\",\\"reason\\":\\"无需提问\\"}"}}}'
+            )
+            await on_stdout_line(
+                '{"method":"turn/completed","params":{"turn":{"status":"completed"}}}'
+            )
+            return DockerSandboxResult(return_code=0)
+
+    runner = FakeRunner()
+    runtime = CodexRuntime()
+    runtime.runner = runner
+
+    async def run():
+        return await runtime.execute(
+            prompt="plan this",
+            session_id=None,
+            model=None,
+            reasoning_effort="medium",
+            cwd=tmp_path / "workspace",
+            on_chunk=lambda _chunk: asyncio.sleep(0),
+            cancel_event=asyncio.Event(),
+            runtime_policy="plan",
+        )
+
+    result = asyncio.run(run())
+    assert result.finished_with == "done"
+    assert runner.spec.workspace_read_only is True
 
 
 async def _append_chunk(chunks: list, chunk) -> None:

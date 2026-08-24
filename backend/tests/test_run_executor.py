@@ -70,6 +70,7 @@ class ReasoningCaptureRuntime:
         if runtime_policy == "plan":
             text = json.dumps(
                 {
+                    "decision_state": "ready",
                     "decision_summary": "无需额外提问。",
                     "reason": "测试场景不需要补充用户决策。",
                 },
@@ -128,7 +129,7 @@ class LateSuccessAfterCancelRuntime:
                 finished_with="done",
             )
         if runtime_policy == "plan":
-            text = '{"decision_summary":"无需额外提问。","reason":"测试场景不需要补充用户决策。"}'
+            text = '{"decision_state":"ready","decision_summary":"无需额外提问。","reason":"测试场景不需要补充用户决策。"}'
             await on_chunk(AgentChunk(type="text", text=text))
             return AgentExecutionResult(session_id=session_id, total_text=text, finished_with="done")
         self.started.set()
@@ -175,7 +176,7 @@ class WorkspacePathRuntime:
         fork_session=False,
     ) -> AgentExecutionResult:
         if runtime_policy == "plan":
-            text = '{"decision_summary":"无需额外提问。","reason":"测试场景不需要补充用户决策。"}'
+            text = '{"decision_state":"ready","decision_summary":"无需额外提问。","reason":"测试场景不需要补充用户决策。"}'
             await on_chunk(AgentChunk(type="text", text=text))
             return AgentExecutionResult(session_id=session_id, total_text=text, finished_with="done")
         artifact = cwd / "deliverable.zip"
@@ -218,7 +219,7 @@ class GeneratedImageRuntime:
         fork_session=False,
     ) -> AgentExecutionResult:
         if runtime_policy == "plan":
-            text = '{"decision_summary":"无需额外提问。","reason":"测试场景不需要补充用户决策。"}'
+            text = '{"decision_state":"ready","decision_summary":"无需额外提问。","reason":"测试场景不需要补充用户决策。"}'
             await on_chunk(AgentChunk(type="text", text=text))
             return AgentExecutionResult(session_id=session_id, total_text=text, finished_with="done")
         if "你正在生成 Mira output 节点" in prompt:
@@ -283,7 +284,7 @@ class ToolResultOnlyHtmlRuntime:
             }
         )
         if runtime_policy == "plan":
-            text = '{"decision_summary":"无需额外提问。","reason":"测试场景不需要补充用户决策。"}'
+            text = '{"decision_state":"ready","decision_summary":"无需额外提问。","reason":"测试场景不需要补充用户决策。"}'
             await on_chunk(AgentChunk(type="text", text=text))
             return AgentExecutionResult(session_id=session_id, total_text=text, finished_with="done")
         if "你正在生成 Mira output 节点" not in prompt:
@@ -332,7 +333,7 @@ class ArtifactContractRuntime:
         fork_session=False,
     ) -> AgentExecutionResult:
         if runtime_policy == "plan":
-            text = '{"decision_summary":"无需额外提问。","reason":"测试场景不需要补充用户决策。"}'
+            text = '{"decision_state":"ready","decision_summary":"无需额外提问。","reason":"测试场景不需要补充用户决策。"}'
             await on_chunk(AgentChunk(type="text", text=text))
             return AgentExecutionResult(session_id=session_id, total_text=text, finished_with="done")
         if _is_output_prompt(prompt):
@@ -405,7 +406,7 @@ class OfficeArtifactRepairRuntime:
         fork_session=False,
     ) -> AgentExecutionResult:
         if runtime_policy == "plan":
-            text = '{"decision_summary":"无需额外提问。","reason":"测试无需用户决策。"}'
+            text = '{"decision_state":"ready","decision_summary":"无需额外提问。","reason":"测试无需用户决策。"}'
             await on_chunk(AgentChunk(type="text", text=text))
             return AgentExecutionResult(session_id=session_id, total_text=text, finished_with="done")
         if _is_output_prompt(prompt):
@@ -466,7 +467,7 @@ class SequenceRuntime:
         fork_session=False,
     ) -> AgentExecutionResult:
         if runtime_policy == "plan":
-            text = '{"decision_summary":"无需额外提问。","reason":"测试场景不需要补充用户决策。"}'
+            text = '{"decision_state":"ready","decision_summary":"无需额外提问。","reason":"测试场景不需要补充用户决策。"}'
             await on_chunk(AgentChunk(type="text", text=text))
             return AgentExecutionResult(session_id=session_id, total_text=text, finished_with="done")
         if _is_output_prompt(prompt):
@@ -503,7 +504,7 @@ class OutputContractRepairRuntime:
 
     async def execute(self, **kwargs) -> AgentExecutionResult:
         if kwargs["runtime_policy"] == "plan":
-            text = '{"decision_summary":"无需额外提问。","reason":"测试场景不需要补充用户决策。"}'
+            text = '{"decision_state":"ready","decision_summary":"无需额外提问。","reason":"测试场景不需要补充用户决策。"}'
             return AgentExecutionResult(
                 session_id=kwargs["session_id"],
                 total_text=text,
@@ -591,7 +592,7 @@ class ParallelProbeRuntime:
                     "runtime_policy": runtime_policy,
                 }
             )
-            text = '{"decision_summary":"无需额外提问。","reason":"测试场景不需要补充用户决策。"}'
+            text = '{"decision_state":"ready","decision_summary":"无需额外提问。","reason":"测试场景不需要补充用户决策。"}'
             await on_chunk(AgentChunk(type="text", text=text))
             return AgentExecutionResult(session_id=next_session, total_text=text, finished_with="done")
         async with self._lock:
@@ -639,7 +640,7 @@ class SharedWorkspaceRuntime:
         cwd = kwargs["cwd"]
         on_chunk = kwargs["on_chunk"]
         if kwargs["runtime_policy"] == "plan":
-            text = '{"decision_summary":"无需额外提问。","reason":"测试场景不需要补充用户决策。"}'
+            text = '{"decision_state":"ready","decision_summary":"无需额外提问。","reason":"测试场景不需要补充用户决策。"}'
         elif "write-private-file" in prompt:
             (cwd / "private-upstream.txt").write_text("implicit context", encoding="utf-8")
             text = "A"
@@ -678,7 +679,7 @@ class CheckpointRerunWorkspaceRuntime:
         if "你是 Mira RunAgent 的 fan-in 合并协调 Agent" in prompt:
             text = _merge_workspace(cwd)
         elif kwargs["runtime_policy"] == "plan":
-            text = '{"decision_summary":"无需额外提问。","reason":"测试场景不需要补充用户决策。"}'
+            text = '{"decision_state":"ready","decision_summary":"无需额外提问。","reason":"测试场景不需要补充用户决策。"}'
         elif "checkpoint-before" in prompt:
             (cwd / "checkpoint-state.txt").write_text("BEFORE_CUT", encoding="utf-8")
             text = "BEFORE"
@@ -822,7 +823,11 @@ class DecisionJudgmentRuntime:
                     )
                 summary = "已根据用户回答收敛阅读偏好。"
             text = json.dumps(
-                {"decision_summary": summary, "reason": "测试 planning turn 已完成决策判断。"},
+                {
+                    "decision_state": "ready",
+                    "decision_summary": summary,
+                    "reason": "测试 planning turn 已完成决策判断。",
+                },
                 ensure_ascii=False,
             )
             await on_chunk(AgentChunk(type="text", text=text))
@@ -873,7 +878,11 @@ class PlanningCaptureRuntime:
         if runtime_policy == "plan":
             self.plan_prompts.append(prompt)
             text = json.dumps(
-                {"decision_summary": "无需额外提问。", "reason": "测试输入信息充分。"},
+                {
+                    "decision_state": "ready",
+                    "decision_summary": "无需额外提问。",
+                    "reason": "测试输入信息充分。",
+                },
                 ensure_ascii=False,
             )
         elif _is_output_prompt(prompt):
@@ -883,6 +892,58 @@ class PlanningCaptureRuntime:
         await on_chunk(AgentChunk(type="text", text=text))
         return AgentExecutionResult(
             session_id=session_id or "planning_capture_session",
+            total_text=text,
+            finished_with="done",
+        )
+
+
+class UnresolvedPlanningRuntime:
+    def __init__(self) -> None:
+        self.plan_calls = 0
+        self.execute_calls = 0
+
+    async def detect_status(self) -> AgentRuntimeStatus:
+        return AgentRuntimeStatus(
+            installed=True,
+            runnable=True,
+            identity="unresolved-planning",
+            method="test",
+            checked_at=now_utc(),
+        )
+
+    async def execute(
+        self,
+        *,
+        prompt: str,
+        session_id: str | None,
+        model: str | None,
+        reasoning_effort: str | None,
+        cwd: Path,
+        on_chunk,
+        cancel_event: asyncio.Event,
+        on_decision_request=None,
+        runtime_tools=None,
+        runtime_policy="execute",
+        output_schema=None,
+        session_scope=None,
+        fork_session=False,
+    ) -> AgentExecutionResult:
+        if runtime_policy == "plan":
+            self.plan_calls += 1
+            text = json.dumps(
+                {
+                    "decision_state": "needs_user_input",
+                    "decision_summary": "仍缺少会改变结果的用户决策。",
+                    "reason": "必须先确认产品方向。",
+                },
+                ensure_ascii=False,
+            )
+        else:
+            self.execute_calls += 1
+            text = _structured_text("<section>UNEXPECTED</section>", output_schema)
+        await on_chunk(AgentChunk(type="text", text=text))
+        return AgentExecutionResult(
+            session_id=session_id or "unresolved_planning_session",
             total_text=text,
             finished_with="done",
         )
@@ -986,7 +1047,11 @@ class ParallelTemplateRuntime:
                     )
                 summary = "已确认目标受众和输出风格。"
             text = json.dumps(
-                {"decision_summary": summary, "reason": "测试 planning turn 已完成决策判断。"},
+                {
+                    "decision_state": "ready",
+                    "decision_summary": summary,
+                    "reason": "测试 planning turn 已完成决策判断。",
+                },
                 ensure_ascii=False,
             )
             await on_chunk(AgentChunk(type="text", text=text))
@@ -1847,6 +1912,36 @@ def test_specific_recommendation_input_can_skip_decision_request(auth_client, co
         assert by_id["n_gen"]["status"] == "success"
         assert by_id["n_gen"]["output"] == "DIRECT_RESULT"
         assert "decision_request" not in by_id["n_gen"]["input"]
+    finally:
+        set_runtime_override(MockRuntime())
+
+
+def test_unresolved_planning_without_native_question_fails_closed(auth_client, configure_codex):
+    configure_codex()
+    runtime = UnresolvedPlanningRuntime()
+    set_runtime_override(runtime)
+    graph = {
+        "nodes": [
+            _generate_node("n_gen", prompt="先确认关键产品方向，再生成结果。"),
+            _output_node("n_out", source="n_gen"),
+        ],
+        "execution_edges": [{"id": "e1", "source": "n_gen", "target": "n_out"}],
+    }
+
+    try:
+        app_id = _build_app(auth_client, graph=graph)
+        run = auth_client.post("/api/runs", json={"app_id": app_id, "inputs": {}}).json()
+
+        final = _wait_for_terminal(auth_client, run["run_id"])
+        by_id = {step["node_id"]: step for step in final["steps"]}
+        assert final["status"] == "failed"
+        assert final["failure_kind"] == "contract"
+        assert runtime.plan_calls == 2
+        assert runtime.execute_calls == 0
+        assert by_id["n_gen"]["status"] == "failed"
+        assert by_id["n_gen"]["failure_kind"] == "contract"
+        assert "未发起原生用户提问" in by_id["n_gen"]["error"]
+        assert by_id["n_out"]["status"] == "pending"
     finally:
         set_runtime_override(MockRuntime())
 

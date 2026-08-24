@@ -59,11 +59,16 @@ _PLANNING_OUTPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
     "properties": {
+        "decision_state": {
+            "type": "string",
+            "enum": ["ready", "needs_user_input"],
+        },
         "decision_summary": {"type": "string", "minLength": 1},
         "reason": {"type": "string", "minLength": 1},
     },
-    "required": ["decision_summary", "reason"],
+    "required": ["decision_state", "decision_summary", "reason"],
 }
+_PLANNING_MAX_ATTEMPTS = 2
 
 
 # --- 数据结构 ----------------------------------------------------------------
@@ -536,68 +541,90 @@ async def _run_planning_turn(
             finally:
                 ctx.channel.clear_waiting(node["id"], request.request_id)
 
-    try:
-        result = await runtime.execute(
-            prompt=plan_prompt,
-            session_id=ctx.agent_session_id,
-            model=model,
-            reasoning_effort=reasoning_effort,
-            cwd=cwd,
-            on_chunk=on_plan_chunk,
-            cancel_event=ctx.channel.cancel_event,
-            on_decision_request=on_decision_request,
-            runtime_tools=ctx.planning_runtime_tools,
-            runtime_policy="plan",
-            output_schema=_PLANNING_OUTPUT_SCHEMA,
-            session_scope=f"run:{ctx.run_id}",
-            fork_session=ctx.fork_session,
-        )
-    except asyncio.CancelledError:
-        raise
-    except Exception as exc:  # noqa: BLE001
-        logger.exception("runtime decision_request plan crashed for node=%s", node.get("id"))
-        return NodeResult(
-            status="failed",
-            error=f"Agent 提问规划异常: {exc}",
-            failure_kind="runtime",
-            agent_session_id=ctx.agent_session_id,
-        )
+    for attempt in range(_PLANNING_MAX_ATTEMPTS):
+        chunks.clear()
+        try:
+            result = await runtime.execute(
+                prompt=plan_prompt,
+                session_id=ctx.agent_session_id,
+                model=model,
+                reasoning_effort=reasoning_effort,
+                cwd=cwd,
+                on_chunk=on_plan_chunk,
+                cancel_event=ctx.channel.cancel_event,
+                on_decision_request=on_decision_request,
+                runtime_tools=ctx.planning_runtime_tools,
+                runtime_policy="plan",
+                output_schema=_PLANNING_OUTPUT_SCHEMA,
+                session_scope=f"run:{ctx.run_id}",
+                fork_session=ctx.fork_session,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("runtime decision_request plan crashed for node=%s", node.get("id"))
+            return NodeResult(
+                status="failed",
+                error=f"Agent 提问规划异常: {exc}",
+                failure_kind="runtime",
+                agent_session_id=ctx.agent_session_id,
+            )
 
-    next_session_id = result.session_id or ctx.agent_session_id
-    if next_session_id:
-        ctx.agent_session_id = next_session_id
-        step.agent_session_id = next_session_id
+        next_session_id = result.session_id or ctx.agent_session_id
+        if next_session_id:
+            ctx.agent_session_id = next_session_id
+            step.agent_session_id = next_session_id
+            await ctx.db.commit()
+        ctx.fork_session = False
+        if result.finished_with == "cancelled":
+            return NodeResult(status="cancelled", agent_session_id=ctx.agent_session_id)
+        if result.finished_with == "error":
+            return NodeResult(
+                status="failed",
+                error=result.error or "Agent 提问规划失败",
+                failure_kind="runtime",
+                agent_session_id=ctx.agent_session_id,
+            )
+        payload = _json_object_from_text(result.total_text or "".join(chunks))
+        summary = str(payload.get("decision_summary") or "").strip() if payload else ""
+        if not summary:
+            return NodeResult(
+                status="failed",
+                error="Agent 提问规划未返回决策摘要",
+                failure_kind="contract",
+                agent_session_id=ctx.agent_session_id,
+            )
+        decision_state = str(payload.get("decision_state") or "").strip()
+        if decision_state not in {"ready", "needs_user_input"}:
+            return NodeResult(
+                status="failed",
+                error="Agent 提问规划未返回有效决策状态",
+                failure_kind="contract",
+                agent_session_id=ctx.agent_session_id,
+            )
+        if decision_state == "needs_user_input":
+            if attempt + 1 < _PLANNING_MAX_ATTEMPTS:
+                await _append_log(ctx, step, "warn", "规划仍缺少用户决策，重试原生提问")
+                plan_prompt = _build_planning_retry_prompt(prompt)
+                continue
+            return NodeResult(
+                status="failed",
+                error="Agent 识别到关键决策缺失，但未发起原生用户提问",
+                failure_kind="contract",
+                agent_session_id=ctx.agent_session_id,
+            )
+        input_payload = loads(step.input_json, {}) or {}
+        if not isinstance(input_payload, dict):
+            input_payload = {}
+        input_payload["planning_result"] = {
+            "summary": summary,
+            "reason": str(payload.get("reason") or "").strip(),
+        }
+        input_payload.pop("decision_request", None)
+        step.input_json = dumps(input_payload)
         await ctx.db.commit()
-    ctx.fork_session = False
-    if result.finished_with == "cancelled":
-        return NodeResult(status="cancelled", agent_session_id=ctx.agent_session_id)
-    if result.finished_with == "error":
-        return NodeResult(
-            status="failed",
-            error=result.error or "Agent 提问规划失败",
-            failure_kind="runtime",
-            agent_session_id=ctx.agent_session_id,
-        )
-    payload = _json_object_from_text(result.total_text or "".join(chunks))
-    summary = str(payload.get("decision_summary") or "").strip() if payload else ""
-    if not summary:
-        return NodeResult(
-            status="failed",
-            error="Agent 提问规划未返回决策摘要",
-            failure_kind="contract",
-            agent_session_id=ctx.agent_session_id,
-        )
-    input_payload = loads(step.input_json, {}) or {}
-    if not isinstance(input_payload, dict):
-        input_payload = {}
-    input_payload["planning_result"] = {
-        "summary": summary,
-        "reason": str(payload.get("reason") or "").strip(),
-    }
-    input_payload.pop("decision_request", None)
-    step.input_json = dumps(input_payload)
-    await ctx.db.commit()
-    return None
+        return None
+    raise AssertionError("planning attempts exhausted")
 
 
 def _build_planning_prompt(prompt: str) -> str:
@@ -606,8 +633,19 @@ def _build_planning_prompt(prompt: str) -> str:
             prompt,
             "# 执行前规划",
             "只判断当前任务开始前是否缺少会显著改变结果的用户决策，不要执行任务或创建文件。",
-            "如果缺少关键偏好、约束、目标或交付形式，请在规划阶段向用户提问；信息足够后继续规划。",
-            "最后仅返回决策摘要和判断理由。",
+            "如果缺少关键偏好、约束、目标或交付形式，必须先通过 Plan mode 原生用户提问完成收敛；不得只在摘要中罗列待确认问题。",
+            "全部关键决策已经收敛时返回 decision_state=ready；仍缺少关键决策时返回 decision_state=needs_user_input。",
+            "最后仅返回决策状态、决策摘要和判断理由。",
+        ]
+    )
+
+
+def _build_planning_retry_prompt(prompt: str) -> str:
+    return "\n\n".join(
+        [
+            _build_planning_prompt(prompt),
+            "# 规划重试",
+            "上一轮确认仍缺少关键用户决策，但没有完成原生用户提问。现在必须先发起必要问题并等待回答；不得再次只返回待确认事项。",
         ]
     )
 
