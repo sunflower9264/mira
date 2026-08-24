@@ -3,6 +3,7 @@ FROM node:22-bookworm-slim AS node_runtime
 FROM python:3.12-slim
 
 ARG CODEX_VERSION=0.147.0
+ARG PLAYWRIGHT_CLI_VERSION=0.1.18
 ARG RUNTIME_DEFINITION_SHA256=unversioned
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -22,17 +23,24 @@ RUN apt-get update \
         git \
     && rm -rf /var/lib/apt/lists/*
 
-RUN npm install -g @openai/codex@${CODEX_VERSION}
+RUN npm install -g @openai/codex@${CODEX_VERSION} \
+    && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install -g @playwright/cli@${PLAYWRIGHT_CLI_VERSION} \
+    && test "$(playwright-cli --version)" = "${PLAYWRIGHT_CLI_VERSION}" \
+    && test -x /usr/bin/chromium
 
 LABEL mira.runtime.definition-sha256="${RUNTIME_DEFINITION_SHA256}" \
-    mira.runtime.codex-version="${CODEX_VERSION}"
+    mira.runtime.codex-version="${CODEX_VERSION}" \
+    mira.runtime.playwright-cli-version="${PLAYWRIGHT_CLI_VERSION}"
 
 RUN useradd --create-home --shell /bin/bash --uid 1000 mira
 
 WORKDIR /workspace
 
 COPY runtime/scripts/capture_screenshots.py /opt/mira/capture_screenshots.py
-RUN chmod 0755 /opt/mira/capture_screenshots.py \
+COPY runtime/scripts/mira-browser /opt/mira/mira-browser
+COPY runtime/playwright-cli.config.json /opt/mira/playwright-cli.config.json
+RUN chmod 0755 /opt/mira/capture_screenshots.py /opt/mira/mira-browser \
+    && ln -s /opt/mira/mira-browser /usr/local/bin/mira-browser \
     && chown -R mira:mira /opt/mira
 
 USER mira

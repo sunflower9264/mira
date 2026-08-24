@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+readonly PLAYWRIGHT_CLI=/usr/local/bin/playwright-cli
+readonly PLAYWRIGHT_PACKAGE=/usr/local/lib/node_modules/@playwright/cli/package.json
+readonly PLAYWRIGHT_VERSION=0.1.18
+readonly CHROMIUM_BINARY=/usr/bin/chromium
+readonly MIRA_CONFIG=/opt/mira/playwright-cli.config.json
+
+die() {
+  printf 'mira-browser: %s\n' "$1" >&2
+  exit "${2:-1}"
+}
+
+doctor() {
+  [[ -x "$PLAYWRIGHT_CLI" ]] || die "playwright-cli is missing: $PLAYWRIGHT_CLI"
+  [[ -x "$CHROMIUM_BINARY" ]] || die "Chromium is missing: $CHROMIUM_BINARY"
+  [[ -r "$PLAYWRIGHT_PACKAGE" ]] || die "Playwright package metadata is missing"
+  [[ -r "$MIRA_CONFIG" ]] || die "Mira browser policy is missing: $MIRA_CONFIG"
+
+  local actual_version
+  actual_version=$(node -p "require('$PLAYWRIGHT_PACKAGE').version")
+  [[ "$actual_version" == "$PLAYWRIGHT_VERSION" ]] \
+    || die "unexpected playwright-cli version: $actual_version (expected $PLAYWRIGHT_VERSION)"
+
+  printf 'playwright-cli %s\n' "$actual_version"
+  "$CHROMIUM_BINARY" --version
+  printf 'executable %s\n' "$CHROMIUM_BINARY"
+  printf 'mode headless, isolated, chromium sandbox disabled\n'
+}
+
+reject_unsafe_arguments() {
+  local arg
+  for arg in "$@"; do
+    case "$arg" in
+      attach|install|install-browser|--init-workspace|--init-skills|--init-skills-global)
+        die "unsupported command in the managed runtime: $arg" 64
+        ;;
+      --browser|--browser=*|--cdp|--cdp=*|--config|--config=*|--endpoint|--endpoint=*|\
+      --extension|--extension=*|--headed|--persistent|--profile|--profile=*)
+        die "unsupported option in the managed runtime: $arg" 64
+        ;;
+    esac
+  done
+}
+
+if [[ "${1:-}" == "doctor" ]]; then
+  [[ "$#" -eq 1 ]] || die "doctor does not accept arguments" 64
+  doctor
+  exit 0
+fi
+
+reject_unsafe_arguments "$@"
+[[ -x "$PLAYWRIGHT_CLI" ]] || die "playwright-cli is missing; run 'mira-browser doctor'"
+[[ -x "$CHROMIUM_BINARY" ]] || die "Chromium is missing; run 'mira-browser doctor'"
+[[ -r "$MIRA_CONFIG" ]] || die "Mira browser policy is missing; run 'mira-browser doctor'"
+[[ ! -e "$PWD/.playwright/cli.config.json" ]] \
+  || die "workspace Playwright config is not allowed in the managed runtime"
+
+unset PLAYWRIGHT_MCP_CDP_ENDPOINT PLAYWRIGHT_MCP_CDP_HEADERS
+unset PLAYWRIGHT_MCP_DEVICE PLAYWRIGHT_MCP_EXTENSION
+unset PLAYWRIGHT_MCP_INIT_PAGE PLAYWRIGHT_MCP_INIT_SCRIPT
+unset PLAYWRIGHT_MCP_PROXY_BYPASS PLAYWRIGHT_MCP_PROXY_SERVER
+unset PLAYWRIGHT_MCP_REMOTE_HEADERS PLAYWRIGHT_MCP_SECRETS_FILE
+unset PLAYWRIGHT_MCP_STORAGE_STATE PLAYWRIGHT_MCP_USER_DATA_DIR
+
+export CI=1
+export NO_UPDATE_NOTIFIER=1
+export PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+export PLAYWRIGHT_BROWSERS_PATH=0
+export PLAYWRIGHT_MCP_ALLOW_UNRESTRICTED_FILE_ACCESS=false
+export PLAYWRIGHT_MCP_BROWSER=chromium
+export PLAYWRIGHT_MCP_CONFIG="$MIRA_CONFIG"
+export PLAYWRIGHT_MCP_EXECUTABLE_PATH="$CHROMIUM_BINARY"
+export PLAYWRIGHT_MCP_HEADLESS=true
+export PLAYWRIGHT_MCP_ISOLATED=true
+export PLAYWRIGHT_MCP_SANDBOX=false
+export PWTEST_CLI_GLOBAL_CONFIG=/opt/mira/browser-policy
+
+if [[ "${1:-}" == "open" ]]; then
+  exec "$PLAYWRIGHT_CLI" --config "$MIRA_CONFIG" "$@"
+fi
+exec "$PLAYWRIGHT_CLI" "$@"

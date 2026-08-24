@@ -14,6 +14,7 @@
 - 容器使用后端进程 UID/GID 运行，保证 bind mount 可写；不要硬编码镜像内固定用户。
 - Fake HOME 和 scoped config/auth/MCP/Skills 文件从数据库配置派生；不要读取宿主机真实 Codex 登录状态。
 - 普通 run 的 MCP/Skills 注入来自 run snapshot 允许列表与当前 Settings 启用状态的交集；NL compile、Prompt Assistant 和运行期提问规划走 read-only 路径，还必须过滤 `planning_enabled=true`。
+- 交互式浏览器取证使用 runtime 固定入口 `mira-browser`，其 Playwright CLI 版本和 Chromium 路径由镜像固定为 `/usr/bin/chromium`；必须先执行 `mira-browser doctor`，禁止通过 `npx`、`npm install` 或浏览器下载补依赖。`mira-browser` 与 `/opt/mira/capture_screenshots.py` 是独立工具。
 - 不要把 MCP token/header 放入 CLI argv。
 - sandbox stdout 必须增量解码 UTF-8，禁止按 Docker log frame 单独 `errors=ignore`，以免三字节汉字被拆开。
 - App Server 必须按 `initialize`、`initialized`、thread start/resume/fork、`turn/start` 的顺序驱动，并处理 notification 与 server request；`turn/completed` 后主动停止短生命周期容器。

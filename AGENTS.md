@@ -30,6 +30,7 @@ Mira 是一个参考 Google Opal 思路的可视化 AI app 搭建与运行项目
 - 前端开发服务：`cd web && npm ci && npm run dev -- --host 0.0.0.0`。
 - Codex App Server 只允许在 `backend/runtime/Dockerfile` 构建的 Docker Linux sandbox 容器内执行，容器启用 Docker init 回收 Codex、Chromium 和开发服务器的后代进程；不要恢复宿主机直跑 Codex 的路径。启用 artifact 的 `validate_office_documents` 时，由后端宿主机的 LibreOffice、`pdfinfo` 和 `pdftotext` 做真实打开、页数与页面文字边界验证，不把它们打入 Agent runtime。
 - sandbox 内置 `/opt/mira/capture_screenshots.py`，并固定调用 `/usr/bin/chromium`，不接受 PATH 同名包装器；解包后的 Web 项目存在 `package-lock.json` 时使用 `npm ci`，否则使用 `npm install`，并在启动前依次执行项目已声明的 `db:init`、`db:seed` 脚本。每次截图使用可自动清理的临时 Chromium profile。每个 route 在 Chromium 前必须通过最终状态 `<400` 的 HTTP 检查；`--min-screenshots` 默认 1。只有全部检查通过且截图数达标时才生成 ZIP；截图不足、HTTP 错误或其他 capture failure 时 manifest `ok=false`、CLI 非零退出，并删除同路径旧 ZIP，避免失败结果被 artifact contract 当成有效 ZIP。成功截图逐张记录 SHA-256。manifest/log 脱敏 runtime 绝对路径但保留 URL；截图 ZIP 解包拒绝 traversal、链接、特殊文件、规范化后重名成员和损坏压缩流，并与 TAR 一样限制 10,000 个成员和 1 GiB 总展开量。
+- runtime 同时提供固定版本的 `@playwright/cli` 和 `/usr/bin/chromium`，统一入口为 `mira-browser`。交互式浏览器取证必须先运行 `mira-browser doctor`，随后直接使用该入口；运行期禁止 `npx`、`npm install` 或 Playwright 浏览器下载。`mira-browser` 会拒绝改变浏览器、配置、持久化 profile、CDP 或 headed 模式的参数。它与 `/opt/mira/capture_screenshots.py` 是两个独立工具：前者用于交互操作，后者用于稳定路由批量截图。
 - `scripts/dev.py` 会初始化 `.env`、检查或构建 runtime 镜像、运行 `scripts/init_admin.py` 并启动 uvicorn。共享或远程部署前必须修改默认 admin 密码。
 
 ## Architecture Rules

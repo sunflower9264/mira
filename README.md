@@ -66,6 +66,8 @@ API 文档：http://localhost:8000/api/docs
 
 ![手机端运行入口](docs/screenshots/mobile-run.png)
 
+需要执行表单填写、点击、提交或刷新持久化验证时，runtime 镜像提供固定版本的 `mira-browser` 入口。先运行 `mira-browser doctor`，然后使用 `mira-browser open/snapshot/click/fill/screenshot`；它固定绑定 `/usr/bin/chromium`，运行期不通过 `npx`、`npm install` 或浏览器下载补依赖。该入口和 `/opt/mira/capture_screenshots.py` 分工独立。
+
 ## License
 
 [MIT](LICENSE)

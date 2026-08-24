@@ -29,6 +29,7 @@
 - 全局数据包括 Settings、Skills、MCP、Codex config、supported models、Instructions 和 Prompt Templates；写操作必须 admin-only。
 - Codex App Server 只能通过 `app/runtime/sandbox.py` 在 Docker Linux sandbox 容器内执行；容器必须启用 Docker init 回收 Codex、Chromium 和开发服务器的后代进程。不要恢复宿主机 `subprocess.Popen` 直跑 Codex。Office artifact 深检是后端宿主机上的独立确定性校验，不在 Agent runtime 内执行。
 - sandbox 内置截图工具 `/opt/mira/capture_screenshots.py`；目标项目有 `package-lock.json` 时必须执行 `npm ci`，否则执行 `npm install`，并在启动前依次执行项目已声明的 `db:init`、`db:seed` 脚本。工具固定调用 `/usr/bin/chromium`，不接受 PATH 同名包装器；Chromium 的 HOME、XDG 目录和 `--user-data-dir` 使用截图调用结束即清理的临时目录。每个 route 在 Chromium 前必须通过最终状态 `<400` 的 HTTP 检查；`--min-screenshots` 默认 1。只有 manifest `ok=true` 时才生成 ZIP；截图不足、HTTP 错误或其他 capture failure 时 CLI 非零退出且删除同路径旧 ZIP，诊断只保留在 out-dir 的 manifest/log 中，避免失败结果被 artifact contract 接受。成功截图逐张记录 SHA-256。manifest/log 只保留相对路径或占位路径并保持 URL 原样；ZIP 解包额外拒绝规范化后重名成员和损坏压缩流，ZIP/TAR 都拒绝 traversal、链接与特殊文件，并限制 10,000 个成员和 1 GiB 总展开量。
+- runtime 额外提供固定版本的 `@playwright/cli`、`/usr/bin/chromium` 和 `mira-browser` 入口。交互取证必须先运行 `mira-browser doctor`，再使用 `mira-browser open/snapshot/click/...`；禁止运行期通过 `npx`、`npm install` 或 Playwright 下载浏览器。入口拒绝 `--browser`、`--config`、`--profile`、`--persistent`、`--cdp`、`--endpoint`、`--extension` 和 `--headed` 等会改变绑定的参数。它与静态批处理工具 `/opt/mira/capture_screenshots.py` 保持独立。
 - Runtime 文件路径必须通过 `app/services/runtime_paths.py` 计算；不要在业务 service 中手写 runtime/data 根路径。
 - `backend/data/`、`backend/logs/`、`backend/runtime/homes/`、`backend/runtime/workspaces/` 是本地运行产物，不作为源码维护。
 - Codex config/auth 正文加密存 DB；fake HOME 文件是派生物，可被重写。

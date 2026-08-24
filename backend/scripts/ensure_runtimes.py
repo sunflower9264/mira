@@ -26,7 +26,9 @@ def _image_name() -> str:
 def _runtime_definition_files() -> tuple[Path, ...]:
     return (
         BACKEND_ROOT / "runtime" / "Dockerfile",
+        BACKEND_ROOT / "runtime" / "playwright-cli.config.json",
         BACKEND_ROOT / "runtime" / "scripts" / "capture_screenshots.py",
+        BACKEND_ROOT / "runtime" / "scripts" / "mira-browser",
     )
 
 

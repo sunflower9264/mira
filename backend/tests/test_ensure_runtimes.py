@@ -36,6 +36,16 @@ def _image_with_digest(digest: str):  # noqa: ANN202
     return SimpleNamespace(attrs={"Config": {"Labels": {ensure_runtimes.RUNTIME_DEFINITION_LABEL: digest}}})
 
 
+def test_runtime_definition_includes_browser_policy_files() -> None:
+    relative_paths = {
+        path.relative_to(ensure_runtimes.BACKEND_ROOT).as_posix()
+        for path in ensure_runtimes._runtime_definition_files()
+    }
+
+    assert "runtime/playwright-cli.config.json" in relative_paths
+    assert "runtime/scripts/mira-browser" in relative_paths
+
+
 def test_current_runtime_image_is_not_rebuilt(monkeypatch) -> None:
     client = _FakeClient(_image_with_digest("current"))
     monkeypatch.setattr(ensure_runtimes, "_runtime_definition_digest", lambda: "current")
