@@ -10,6 +10,7 @@
 
 import type { App, DecisionOption, FailureKind, RunEvent } from '../types';
 import { getToken } from './auth';
+import { parseRunResumedEvent } from './runDecisionEvents';
 
 type RunStreamHandler = (evt: RunEvent) => void;
 
@@ -176,6 +177,8 @@ function toRunEvent(frame: ParsedFrame): RunEvent | null {
   } catch {
     return null;
   }
+  const resumedEvent = parseRunResumedEvent(frame.event, payload);
+  if (resumedEvent) return resumedEvent;
   switch (frame.event) {
     case 'step.start':
       if (typeof payload.node_id === 'string') {

@@ -380,6 +380,7 @@ export type RunEvent =
   | { event: 'step.waiting'; node_id: string; request: RunWaitingRequest; question?: string }
   | { event: 'step.end'; node_id: string; step: Step }
   | { event: 'run.waiting_for_user'; node_id: string; question?: string }
+  | { event: 'run.resumed'; node_id: string }
   | {
       event: 'run.end';
       status: 'success' | 'failed' | 'cancelled';

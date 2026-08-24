@@ -20,7 +20,7 @@
 5. 每个成功节点创建 immutable checkpoint。节点正式回复仍经过统一 Envelope 和 output contract；一次 repair 在原 thread/workspace 内完成，不回滚工作区。
 6. rerun-from 改为 checkpoint rerun：新 Run 克隆 cut 前 checkpoint、必要的 scoped HOME 与 thread lineage，冻结 cut 前 step；当前 App graph 只执行 cut 与 descendants。当前 Graph 新增的 cut 前节点标记 `checkpoint_reused`。来源 Run 永远只读。
 7. Codex thread ID、branch ID 和 checkpoint ID 是后端内部状态，不出现在 Step/Trace 前端契约。
-8. 需要补充用户决策时，Codex turn 使用 `collaborationMode=plan`；外层 Docker 将 branch workspace 只读挂载，App Server 使用 `externalSandbox`，避免在受限容器中嵌套 Linux sandbox。App Server 的原生 `item/tool/requestUserInput` 由 runtime 归一化后接入现有 waiting/SSE/UI 回答链路，回答通过同一 JSON-RPC request 返回并在同一 turn 内继续。规划若仍声明缺少用户决策却没有发起原生提问，只重试一次，随后按 contract 失败并禁止进入执行阶段。
+8. 需要补充用户决策时，Codex turn 使用 `collaborationMode=plan`；外层 Docker 将 branch workspace 只读挂载，App Server 使用 `externalSandbox`，避免在受限容器中嵌套 Linux sandbox。App Server 的原生 `item/tool/requestUserInput` 由 runtime 归一化后接入现有 waiting/SSE/UI 回答链路，回答通过同一 JSON-RPC request 返回并在同一 turn 内继续；前端消费 `run.resumed` 清除已回答问题，使历史 SSE 重放最终与当前 Run 状态一致。规划若仍声明缺少用户决策却没有发起原生提问，只重试一次，随后按 contract 失败并禁止进入执行阶段。
 
 ## 不变量
 

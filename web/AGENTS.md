@@ -26,6 +26,7 @@
 - Editor 的 canonical graph 在 `useEditorStore.app.graph`；Canvas 的 React Flow 本地状态只服务拖拽、选择和连线交互。
 - Preview、App View 和 Mobile Run 共用 `useRunStore`。运行态 UI 使用 `useRunStore.runGraph` 的 run 快照，不使用当前编辑器 graph 伪造历史状态。
 - `useRunStore.status` 是前端 UI 状态，包含 `idle` / `starting` / 后端真实 run status；只有存在 `runId` 且状态可取消时才能调用 cancel。
+- SSE 历史重放必须消费完整的运行生命周期；`run.resumed` 将状态切回 `running` 并清除旧 `waitingInput`，避免刷新后用已回答的 `step.waiting` 覆盖当前 Run 快照。
 - 刷新或重新进入时通过 `useRunStore.restoreActiveRun` 恢复 active run；`pending`、`running`、`waiting_for_user` 进入 live SSE，`interrupted` 显示继续运行语义，终态 run 才按历史回放展示。
 - 运行和发布前使用 workflow lint；error 阻断，warning 只提示。`can_view_source=false` 的市场应用必须让后端基于真实 graph 预检，前端不展示内部节点/prompt 细节。
 - Run artifacts 通过 `GET /api/runs/:id/artifacts` 展示，Step Trace 的 artifacts 也由后端返回；两者只包含成功 artifact contract Step 声明的产物，不扫描 workspace。前端契约接收后端返回的 artifact identity、`origin` / 可选 `reused_from` lineage、`sha256`、`integrity`（`verified` / `modified`）和 `download_url`；响应没有内部 `path`，下载只使用 `download_url`，也不从 HTML 输出扫描文件链接。Output HTML 如需内嵌下载或图片预览，只能使用 `data-mira-artifact-download` / `data-mira-artifact-preview` 按正式 artifact 展示名声明占位；`HtmlOutputFrame` 根据当前 Run artifacts API 返回的同名 `verified` 产物绑定签名 URL，不接受 HTML 自带的文件路径或 URL。

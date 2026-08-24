@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { App, AgentChunk, ConditionBranchOverride, DecisionAnswer, DecisionGroup, DecisionRequestContext, Graph, Run, RunEvent, Step, WorkflowNode } from '../types';
 import * as api from '../lib/api';
+import { reduceRunDecisionState } from '../lib/runDecisionEvents';
 import { openRunStream, type RunStream } from '../lib/ws';
 import { blockingWorkflowLintMessage } from '../lib/workflowLint';
 import { showCaughtError, showErrorDialog } from './useErrorDialogStore';
@@ -562,21 +563,10 @@ function handleRunEvent(
       }));
       return;
     }
-    case 'step.waiting': {
-      const req = evt.request;
-      set({
-        status: 'waiting_for_user',
-        waitingInput: {
-          node_id: evt.node_id,
-          context: req.context,
-          groups: req.groups ?? [],
-          request_id: req.request_id,
-        },
-      });
-      return;
-    }
+    case 'step.waiting':
     case 'run.waiting_for_user':
-      set({ status: 'waiting_for_user' });
+    case 'run.resumed':
+      set((state) => reduceRunDecisionState(state, evt));
       return;
     case 'run.end':
       closeStream();
