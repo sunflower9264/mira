@@ -14,7 +14,7 @@
 - 停止运行必须同时要求存在 `runId` 且 status 可取消；取消 API 返回后依赖 store 主动刷新 run 快照。
 - 启动前展示 workflow lint；error 阻断，warning 只提示。含唯一 `user_input` 节点时启动前必须填写输入，不要求它是入口节点。
 - `can_view_source=false` 的市场应用不能显示节点数量、prompt、Trace、内部 step 日志或来源节点标题；预检和运行仍由后端使用真实 graph。
-- 结果区只显示 `输出` 和 `文件`。文件产物通过 `RunArtifactsPanel` 调用 run artifacts API；只使用 `download_url`，不拼本地路径，不扫描 HTML。
+- 结果区只显示 `输出` 和 `文件`；当前 Run 至少有一个正式 artifact 时才显示 `文件` 页签。文件产物通过 `RunArtifactsPanel` 调用 run artifacts API；只使用 `download_url`，不拼本地路径，不扫描 HTML。
 - HTML 输出通过 `HtmlOutputFrame` iframe 隔离渲染；iframe 内不承担页面级滚动，外层容器负责滚动。
 - Console Trace 只面向桌面编辑器调试，支持 `generate`、`condition`、`output`；不要扩展到 App View 或手机端，除非用户明确要求。
 - 从历史 run 指定节点重新执行、失败节点修复和 condition 分支测试走 `useRunStore.rerunFrom`，从节点前 checkpoint 创建新 run；cut 前状态冻结，来源 run 保持只读。

@@ -8,13 +8,20 @@ interface RunArtifactsPanelProps {
   runId: string | null;
   className?: string;
   density?: 'desktop' | 'mobile';
+  state?: RunArtifactsState;
 }
 
-export function RunArtifactsPanel({
-  runId,
-  className = '',
-  density = 'desktop',
-}: RunArtifactsPanelProps) {
+export interface RunArtifactsState {
+  artifacts: RunArtifact[];
+  truncated: boolean;
+  loading: boolean;
+  error: string | null;
+}
+
+export function useRunArtifacts(
+  runId: string | null,
+  refreshKey?: string | number | null,
+): RunArtifactsState {
   const [artifacts, setArtifacts] = useState<RunArtifact[]>([]);
   const [truncated, setTruncated] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -51,7 +58,19 @@ export function RunArtifactsPanel({
     return () => {
       cancelled = true;
     };
-  }, [runId]);
+  }, [refreshKey, runId]);
+
+  return { artifacts, truncated, loading, error };
+}
+
+export function RunArtifactsPanel({
+  runId,
+  className = '',
+  density = 'desktop',
+  state,
+}: RunArtifactsPanelProps) {
+  const loadedState = useRunArtifacts(state ? null : runId);
+  const { artifacts, truncated, loading, error } = state ?? loadedState;
 
   if (!runId || (!loading && !error && artifacts.length === 0)) return null;
 

@@ -6,7 +6,7 @@ import * as api from '../../lib/api';
 import { AppLaunchView, type LaunchInputs } from './AppLaunchView';
 import { HistoryReplayBanner } from './HistoryReplayBanner';
 import { HtmlOutputFrame } from './HtmlOutputFrame';
-import { RunArtifactsPanel } from './RunArtifactsPanel';
+import { RunArtifactsPanel, useRunArtifacts } from './RunArtifactsPanel';
 import { RunProgress } from './RunProgress';
 import { WaitingInputPanel } from './WaitingInputPanel';
 
@@ -80,13 +80,15 @@ export function AppRunContent({
     const s = steps[o.id]?.status;
     return s === 'success' || s === 'failed' || s === 'skipped';
   });
+  const resultReady = (anyOutputReady || phase === 'done') && !isWaiting && !isInterrupted;
+  const artifactsState = useRunArtifacts(resultReady ? runId : null, status);
+  const hasArtifacts = artifactsState.artifacts.length > 0;
   const resultTabs = useMemo(() => {
     const tabs: { id: ResultTab; label: string }[] = [];
     if (outputs.length) tabs.push({ id: 'output', label: '输出' });
-    tabs.push({ id: 'files', label: '文件' });
+    if (hasArtifacts) tabs.push({ id: 'files', label: '文件' });
     return tabs;
-  }, [outputs.length]);
-  const resultReady = (anyOutputReady || phase === 'done') && !isWaiting && !isInterrupted;
+  }, [hasArtifacts, outputs.length]);
   useEffect(() => {
     const defaultTab: ResultTab = outputs.length ? 'output' : 'files';
     setResultTab(defaultTab);
@@ -200,7 +202,7 @@ export function AppRunContent({
                 </>
               )}
               {resultTab === 'files' && (
-                runId ? <RunArtifactsPanel runId={runId} /> : <div className="rounded-2xl border border-black/10 bg-white p-6 text-sm text-black/45 shadow-card">暂无运行记录。</div>
+                runId ? <RunArtifactsPanel runId={runId} state={artifactsState} /> : <div className="rounded-2xl border border-black/10 bg-white p-6 text-sm text-black/45 shadow-card">暂无运行记录。</div>
               )}
             </div>
           )}
