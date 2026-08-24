@@ -10,8 +10,6 @@ logs/
 .uv-cache/
 runtime/homes/
 runtime/workspaces/
-runtime/bin/claude/node_modules/
 runtime/bin/codex/node_modules/
-seeds/claude_settings.json
 seeds/codex_auth.json
 seeds/codex_config.toml
