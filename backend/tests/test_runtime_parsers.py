@@ -251,6 +251,68 @@ def test_codex_runtime_drives_app_server_json_rpc(tmp_path, monkeypatch) -> None
     assert [chunk.type for chunk in chunks] == ["session", "text", "text"]
 
 
+def test_codex_runtime_routes_request_user_input_when_id_collides_with_thread_request(
+    tmp_path, monkeypatch
+) -> None:
+    shared_home = tmp_path / "shared-home"
+    shared_home.mkdir()
+    (shared_home / "config.toml").write_text('model = "gpt-test"\n', encoding="utf-8")
+    (shared_home / "auth.json").write_text("{}\n", encoding="utf-8")
+    monkeypatch.setattr(codex_runtime, "codex_home", lambda: shared_home)
+
+    class FakeRunner:
+        async def check_available(self):
+            return DockerSandboxStatus(ok=True)
+
+        async def run_interactive(self, spec, *, on_stdout_line, cancel_event):
+            await on_stdout_line('{"id":1,"result":{}}')
+            await on_stdout_line('{"id":2,"result":{"thread":{"id":"thread_plan"}}}')
+            reply = await on_stdout_line(
+                '{"method":"item/tool/requestUserInput","id":2,"params":{'
+                '"itemId":"call_collision","questions":[{'
+                '"id":"choice","header":"选择","question":"请选择",'
+                '"isSecret":false,"options":['
+                '{"label":"A","description":"选择 A"},'
+                '{"label":"B","description":"选择 B"}'
+                "]}]}}"
+            )
+            assert json.loads(reply.input) == {
+                "id": 2,
+                "result": {"answers": {"choice": {"answers": ["A"]}}},
+            }
+            await on_stdout_line(
+                '{"method":"turn/completed","params":{"turn":{"status":"completed"}}}'
+            )
+            return DockerSandboxResult(return_code=0)
+
+    runtime = CodexRuntime()
+    runtime.runner = FakeRunner()
+    seen_requests = []
+
+    async def on_decision_request(request):
+        seen_requests.append(request.request_id)
+        return DecisionResult(
+            answers=[DecisionAnswer(group_id="choice", selected=["A"])]
+        )
+
+    async def run():
+        return await runtime.execute(
+            prompt="plan this",
+            session_id=None,
+            model=None,
+            reasoning_effort="medium",
+            cwd=tmp_path / "workspace",
+            on_chunk=lambda _chunk: asyncio.sleep(0),
+            cancel_event=asyncio.Event(),
+            on_decision_request=on_decision_request,
+            runtime_policy="plan",
+        )
+
+    result = asyncio.run(run())
+    assert result.finished_with == "done"
+    assert seen_requests == ["call_collision"]
+
+
 def test_codex_plan_runtime_uses_read_only_outer_workspace(tmp_path, monkeypatch) -> None:
     shared_home = tmp_path / "shared-home"
     shared_home.mkdir()

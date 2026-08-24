@@ -190,10 +190,11 @@ class CodexRuntime:
                 return None
 
             response_id = message.get("id")
-            if response_id == _INITIALIZE_REQUEST_ID and message.get("error"):
+            is_response = "method" not in message
+            if is_response and response_id == _INITIALIZE_REQUEST_ID and message.get("error"):
                 errors.append(_rpc_error_text(message["error"]))
                 return DockerSandboxReply(complete=True)
-            if response_id == _THREAD_REQUEST_ID:
+            if is_response and response_id == _THREAD_REQUEST_ID:
                 if message.get("error"):
                     errors.append(_rpc_error_text(message["error"]))
                     return DockerSandboxReply(complete=True)
@@ -219,7 +220,7 @@ class CodexRuntime:
                         )
                     )
                 )
-            if response_id == _TURN_REQUEST_ID and message.get("error"):
+            if is_response and response_id == _TURN_REQUEST_ID and message.get("error"):
                 errors.append(_rpc_error_text(message["error"]))
                 return DockerSandboxReply(complete=True)
 
