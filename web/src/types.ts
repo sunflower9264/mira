@@ -455,6 +455,8 @@ export interface SkillConfig {
   uploaded_at: string;
   enabled: boolean;
   planning_enabled: boolean;
+  dependency_status: 'pending' | 'not_required' | 'ready' | 'failed';
+  dependency_error: string;
 }
 
 export interface SkillMarkdown {

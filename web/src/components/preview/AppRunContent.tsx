@@ -182,7 +182,12 @@ export function AppRunContent({
                     return (
                       <div key={o.id} className="flex flex-1 flex-col overflow-hidden rounded-2xl border border-black/10 bg-white shadow-card">
                         {text ? (
-                          <HtmlOutputFrame html={text} title={o.title || '输出预览'} className="block w-full rounded-2xl border-0 bg-white" />
+                          <HtmlOutputFrame
+                            html={text}
+                            artifacts={artifactsState.artifacts}
+                            title={o.title || '输出预览'}
+                            className="block w-full rounded-2xl border-0 bg-white"
+                          />
                         ) : outputStep?.status === 'skipped' ? (
                           <div className="p-6 text-xs text-black/45">已跳过</div>
                         ) : (

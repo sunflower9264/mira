@@ -1,21 +1,37 @@
 # AGENTS.md
 
-本文件约束 `backend/migrations/`。
+本文件约束 `backend/migrations/`。该目录保存 Mira 的 Alembic 迁移链，当前唯一 head 为 `0025_skill_dependency_layers`。
 
-## Role
+## 目录职责
 
-`migrations/` 是 Alembic 迁移目录，负责数据库结构演进。
+- `env.py`：读取 `app.config` 的数据库 URL，加载 `Base.metadata`，支持 async online migration 和 offline SQL。
+- `script.py.mako`：新 revision 模板。
+- `versions/0001_baseline.py`：空库基线。
+- `versions/0002` 至 `0021`：管理员、Prompt Templates、运行排序/恢复/快照、市场权限、NL compile、Prompt Assistant 与 RunAgent workspace/checkpoint 演进。
+- `versions/0022_remove_legacy_runtime_version.py`：移除旧 runtime version 字段。
+- `versions/0023_codex_only_control_plane.py`：迁移到单一 Codex 控制面与 supported models。
+- `versions/0024_remove_legacy_ask_user.py`：移除旧节点提问配置和遗留 pending 状态。
+- `versions/0025_skill_dependency_layers.py`：增加 Skill 根目录与 Python 依赖层状态字段。
 
-## Rules
+历史 migration 为从旧库升级所必需；其中出现的旧表或字段不是当前架构入口，不要据此恢复生产 model/service。
 
-- ORM model 结构变化必须配套 migration；不要只改 model。
-- Migration 要能从空库升级到 head，不依赖本机临时数据、运行时文件或开发数据库状态。
-- 当前默认数据库是 SQLite，DDL 和约束写法要兼容 SQLite。
-- 不把 seed、业务流程、权限修复或大规模数据清理塞进 migration，除非结构变更必须迁移已有数据。
-- 新 migration 文件命名和 `revision` / `down_revision` 要保持线性链路清晰。
-- 修改历史 migration 前确认是否已经被本地/共享数据库使用；通常应新增 migration 而不是改旧 migration。
+## 迁移规则
 
-## Verification
+- ORM 结构变化必须新增 revision，并以当前 head `0025_skill_dependency_layers` 为 `down_revision`；保持单线链路，除非明确处理分支合并。
+- Migration 必须可从空库升级到 head，也能在已有 SQLite 库上顺序执行。
+- SQLite 删除/修改列优先使用 `batch_alter_table`，并显式处理索引、server default、nullable 和数据回填顺序。
+- 不依赖本机数据、runtime 文件、外部服务或 seed 才能完成 schema migration。
+- 不把权限修复、业务流程或无关数据清理塞入 migration；仅在新结构要求时迁移已有数据。
+- 已发布 revision 通常不可改写；增加新 migration 修正。历史 downgrade 只需忠实恢复该 revision 的上一结构，不代表当前功能仍受支持。
+
+## 推荐阅读顺序
+
+1. `alembic.ini`、`migrations/env.py`。
+2. `versions/0025_skill_dependency_layers.py`，再沿 `down_revision` 追踪目标表历史。
+3. 对应 `app/models/`、service 和测试。
+
+## 验证
 
 - 运行 `cd backend && uv run alembic upgrade head && uv run alembic current && uv run alembic check`。
-- 相关 model/schema/service/API 测试必须通过。
+- 新迁移应另用临时空 SQLite 库验证从 baseline 到 head；必要时再用代表性旧库验证数据回填。
+- 同步运行相关 model/schema/service/API pytest。

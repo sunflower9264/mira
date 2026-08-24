@@ -1,22 +1,44 @@
 # AGENTS.md
 
-本文件约束 `backend/app/models/`。
+本文件约束 `backend/app/models/`。这里是 SQLAlchemy ORM 的当前结构表达；数据库演进由 `backend/migrations/` 负责。
 
-## Role
+## 当前模型
 
-`models/` 定义 SQLAlchemy ORM models，是数据库结构在源码中的表达。
+- `user.py`：`users`，包含登录身份和 `is_admin`。
+- `app.py`、`app_version.py`：应用、版本、发布/市场可见性、gallery 克隆来源和 graph JSON。
+- `run.py`：`runs`、`steps`、`step_logs`、`run_events`，以及 RunAgent branch、workspace checkpoint、operation 持久化状态。
+- `nlcompile_session.py`：NL compile 计划、历史、waiting request 和 apply 状态。
+- `prompt_assistant_generation.py`：Prompt Assistant 生成、历史、waiting request 和结果状态。
+- `codex_config.py`：唯一 Codex config/auth 密文及用户修改状态。
+- `settings.py`：全局 supported models、Skill/MCP 配置 JSON。
+- `skill.py`：Skill 归档、根目录、启用/规划开关和 Python 依赖层状态。
+- `prompt_template.py`：Prompt Template 内容、变量和更新时间。
+- `__init__.py`：集中导出，供 `db.py:create_all()` 和 services 使用。
 
-## Rules
+## 持久化边界
 
-- ORM 结构变化必须新增 Alembic migration；不要只改 model。
-- 用户业务表必须保留 owner/user 维度，并在 service 查询层按当前用户隔离。
-- 全局配置表使用管理员/全局 owner 语义，不混入用户私有业务数据。
-- 不在 model 中实现业务流程、权限判断、runtime 调用或序列化脱敏；只保留字段、关系和轻量默认值。
-- JSON 文本字段的读写解析放 service/helper；model 不承担复杂校验。
-- 新字段要同步 Pydantic schema、serializer、service、测试、seed/fixture 和必要的前端类型。
-- 删除字段或表前确认迁移、历史数据、测试 fixture 和前端兼容路径。
+- 用户业务数据通过 `owner_id` / `user_id` 隔离；隔离判断仍必须在 service 查询层执行。
+- Apps、Runs、Steps 使用 JSON 文本保存 graph、input、output 或上下文；解析、校验、脱敏放 service/helper。
+- `Run.graph_json` 是运行快照；Step 的 `ordering` 是 API/SSE 稳定顺序，不可改用 UUID 字典序。
+- RunAgent branch/checkpoint/operation 是恢复、fork/fan-in 和 rerun-from 的持久化事实，不是临时缓存。
+- Codex config/auth 正文只保存加密内容；runtime HOME 文件是可重建派生物。
+- 当前没有多 provider 配置表或节点级提问开关；不要重新引入。
 
-## Verification
+## 结构变更规则
 
-- 结构改动运行 `cd backend && uv run alembic upgrade head && uv run alembic current && uv run alembic check`。
-- 运行覆盖新增/变更字段读写路径的 pytest。
+- 每个 ORM 结构变化都新增线性 Alembic migration；当前 head 为 `0025_skill_dependency_layers`。
+- Model 不实现权限、业务流程、runtime 调用、JSON 校验或响应序列化。
+- 新字段同步 migration、Pydantic schema、serializer/service、测试、必要的 seed/fixture 和前端类型。
+- 外键删除语义、索引和 nullable/default 必须与 migration 一致，尤其注意 SQLite batch alter。
+- 不因历史 migration 中存在已删除结构，就在当前 model 中恢复兼容字段。
+
+## 推荐阅读顺序
+
+1. `__init__.py` 和目标 model。
+2. `backend/migrations/versions/0025_skill_dependency_layers.py` 向前追踪相关迁移。
+3. 使用该 model 的 `app/services/` 与 schema/serializer。
+
+## 验证
+
+- 运行 `cd backend && uv run alembic upgrade head && uv run alembic current && uv run alembic check`。
+- 运行覆盖新增/变更字段读写、权限隔离和序列化的 pytest。

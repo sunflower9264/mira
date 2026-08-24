@@ -13,6 +13,7 @@
 - `generate` 可展示/编辑 `output_contract` 语义；`output` 保持 HTML 最终展示节点，不提供多类型输出切换。
 - condition 分支 handle 和 label 必须与 branch key、edge `branch_key` 保持一致；不要把系统保留 default key 当成用户自定义分支。
 - `output` 节点不能提供 source handle；它只能作为终点。
+- `user_input` 和 `asset` 不提供 target handle；它们只能作为执行起点或无入边素材。
 - 新增或修改节点字段时，同步 `types.ts`、store、后端 graph validation / node handler / schema 和相关测试。
 - 保持节点尺寸、handle 位置、hover/selection 状态稳定，避免拖拽或流式状态导致布局跳动。
 

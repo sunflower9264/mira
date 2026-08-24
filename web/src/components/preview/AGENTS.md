@@ -15,7 +15,9 @@
 - 启动前展示 workflow lint；error 阻断，warning 只提示。含唯一 `user_input` 节点时启动前必须填写输入，不要求它是入口节点。
 - `can_view_source=false` 的市场应用不能显示节点数量、prompt、Trace、内部 step 日志或来源节点标题；预检和运行仍由后端使用真实 graph。
 - 结果区只显示 `输出` 和 `文件`；当前 Run 至少有一个正式 artifact 时才显示 `文件` 页签。文件产物通过 `RunArtifactsPanel` 调用 run artifacts API；只使用 `download_url`，不拼本地路径，不扫描 HTML。
-- HTML 输出通过 `HtmlOutputFrame` iframe 隔离渲染；iframe 内不承担页面级滚动，外层容器负责滚动。
+- HTML 输出通过 `HtmlOutputFrame` 的跨源 sandbox iframe 隔离渲染；iframe 内不承担页面级滚动，外层容器负责滚动。
+- Output HTML 只能用 `data-mira-artifact-download="产物展示名"` 或 `data-mira-artifact-preview="产物展示名"` 声明内嵌入口。`HtmlOutputFrame` 只绑定当前 artifacts API 返回的同名 `verified` 产物、同源 `/api/runs/` 签名 URL；图片预览还要求 `mime` 为 `image/*`，不满足时移除 `href` / `src` 并标记禁用。
+- `AppRunContent` 和 Mobile Run 应复用同一份 `useRunArtifacts` 状态同时驱动文件列表与 HTML 占位绑定，避免同一结果重复请求或绑定到不同快照。
 - Console Trace 只面向桌面编辑器调试，支持 `generate`、`condition`、`output`；不要扩展到 App View 或手机端，除非用户明确要求。
 - 从历史 run 指定节点重新执行、失败节点修复和 condition 分支测试走 `useRunStore.rerunFrom`，从节点前 checkpoint 创建新 run；cut 前状态冻结，来源 run 保持只读。
 - condition 分支测试只放在桌面编辑器 Console，使用 `condition_branch_override` 写入新 run snapshot，不修改 App graph。

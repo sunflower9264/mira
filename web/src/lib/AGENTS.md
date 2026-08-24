@@ -17,6 +17,7 @@
 - 克隆入口必须依据后端返回的 `can_clone`：模板导入走 gallery clone，普通市场克隆走 app clone。
 - NL compile API 支持 active/resume/refine/apply/cancel；客户端 abort 不能替代后端 cancel。
 - Prompt Assistant API 当前支持 generate/resume/cancel；前端尚未封装 active 恢复接口，新增恢复时必须同步 store 和 StepTab。
+- Run artifacts 只通过 `listRunArtifacts` 获取；调用方消费后端给出的 `integrity`、`mime` 和 `download_url`，不推导 runtime 路径，也不从 output HTML 扫描文件。
 - Workflow lint helper 只用 error 阻断运行/发布，warning/info 作为提示；不要替代后端硬校验。
 - 不在 lib 中引入 UI 依赖；UI 文案和状态展示交给组件/store。
 

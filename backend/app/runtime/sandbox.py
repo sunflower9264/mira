@@ -31,6 +31,13 @@ class DockerSandboxStatus:
 
 
 @dataclass(frozen=True)
+class DockerBindMount:
+    source: Path
+    target: Path
+    read_only: bool = True
+
+
+@dataclass(frozen=True)
 class RuntimePathMap:
     workspace_host: Path
     home_host: Path
@@ -108,6 +115,7 @@ class DockerSandboxSpec:
     prompt: str
     env: dict[str, str]
     path_map: RuntimePathMap
+    mounts: tuple[DockerBindMount, ...] = ()
     workspace_read_only: bool = False
 
 
@@ -197,6 +205,7 @@ class DockerSandboxRunner:
         client = self._client_or_create()
         settings = get_settings()
         volumes = _volumes(spec.path_map, workspace_read_only=spec.workspace_read_only)
+        mounts = _mounts(spec.mounts)
         host_config = {
             "mem_limit": settings.runtime_container_memory,
             "pids_limit": settings.runtime_container_pids_limit,
@@ -216,6 +225,7 @@ class DockerSandboxRunner:
             "working_dir": str(CONTAINER_WORKSPACE),
             "user": _container_user(),
             "volumes": volumes,
+            "mounts": mounts,
             "extra_hosts": {"host.docker.internal": "host-gateway"},
             "labels": {
                 "mira.runtime": "agent",
@@ -373,6 +383,24 @@ def _volumes(
     if path_map.uploads_host is not None and path_map.uploads_host.exists():
         volumes[str(path_map.uploads_host)] = {"bind": str(path_map.uploads_container), "mode": "ro"}
     return volumes
+
+
+def _mounts(mounts: tuple[DockerBindMount, ...]):  # noqa: ANN202
+    if not mounts:
+        return []
+    try:
+        from docker.types import Mount
+    except ImportError as exc:
+        raise DockerSandboxError("缺少 docker Python SDK，请先安装后端依赖") from exc
+    return [
+        Mount(
+            target=str(mount.target),
+            source=str(mount.source),
+            type="bind",
+            read_only=mount.read_only,
+        )
+        for mount in mounts
+    ]
 
 
 def _stop_container(container) -> None:  # noqa: ANN001

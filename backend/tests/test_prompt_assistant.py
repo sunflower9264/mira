@@ -738,6 +738,9 @@ def test_prompt_assistant_guides_format_cleanup_as_edit(auth_client, configure_c
     assert "清除提示词多余的换行，换成正常的 txt 格式" in runtime.last_prompt
     assert "格式清理**：只改排版和标点，不改文字、字面量或语义" in runtime.last_prompt
     assert "格式清理和精确修改只用上下文理解指代" in runtime.last_prompt
+    assert "生成结果必须使用简洁中文" in runtime.last_prompt
+    assert "工具一律使用界面展示的中文标签" in runtime.last_prompt
+    assert "优先控制在 200 个中文字符内" in runtime.last_prompt
 
 
 def test_prompt_assistant_returns_generate_output_contract(auth_client, configure_codex):

@@ -1312,6 +1312,8 @@ def test_skill_zip_upload(auth_client):
     assert response.status_code == 200, response.text
     skill = response.json()
     assert skill["name"] == "pdf-summarizer"
+    assert skill["dependency_status"] == "not_required"
+    assert skill["dependency_error"] == ""
     settings = auth_client.get("/api/settings").json()
     assert any(tool["id"] == f"skill:{skill['id']}" and tool["enabled"] for tool in settings["tools"])
     assert not (codex_home() / ".agents" / "skills" / skill["id"]).exists()
@@ -1345,18 +1347,17 @@ def test_skill_markdown_preview_reads_root_and_nested_skill_md(auth_client):
     assert "# Nested Skill" in nested_preview.json()["content"]
 
 
-def test_skill_markdown_preview_returns_404_without_skill_md(auth_client):
+def test_skill_upload_rejects_archive_without_skill_md(auth_client):
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w") as zf:
         zf.writestr("README.md", "# Missing skill file\n")
     buffer.seek(0)
-    skill = auth_client.post(
+    response = auth_client.post(
         "/api/skills/parse",
         files={"archive": ("missing-skill-md.zip", buffer.getvalue(), "application/zip")},
-    ).json()
-    response = auth_client.get(f"/api/settings/skills/{skill['id']}/skill-md")
-    assert response.status_code == 404
-    assert response.json()["detail"] == "未找到 SKILL.md"
+    )
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Skill 压缩包必须且只能包含一个 SKILL.md"
 
 
 def test_skill_runtime_sync_on_disable_enable_and_delete(auth_client):

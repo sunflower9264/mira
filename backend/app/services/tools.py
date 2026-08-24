@@ -107,12 +107,29 @@ async def _runtime_tools_for_allowed_ids(
         if mcp_tool_id(server.id) in allowed_ids
         and (not planning_only or server.planning_enabled)
     ]
-    skills = [
-        RuntimeSkillConfig(id=skill.id, archive_path=skill.archive_path, archive_md5=skill.archive_md5)
+    selected_skills = [
+        skill
         for skill in await _enabled_skills(db)
         if skill_tool_id(skill.id) in allowed_ids and (not planning_only or skill.planning_enabled)
     ]
+    skills = [_runtime_skill_config(skill) for skill in selected_skills]
     return RuntimeToolConfig(mcp_servers=mcp_servers, skills=skills)
+
+
+def _runtime_skill_config(skill: Skill) -> RuntimeSkillConfig:
+    if skill.dependency_status not in {"not_required", "ready"}:
+        raise RuntimeError(f"Skill {skill.name} 的依赖尚未就绪")
+    if skill.dependency_status == "ready" and not skill.dependency_key:
+        raise RuntimeError(f"Skill {skill.name} 的依赖记录无效")
+    if skill.dependency_status == "not_required" and skill.dependency_key:
+        raise RuntimeError(f"Skill {skill.name} 的依赖记录无效")
+    return RuntimeSkillConfig(
+        id=skill.id,
+        archive_path=skill.archive_path,
+        archive_md5=skill.archive_md5,
+        skill_root=skill.skill_root,
+        dependency_key=skill.dependency_key,
+    )
 
 
 async def allowed_tool_ids_for_graph(db: AsyncSession, graph: dict[str, Any]) -> set[str]:

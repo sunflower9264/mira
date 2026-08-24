@@ -112,6 +112,29 @@ function formatDate(value: string) {
   });
 }
 
+function getSkillDependencyBadge(skill: SkillConfig) {
+  if (skill.dependency_status === 'ready') {
+    return { label: '依赖就绪', className: 'bg-emerald-50 text-emerald-700' };
+  }
+  if (skill.dependency_status === 'failed') {
+    return { label: '依赖失败', className: 'bg-red-50 text-red-700' };
+  }
+  if (skill.dependency_status === 'pending') {
+    return { label: '等待构建', className: 'bg-amber-50 text-amber-700' };
+  }
+  return { label: '无需依赖', className: 'bg-black/5 text-black/50' };
+}
+
+function isSkillDependencyBlocked(skill: SkillConfig) {
+  return skill.dependency_status === 'pending' || skill.dependency_status === 'failed';
+}
+
+function getSkillDependencyBlockedMessage(skill: SkillConfig) {
+  return skill.dependency_status === 'pending'
+    ? '依赖构建完成后才能启用'
+    : '请修复依赖构建错误后再启用';
+}
+
 function getErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : '操作失败，请稍后重试';
 }
@@ -797,12 +820,20 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                     {skill.planning_enabled && (
                       <span className="shrink-0 rounded-full bg-sky-50 px-2 py-0.5 text-[11px] text-sky-700">规划可用</span>
                     )}
+                    <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] ${getSkillDependencyBadge(skill).className}`}>
+                      {getSkillDependencyBadge(skill).label}
+                    </span>
                   </div>
                   <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-black/55">
                     <span className="max-w-full truncate rounded-full border border-black/10 bg-black/[0.02] px-2 py-1 font-mono">{skill.archive_name}</span>
                     <span className="rounded-full border border-black/10 bg-black/[0.02] px-2 py-1">{formatBytes(skill.archive_size)}</span>
                     <span className="rounded-full border border-black/10 bg-black/[0.02] px-2 py-1">{formatDate(skill.uploaded_at)}</span>
                   </div>
+                  {skill.dependency_status === 'failed' && skill.dependency_error && (
+                    <div className="mt-2 rounded-lg border border-red-100 bg-red-50/70 px-2.5 py-2 text-xs leading-5 text-red-700">
+                      {skill.dependency_error}
+                    </div>
+                  )}
                 </div>
                 <div className="flex shrink-0 flex-wrap gap-2 sm:justify-end">
                   <button
@@ -816,7 +847,8 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                   <button
                     type="button"
                     onClick={() => void toggleSkillEnabled(skill)}
-                    disabled={saving || isParsingSkill}
+                    disabled={saving || isParsingSkill || (!skill.enabled && isSkillDependencyBlocked(skill))}
+                    title={!skill.enabled && isSkillDependencyBlocked(skill) ? getSkillDependencyBlockedMessage(skill) : undefined}
                     className="h-9 rounded-full border border-black/10 px-3 text-xs font-medium text-black transition hover:bg-black/5 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {skill.enabled ? '禁用' : '启用'}
@@ -824,7 +856,8 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                   <button
                     type="button"
                     onClick={() => void toggleSkillPlanningEnabled(skill)}
-                    disabled={saving || isParsingSkill}
+                    disabled={saving || isParsingSkill || (!skill.planning_enabled && isSkillDependencyBlocked(skill))}
+                    title={!skill.planning_enabled && isSkillDependencyBlocked(skill) ? getSkillDependencyBlockedMessage(skill) : undefined}
                     className="h-9 rounded-full border border-black/10 px-3 text-xs font-medium text-black transition hover:bg-black/5 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {skill.planning_enabled ? '取消规划可用' : '设为规划可用'}

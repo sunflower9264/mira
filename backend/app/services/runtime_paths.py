@@ -26,6 +26,12 @@ def skills_data_dir(user_id: str) -> Path:
     return path
 
 
+def skill_dependency_cache_dir() -> Path:
+    path = data_dir() / "_skill_dependencies"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def uploads_dir(user_id: str) -> Path:
     # 用户上传的附件原文按 per-user 目录隔离；后端不解析文件内容，仅提供给
     # Agent runtime 使用（随 Run.inputs / resume tool_result 的 path 字段下发）。

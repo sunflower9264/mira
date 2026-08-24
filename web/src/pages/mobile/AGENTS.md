@@ -27,7 +27,7 @@
 - 启动前展示 workflow lint；error 禁用运行，warning 只提示。`can_view_source=false` 的市场应用不显示节点数量、运行设置或源码细节。
 - 只要 graph 包含唯一 `user_input` 节点，启动前就要求填写并随 run inputs 提交，不要求该节点是入口。
 - 历史记录中的未结束 run 进入 live/recover 流程，终态 run 才回放。
-- 最终结果展示 output HTML 和 run artifacts；文件下载只使用后端返回的 `download_url`。
+- 最终结果展示 output HTML 和 run artifacts；文件下载只使用后端返回的 `download_url`。`ResultView` 复用同一份 `useRunArtifacts` 状态渲染文件列表并传给 `HtmlOutputFrame`，只允许同名 `verified` artifact 绑定 HTML 中的下载或图片预览占位。
 - owner 应用的运行设置可写回 LLM 节点统一 model 和 `graph.tools.disabled_tool_ids`；不编辑节点 prompt、结构、分支、output contract 或 reasoning_effort。
 - `can_edit=false` 的市场只读应用不显示运行设置。
 - 手机端页面保持不可缩放体验，输入控件字号要避免 iOS 聚焦自动放大。

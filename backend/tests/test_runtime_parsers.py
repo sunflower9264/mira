@@ -168,9 +168,10 @@ def test_codex_scoped_home_contains_only_configured_mcp(tmp_path) -> None:
     (shared_home / "config.toml").write_text('model = "gpt-test"\n', encoding="utf-8")
     (shared_home / "auth.json").write_text("{}\n", encoding="utf-8")
 
-    home = _prepare_scoped_home(shared_home, tmp_path / "workspace", tools)
+    home, mounts = _prepare_scoped_home(shared_home, tmp_path / "workspace", tools)
     config = tomllib.loads((home / "config.toml").read_text(encoding="utf-8"))
 
+    assert mounts == ()
     assert config["mcp_servers"] == {
         "docs": {
             "url": "https://example.test/mcp",

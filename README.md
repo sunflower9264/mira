@@ -66,6 +66,12 @@ API 文档：http://localhost:8000/api/docs
 
 ![手机端运行入口](docs/screenshots/mobile-run.png)
 
+## Skill Python 依赖与项目截图
+
+Skill 可以在 `SKILL.md` 同目录声明 `requirements.lock` 或 `requirements.txt`，两者同时存在时优先使用 `requirements.lock`。Mira 在隔离的依赖构建容器中安装纯 Python 包，按 Skill 与 runtime 版本缓存依赖层，并在运行时把它只读挂载为 Skill 根目录下的 `.deps/`。Python Skill 必须显式把自己的 `.deps` 加入 `sys.path`；需要 Chromium、LibreOffice、FFmpeg 或系统动态库的依赖仍应固化到 runtime 镜像，不能通过 Python 依赖层安装。依赖构建未完成或失败的 Skill 不能启用，Settings 会展示当前状态和失败原因。
+
+`/opt/mira/capture_screenshots.py` 只接受当前 workspace 内的 `--project-dir`，并强制复用已有的 `node_modules`；缺失时直接失败，不会联网安装依赖。工具会执行项目声明的 `db:init`、`db:seed`，再启动开发服务器并截图。截图工具生成的 ZIP 只包含 PNG、manifest 和日志，不负责打包项目源码；若工作流另行生成项目交付 ZIP，应排除 `node_modules`，可保留已构建的 `dist`、`package.json` 和锁文件。
+
 需要执行表单填写、点击、提交或刷新持久化验证时，runtime 镜像提供固定版本的 `mira-browser` 入口。先运行 `mira-browser doctor`，然后使用 `mira-browser open/snapshot/click/fill/screenshot`；它固定绑定 `/usr/bin/chromium`，运行期不通过 `npx`、`npm install` 或浏览器下载补依赖。该入口和 `/opt/mira/capture_screenshots.py` 分工独立。
 
 ## License

@@ -1,24 +1,40 @@
 # AGENTS.md
 
-本文件约束 `backend/seeds/`。
+本文件约束 `backend/seeds/`。这里保存启动时同步的内置 gallery 数据、封面素材和 Prompt Template 源文件。
 
-## Role
+## 目录内容
 
-`seeds/` 保存初始化数据：内置 gallery 模板、prompt template 默认内容和 gallery 封面素材。
+- `gallery.json`：内置 `system_gallery` 应用及 graph 定义。
+- `assets/`：gallery 封面；seed 时导入为 Upload，并把 App cover 保存为 upload id。
+- `prompts/*.md`：带 front matter 的 Prompt Templates，当前包括 condition、graph layout、NL compile plan/apply、output repair/rendering、Prompt Assistant 和 Codex status smoke。
 
-## Rules
+## 同步语义
 
-- `gallery.json` 同步为 `system_gallery` 只读源应用；字段必须与 App schema、graph validation、uploads 和 clone 逻辑保持一致。
-- Gallery 模板通过 `GET /api/apps?gallery=true` 返回，不混入普通 `market=true` 列表；用户编辑模板前必须克隆为自己的草稿。
-- `assets/` 中的 gallery 封面素材由 seed 逻辑导入为 upload id；不要在 graph 或 app cover 中写本机绝对路径。
-- supported models 由管理员在 Settings 中维护，不在 seed 中硬编码真实可用模型列表。
-- `prompts/*.md` 是 Prompt Templates 的源码事实来源；后端启动/seed 同步会覆盖数据库同名模板，Settings 保存 Prompt Template 时必须同步写回同名 seed 文件。
-- 修改 prompt seed 时必须确认变量名与 `app/services/prompts.py` 和调用方一致。
-- 开发阶段修改任何 seed 后，必须同步开发数据库和 `deploy` 数据库；如果某个数据库不可用，必须在回复中说明未同步原因。
-- 用户提问使用 Codex App Server 原生 `requestUserInput`，prompt seed 只描述业务判断规则，不定义工具名或传输协议。
-- 不在 seed 中放真实凭证、私有 token、机器相关路径或用户私有数据。
+- `app.main:lifespan` 通过 `services/prompts.py:seed_prompt_templates()` 和 `services/apps.py:seed_gallery()` 同步 seed。
+- `gallery.json` 生成只读 `system_gallery` 源应用；`gallery=true` 返回模板，普通 `market=true` 不包含源模板，编辑前必须克隆。
+- Gallery cover 与附件只保存 Upload 引用；seed、graph 和 App cover 不写宿主机绝对路径。
+- Prompt Template 的 `key`、`variables` 与 `services/prompts.py` 调用必须严格一致。
+- Settings 保存 Prompt Template 会同步写回同名 seed 文件，因此数据库与 seed 不应长期分叉。
+- supported models 由管理员随 Codex config 维护，不在 seed 中维护 provider 列表。
+- 用户决策使用 Codex 原生 `requestUserInput`；prompt 只规定业务判断和输出，不定义自造工具或第二传输协议。
 
-## Verification
+## 修改规则
 
-- 文档或 seed-only 改动运行 `git diff --check`。
-- Prompt 行为改动优先运行 `cd backend && uv run pytest -q tests/test_prompt_templates.py tests/test_condition_node.py tests/test_nlcompile.py`。
+- Gallery graph 必须通过当前 graph validation、workflow lint、output contract 和 Tool allow-list 规则。
+- 一个 workflow 最多一个 `user_input` 和一个 `output`；`output` 为 HTML-only 唯一终点。
+- 不在 seed 中放真实凭证、token、用户私有数据、机器路径或 runtime 生成文件。
+- 不保留已经删除的 provider、旧 runtime 选择或节点级提问配置。
+- 修改 Prompt Template 时只使用 front matter 声明的变量；不要依赖未注册占位符。
+- 开发阶段修改 seed 后，同步开发数据库和 `deploy` 数据库；不可用时在交付中说明。
+
+## 推荐阅读顺序
+
+1. 目标 seed 文件。
+2. `app/services/prompts.py` 或 `app/services/apps.py` 的同步逻辑。
+3. `app/services/graph_validation.py`、`workflow_lint.py` 和相关测试。
+
+## 验证
+
+- 至少运行 `git diff --check`。
+- Prompt 改动运行相关 `test_prompt_templates.py`、`test_condition_node.py`、`test_nlcompile.py`、`test_prompt_assistant.py` 或 `test_run_executor.py`。
+- Gallery 改动验证 seed 可重复同步、graph 可执行且 owner/market/gallery 行为不变。

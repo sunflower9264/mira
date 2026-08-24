@@ -21,6 +21,8 @@
 - 修改 `Graph`、`WorkflowNode`、`Run`、Settings、Prompt Assistant、NL compile、artifact 或 SSE 类型时，同步后端 schema/API、store 和相关测试。
 - 运行态视图使用 run graph 快照；编辑器和 Step 面板使用当前 App graph，不要混用。
 - `Run.status === "interrupted"` 是可恢复状态，不应当当作普通终态回放。
+- `RunArtifact.download_url` 是后端签名下载地址；HTML 内嵌文件入口只能由 `HtmlOutputFrame` 根据同一次 Run 的 `verified` artifact 绑定，不能把 runtime 文件路径放进前端契约。
+- `SkillConfig` 包含依赖状态和失败原因；`pending` / `failed` 不能在 Settings 中启用或设为规划可用。
 - 手机端路径只做执行体验，不引入编辑器、React Flow 或管理员设置能力。
 
 ## Verification

@@ -23,6 +23,7 @@ from app.runtime.base import (
 from app.runtime.sandbox import (
     CONTAINER_HOME,
     CONTAINER_WORKSPACE,
+    DockerBindMount,
     DockerSandboxReply,
     DockerSandboxRunner,
     DockerSandboxSpec,
@@ -134,7 +135,9 @@ class CodexRuntime:
             return AgentExecutionResult(finished_with="error", error=status.error)
 
         cwd.mkdir(parents=True, exist_ok=True)
-        home = _prepare_scoped_home(codex_home(), cwd, runtime_tools, session_scope=session_scope)
+        home, skill_mounts = _prepare_scoped_home(
+            codex_home(), cwd, runtime_tools, session_scope=session_scope
+        )
         path_map = RuntimePathMap.for_call(workspace=cwd, home=home)
         effective_model = (model or "").strip() or _configured_model(home)
         if runtime_policy == "plan" and not effective_model:
@@ -273,6 +276,7 @@ class CodexRuntime:
                         prompt=initial_input,
                         env=_clean_env(CONTAINER_HOME),
                         path_map=path_map,
+                        mounts=skill_mounts,
                         workspace_read_only=runtime_policy == "plan",
                     ),
                     on_stdout_line=on_stdout_line,
@@ -351,7 +355,7 @@ def _prepare_scoped_home(
     runtime_tools: RuntimeToolConfig | None,
     *,
     session_scope: str | None = None,
-) -> Path:
+) -> tuple[Path, tuple[DockerBindMount, ...]]:
     home = scoped_codex_home(cwd, session_scope=session_scope)
     home.mkdir(parents=True, exist_ok=True)
     for filename in ("config.toml", "auth.json"):
@@ -371,8 +375,11 @@ def _prepare_scoped_home(
     else:
         config.pop("mcp_servers", None)
     config_path.write_text(tomli_w.dumps(config), encoding="utf-8")
-    sync_runtime_skills(runtime_tools.skills if runtime_tools else [], home / ".agents" / "skills")
-    return home
+    skill_mounts = sync_runtime_skills(
+        runtime_tools.skills if runtime_tools else [],
+        home / ".agents" / "skills",
+    )
+    return home, skill_mounts
 
 
 def _configured_model(home: Path) -> str | None:

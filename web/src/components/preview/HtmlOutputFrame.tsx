@@ -2,10 +2,12 @@
 // 隔离脚本与同源 API，并通过 postMessage 让 iframe 内部尺寸驱动外部高度自适应。
 // iframe 自身不滚动，滚动统一交给外层 Preview/App View/Mobile Run 容器。
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { RunArtifact } from '../../types';
 
 interface HtmlOutputFrameProps {
   html: string;
+  artifacts?: RunArtifact[];
   className?: string;
   title?: string;
 }
@@ -151,9 +153,56 @@ function injectReporter(html: string): string {
   return html + SIZE_REPORTER;
 }
 
-export function HtmlOutputFrame({ html, className, title = '输出预览' }: HtmlOutputFrameProps) {
+function artifactUrl(artifact: RunArtifact): string | null {
+  if (artifact.integrity !== 'verified' || typeof window === 'undefined') return null;
+  try {
+    const url = new URL(artifact.download_url, window.location.origin);
+    if (url.origin !== window.location.origin || !url.pathname.startsWith('/api/runs/')) return null;
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+function bindArtifactUrls(html: string, artifacts: RunArtifact[]): string {
+  if (!html || typeof DOMParser === 'undefined') return html;
+  const document = new DOMParser().parseFromString(html, 'text/html');
+  const artifactsByName = new Map(artifacts.map((artifact) => [artifact.name, artifact]));
+
+  document.querySelectorAll<HTMLElement>('[data-mira-artifact-download]').forEach((element) => {
+    element.removeAttribute('href');
+    const name = element.dataset.miraArtifactDownload?.trim();
+    const artifact = name ? artifactsByName.get(name) : undefined;
+    const url = artifact ? artifactUrl(artifact) : null;
+    if (element instanceof HTMLAnchorElement && artifact && url) {
+      element.href = url;
+      element.download = artifact.name;
+      element.removeAttribute('aria-disabled');
+      return;
+    }
+    element.setAttribute('aria-disabled', 'true');
+  });
+
+  document.querySelectorAll<HTMLElement>('[data-mira-artifact-preview]').forEach((element) => {
+    element.removeAttribute('src');
+    const name = element.dataset.miraArtifactPreview?.trim();
+    const artifact = name ? artifactsByName.get(name) : undefined;
+    const url = artifact ? artifactUrl(artifact) : null;
+    if (element instanceof HTMLImageElement && artifact?.mime?.startsWith('image/') && url) {
+      element.src = url;
+      element.removeAttribute('aria-disabled');
+      return;
+    }
+    element.setAttribute('aria-disabled', 'true');
+  });
+
+  return '<!doctype html>\n' + document.documentElement.outerHTML;
+}
+
+export function HtmlOutputFrame({ html, artifacts = [], className, title = '输出预览' }: HtmlOutputFrameProps) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const [height, setHeight] = useState<number>(0);
+  const renderedHtml = useMemo(() => bindArtifactUrls(html, artifacts), [artifacts, html]);
 
   // 每次 html 变化清空旧高度，避免上次内容残留。
   useEffect(() => {
@@ -178,7 +227,7 @@ export function HtmlOutputFrame({ html, className, title = '输出预览' }: Htm
     return () => window.removeEventListener('message', onMessage);
   }, []);
 
-  const srcDoc = injectReporter(html);
+  const srcDoc = injectReporter(renderedHtml);
 
   return (
     <iframe

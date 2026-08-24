@@ -16,6 +16,7 @@
 - Editor 页面快捷键必须跳过 `input`、`textarea`、`contentEditable`，让文本框使用浏览器原生 undo/redo。
 - Mobile 页面只承载执行入口：登录、应用列表、最近运行、市场、运行、历史、结果和 owner 运行设置；不要加节点编辑、Prompt 编辑、管理员设置或版本管理。
 - Mobile Run 不使用 Editor store，避免把 React Flow、自动保存和 selection 状态带入手机端。
+- App View 与 Mobile Run 的 HTML 结果都通过共享 `HtmlOutputFrame` 渲染；内嵌 artifact 下载/预览只能绑定当前 Run artifacts API 返回的受验证产物。
 
 ## Verification
 

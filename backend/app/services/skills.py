@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
-import json
 import shutil
 import zipfile
 from pathlib import Path
@@ -15,7 +15,9 @@ from app.models import Skill
 from app.schemas import SkillMarkdownOut
 from app.utils import new_id
 
-from .runtime_paths import skills_data_dir
+from .runtime_paths import skill_dependency_cache_dir, skills_data_dir
+from .skill_dependencies import SkillDependencyError, build_dependency_layer
+from .skills_install import SkillArchiveError, inspect_skill_archive
 
 
 def _parse_front_matter(text: str) -> dict[str, str]:
@@ -33,24 +35,16 @@ def _parse_front_matter(text: str) -> dict[str, str]:
     return result
 
 
-def parse_skill_metadata(zip_path: Path, fallback_name: str) -> tuple[str, str]:
+def parse_skill_metadata(zip_path: Path, fallback_name: str, *, skill_root: str) -> tuple[str, str]:
     try:
         with zipfile.ZipFile(zip_path) as zf:
-            names = zf.namelist()
-            skill_md = next((name for name in names if name.endswith("SKILL.md")), None)
-            if skill_md:
-                text = zf.read(skill_md).decode("utf-8", errors="ignore")
-                meta = _parse_front_matter(text)
-                if meta.get("name"):
-                    return meta["name"], meta.get("description", "")
-            for manifest in ("manifest.json", "package.json"):
-                match = next((name for name in names if name.endswith(manifest)), None)
-                if match:
-                    data = json.loads(zf.read(match).decode("utf-8"))
-                    if data.get("name"):
-                        return data["name"], data.get("description", "")
-    except Exception:
-        return fallback_name, ""
+            skill_md = f"{skill_root}/SKILL.md" if skill_root else "SKILL.md"
+            text = zf.read(skill_md).decode("utf-8", errors="strict")
+            meta = _parse_front_matter(text)
+            if meta.get("name"):
+                return meta["name"], meta.get("description", "")
+    except (KeyError, OSError, UnicodeDecodeError, zipfile.BadZipFile) as exc:
+        raise SkillArchiveError("SKILL.md 必须是有效的 UTF-8 文本") from exc
     return fallback_name, ""
 
 
@@ -69,11 +63,22 @@ async def save_archive(db: AsyncSession, archive: UploadFile) -> Skill:
     folder.mkdir(parents=True, exist_ok=True)
     path = folder / "raw.zip"
     path.write_bytes(content)
-    if not zipfile.is_zipfile(path):
+    try:
+        skill_root = inspect_skill_archive(path)
+        fallback_name = Path(filename).stem
+        name, description = parse_skill_metadata(path, fallback_name, skill_root=skill_root)
+        layer = await asyncio.to_thread(
+            build_dependency_layer,
+            path,
+            cache_root=skill_dependency_cache_dir(),
+            skill_root=skill_root,
+        )
+    except SkillArchiveError as exc:
         shutil.rmtree(folder, ignore_errors=True)
-        raise HTTPException(status_code=400, detail="无效的 Skill zip")
-    fallback_name = Path(filename).stem
-    name, description = parse_skill_metadata(path, fallback_name)
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except SkillDependencyError as exc:
+        shutil.rmtree(folder, ignore_errors=True)
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     archive_md5 = hashlib.md5(content).hexdigest()
     skill = Skill(
         id=skill_id,
@@ -84,12 +89,52 @@ async def save_archive(db: AsyncSession, archive: UploadFile) -> Skill:
         archive_size=len(content),
         archive_path=str(path.resolve()),
         archive_md5=archive_md5,
+        skill_root=skill_root,
+        dependency_status="ready" if layer is not None else "not_required",
+        dependency_key=layer.cache_key if layer is not None else "",
+        dependency_error="",
         enabled=True,
     )
     db.add(skill)
-    await db.commit()
-    await db.refresh(skill)
+    try:
+        await db.commit()
+        await db.refresh(skill)
+    except Exception:
+        await db.rollback()
+        shutil.rmtree(folder, ignore_errors=True)
+        raise
     return skill
+
+
+async def reconcile_skill_dependencies(db: AsyncSession) -> None:
+    """Rebuild or reuse every stored Skill layer for the current runtime image."""
+
+    from app.services.admin import ADMIN_USER_ID
+
+    skills = list(
+        (await db.execute(select(Skill).where(Skill.owner_id == ADMIN_USER_ID))).scalars().all()
+    )
+    for skill in skills:
+        try:
+            skill_root = inspect_skill_archive(Path(skill.archive_path))
+            layer = await asyncio.to_thread(
+                build_dependency_layer,
+                Path(skill.archive_path),
+                cache_root=skill_dependency_cache_dir(),
+                skill_root=skill_root,
+            )
+        except (SkillArchiveError, SkillDependencyError) as exc:
+            skill.dependency_status = "failed"
+            skill.dependency_key = ""
+            skill.dependency_error = str(exc)[-4_000:]
+            skill.enabled = False
+            skill.planning_enabled = False
+            continue
+        skill.skill_root = skill_root
+        skill.dependency_status = "ready" if layer is not None else "not_required"
+        skill.dependency_key = layer.cache_key if layer is not None else ""
+        skill.dependency_error = ""
+    await db.commit()
 
 
 async def read_skill_markdown(db: AsyncSession, skill_id: str) -> SkillMarkdownOut:
@@ -102,11 +147,11 @@ async def read_skill_markdown(db: AsyncSession, skill_id: str) -> SkillMarkdownO
         raise HTTPException(status_code=404, detail="未找到该 Skill")
     try:
         with zipfile.ZipFile(skill.archive_path) as zf:
-            skill_md = next((name for name in zf.namelist() if name.endswith("SKILL.md")), None)
-            if not skill_md:
-                raise HTTPException(status_code=404, detail="未找到 SKILL.md")
+            skill_md = f"{skill.skill_root}/SKILL.md" if skill.skill_root else "SKILL.md"
             content = zf.read(skill_md).decode("utf-8", errors="replace")
             return SkillMarkdownOut(path=skill_md, content=content)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="未找到 SKILL.md")
     except HTTPException:
         raise
     except Exception:

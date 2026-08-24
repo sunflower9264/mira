@@ -21,6 +21,7 @@ from app.services.nlcompile import mark_active_nlcompile_sessions_interrupted
 from app.services.prompt_assistant import mark_active_prompt_assistant_sessions_interrupted
 from app.services.prompts import seed_prompt_templates
 from app.services.runs import mark_active_runs_interrupted
+from app.services.skills import reconcile_skill_dependencies
 from app.services.workspace_gc import cleanup_orphan_run_workspaces
 
 
@@ -34,6 +35,7 @@ async def lifespan(app: FastAPI):
     async with SessionLocal() as db:
         await seed_prompt_templates(db)
         await runtime_config.write_configs(db)
+        await reconcile_skill_dependencies(db)
         await skills_install.sync_global_skills(db)
         await seed_gallery(db)
         await mark_active_runs_interrupted(db)

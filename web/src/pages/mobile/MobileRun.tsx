@@ -34,7 +34,7 @@ import { AppToolsInlineSelect, AppToolsSummary } from '../../components/common/A
 import { WorkflowLintNotice } from '../../components/common/WorkflowLintNotice';
 import { WaitingInputPanel } from '../../components/preview/WaitingInputPanel';
 import { HtmlOutputFrame } from '../../components/preview/HtmlOutputFrame';
-import { RunArtifactsPanel } from '../../components/preview/RunArtifactsPanel';
+import { RunArtifactsPanel, useRunArtifacts } from '../../components/preview/RunArtifactsPanel';
 import { MobileSheet } from '../../components/mobile/MobileSheet';
 import { useAppCoverUrl } from '../../hooks/useAppCoverUrl';
 import { showCaughtError } from '../../stores/useErrorDialogStore';
@@ -623,6 +623,8 @@ function ResultView({
   error: string | null;
   runId: string | null;
 }) {
+  const artifactsState = useRunArtifacts(runId, status);
+
   return (
     <section className="space-y-3">
       {status === 'failed' && error ? (
@@ -643,7 +645,12 @@ function ResultView({
               </span>
             </header>
             {text ? (
-              <HtmlOutputFrame html={text} title={node.title || '输出'} className="block h-[62dvh] w-full border-0 bg-white" />
+              <HtmlOutputFrame
+                html={text}
+                artifacts={artifactsState.artifacts}
+                title={node.title || '输出'}
+                className="block h-[62dvh] w-full border-0 bg-white"
+              />
             ) : (
               <div className="px-4 py-10 text-center text-sm text-black/45">
                 {step?.status === 'skipped' ? '已跳过' : '尚未产出内容'}
@@ -660,7 +667,7 @@ function ResultView({
           这个应用没有输出节点。
         </div>
       ) : null}
-      <RunArtifactsPanel runId={runId} density="mobile" />
+      <RunArtifactsPanel runId={runId} density="mobile" state={artifactsState} />
     </section>
   );
 }

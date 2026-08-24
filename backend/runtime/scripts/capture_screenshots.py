@@ -6,24 +6,18 @@ import hashlib
 import json
 import os
 import re
-import shutil
 import signal
-import stat
 import subprocess
 import sys
-import tarfile
 import tempfile
 import time
 import urllib.error
 import urllib.request
 import zipfile
-import zlib
 from pathlib import Path
 from typing import Any
 
 
-MAX_ARCHIVE_MEMBERS = 10_000
-MAX_ARCHIVE_EXPANDED_BYTES = 1024 * 1024 * 1024
 CHROMIUM_BINARY = "/usr/bin/chromium"
 URL_PATTERN = re.compile(r"[a-zA-Z][a-zA-Z0-9+.-]*://[^\s]+")
 RUNTIME_PATH_REDACTIONS = (
@@ -37,10 +31,14 @@ RUNTIME_PATH_REDACTIONS = (
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run a generated web app and capture browser screenshots.")
-    parser.add_argument("--archive", required=True, help="Source code archive path (.zip/.tar/.tar.gz/.tgz).")
+    parser.add_argument(
+        "--project-dir",
+        required=True,
+        help="Existing project directory inside the current workspace; node_modules must already exist.",
+    )
     parser.add_argument("--routes-json", default="", help="JSON array of routes or route objects.")
     parser.add_argument("--out-dir", default="screenshots", help="Directory for screenshots and metadata.")
-    parser.add_argument("--archive-out", default="", help="Output zip path. Defaults to <out-dir>.zip.")
+    parser.add_argument("--zip-out", default="", help="Output zip path. Defaults to <out-dir>.zip.")
     parser.add_argument("--port", type=int, default=3210)
     parser.add_argument("--max-routes", type=int, default=10)
     parser.add_argument("--min-screenshots", type=int, default=1)
@@ -49,32 +47,28 @@ def main() -> int:
         default="",
         help='JSON array such as [{"name":"desktop","width":1440,"height":1000}].',
     )
-    parser.add_argument("--install-timeout", type=int, default=240)
+    parser.add_argument("--setup-timeout", type=int, default=240)
     parser.add_argument("--startup-timeout", type=int, default=90)
     args = parser.parse_args()
     if args.min_screenshots < 1:
         parser.error("--min-screenshots must be at least 1")
 
-    cwd = Path.cwd()
-    archive = _resolve_path(cwd, args.archive)
+    cwd = Path.cwd().resolve()
+    project_dir = _resolve_project_dir(cwd, args.project_dir)
     out_dir = _resolve_output_dir(cwd, args.out_dir)
-    archive_out = _resolve_path(cwd, args.archive_out) if args.archive_out else out_dir.with_suffix(".zip")
-    if archive_out == archive:
-        raise RuntimeError("archive-out must differ from the source archive")
-    archive_out.unlink(missing_ok=True)
+    zip_out = _resolve_path(cwd, args.zip_out) if args.zip_out else out_dir.with_suffix(".zip")
+    zip_out.unlink(missing_ok=True)
     out_dir.mkdir(parents=True, exist_ok=True)
     log_path = out_dir / "capture-log.txt"
     manifest_path = out_dir / "screenshot-manifest.json"
     path_redactions = [(str(cwd.resolve()), "<workspace>")]
-    if archive != cwd and cwd not in archive.parents:
-        path_redactions.append((str(archive), "<archive>"))
-    if archive_out != cwd and cwd not in archive_out.parents:
-        path_redactions.append((str(archive_out), "<archive-out>"))
+    if zip_out != cwd and cwd not in zip_out.parents:
+        path_redactions.append((str(zip_out), "<zip-out>"))
 
     log: list[str] = []
     manifest: dict[str, Any] = {
         "ok": False,
-        "archive": _display_path(archive, cwd, placeholder="<archive>"),
+        "project_dir": _display_path(project_dir, cwd, placeholder="<project-dir>"),
         "project_root": "",
         "base_url": f"http://127.0.0.1:{args.port}",
         "screenshots": [],
@@ -88,83 +82,73 @@ def main() -> int:
         print(safe_message, flush=True)
 
     server: subprocess.Popen[str] | None = None
-    with tempfile.TemporaryDirectory(prefix="mira-capture-") as temp:
-        temp_dir = Path(temp)
-        path_redactions.append((str(temp_dir), "<runtime-temp>"))
-        try:
-            if not archive.exists():
-                raise RuntimeError(f"archive not found: {archive}")
-            note(f"extracting {archive}")
-            _extract_archive(archive, temp_dir)
-            project_root = _find_project_root(temp_dir)
-            manifest["project_root"] = str(project_root.relative_to(temp_dir))
-            note(f"project root: {manifest['project_root']}")
+    try:
+        if not project_dir.is_dir():
+            raise RuntimeError(f"project directory not found: {project_dir}")
+        project_root = _find_project_root(project_dir)
+        manifest["project_root"] = _display_path(project_root, cwd, placeholder="<project-dir>")
+        note(f"project root: {manifest['project_root']}")
 
-            routes = _route_items(args.routes_json, project_root, args.max_routes)
-            if not routes:
-                routes = [{"route": "/", "page_name": "首页"}]
-            note("routes: " + ", ".join(item["route"] for item in routes))
+        routes = _route_items(args.routes_json, project_root, args.max_routes)
+        if not routes:
+            routes = [{"route": "/", "page_name": "首页"}]
+        note("routes: " + ", ".join(item["route"] for item in routes))
 
-            install_command = "ci" if (project_root / "package-lock.json").is_file() else "install"
-            _run(
-                ["npm", install_command, "--no-audit", "--no-fund"],
-                cwd=project_root,
-                timeout=args.install_timeout,
-                note=note,
-                env=_node_env(project_root, args.port),
-            )
-            package = json.loads((project_root / "package.json").read_text(encoding="utf-8"))
-            scripts = package.get("scripts") if isinstance(package, dict) else None
-            for script_name in ("db:init", "db:seed"):
-                if isinstance(scripts, dict) and isinstance(scripts.get(script_name), str):
-                    _run(
-                        ["npm", "run", script_name],
-                        cwd=project_root,
-                        timeout=args.install_timeout,
-                        note=note,
-                        env=_node_env(project_root, args.port),
-                    )
-            server = _start_dev_server(project_root, args.port, note)
-            _wait_for_url(f"http://127.0.0.1:{args.port}/", args.startup_timeout, note)
+        if not (project_root / "node_modules").is_dir():
+            raise RuntimeError("project-dir requires an existing node_modules directory")
+        note("reusing existing node_modules; dependency installation is disabled")
+        package = json.loads((project_root / "package.json").read_text(encoding="utf-8"))
+        scripts = package.get("scripts") if isinstance(package, dict) else None
+        for script_name in ("db:init", "db:seed"):
+            if isinstance(scripts, dict) and isinstance(scripts.get(script_name), str):
+                _run(
+                    ["npm", "run", script_name],
+                    cwd=project_root,
+                    timeout=args.setup_timeout,
+                    note=note,
+                    env=_node_env(project_root, args.port),
+                )
+        server = _start_dev_server(project_root, args.port, note)
+        _wait_for_url(f"http://127.0.0.1:{args.port}/", args.startup_timeout, note)
 
-            viewports = _viewport_items(args.viewports_json)
-            manifest["viewports"] = viewports
-            for index, item in enumerate(routes, start=1):
-                for viewport in viewports:
-                    _capture_route(
-                        index,
-                        item,
-                        viewport,
-                        include_viewport_name=len(viewports) > 1,
-                        port=args.port,
-                        out_dir=out_dir,
-                        manifest=manifest,
-                        note=note,
-                        path_redactions=path_redactions,
-                    )
+        viewports = _viewport_items(args.viewports_json)
+        manifest["viewports"] = viewports
+        for index, item in enumerate(routes, start=1):
+            for viewport in viewports:
+                _capture_route(
+                    index,
+                    item,
+                    viewport,
+                    include_viewport_name=len(viewports) > 1,
+                    port=args.port,
+                    out_dir=out_dir,
+                    manifest=manifest,
+                    note=note,
+                    path_redactions=path_redactions,
+                )
 
-            screenshot_count = len(manifest["screenshots"])
-            if screenshot_count < args.min_screenshots:
-                message = f"captured {screenshot_count} screenshot(s); minimum required is {args.min_screenshots}"
-                manifest["failures"].append({"stage": "minimum_screenshots", "message": message})
-                note(message)
-            manifest["ok"] = screenshot_count >= args.min_screenshots and not manifest["failures"]
-        except Exception as exc:  # noqa: BLE001
-            message = _redact_paths(str(exc), path_redactions)
-            manifest["failures"].append({"stage": "capture", "message": message})
-            note(f"capture failed: {message}")
-        finally:
-            if server is not None:
-                _stop_process(server, note)
-            manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
-            if manifest["ok"]:
-                log_path.write_text("\n".join(log) + "\n", encoding="utf-8")
-                _zip_dir(out_dir, archive_out)
-                note(f"wrote archive: {archive_out}")
-            else:
-                archive_out.unlink(missing_ok=True)
-                note("capture failed; archive output was not written")
-                log_path.write_text("\n".join(log) + "\n", encoding="utf-8")
+        screenshot_count = len(manifest["screenshots"])
+        if screenshot_count < args.min_screenshots:
+            message = f"captured {screenshot_count} screenshot(s); minimum required is {args.min_screenshots}"
+            manifest["failures"].append({"stage": "minimum_screenshots", "message": message})
+            note(message)
+        manifest["ok"] = screenshot_count >= args.min_screenshots and not manifest["failures"]
+    except Exception as exc:  # noqa: BLE001
+        message = _redact_paths(str(exc), path_redactions)
+        manifest["failures"].append({"stage": "capture", "message": message})
+        note(f"capture failed: {message}")
+    finally:
+        if server is not None:
+            _stop_process(server, note)
+        manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+        if manifest["ok"]:
+            log_path.write_text("\n".join(log) + "\n", encoding="utf-8")
+            _zip_dir(out_dir, zip_out)
+            note(f"wrote zip: {zip_out}")
+        else:
+            zip_out.unlink(missing_ok=True)
+            note("capture failed; archive output was not written")
+            log_path.write_text("\n".join(log) + "\n", encoding="utf-8")
 
     return 0 if manifest["ok"] else 1
 
@@ -178,6 +162,13 @@ def _resolve_output_dir(cwd: Path, value: str) -> Path:
     path = _resolve_path(cwd, value)
     if path == cwd or cwd not in path.parents:
         raise RuntimeError("out-dir must be inside the current workspace")
+    return path
+
+
+def _resolve_project_dir(cwd: Path, value: str) -> Path:
+    path = _resolve_path(cwd, value).resolve()
+    if path != cwd and cwd not in path.parents:
+        raise RuntimeError("project-dir must be inside the current workspace")
     return path
 
 
@@ -211,78 +202,6 @@ def _redact_path_segment(message: str, redactions: list[tuple[str, str]]) -> str
             safe_message,
         )
     return safe_message
-
-
-def _extract_archive(archive: Path, target: Path) -> None:
-    suffixes = "".join(archive.suffixes).lower()
-    if suffixes.endswith(".zip"):
-        with zipfile.ZipFile(archive) as zf:
-            members = zf.infolist()
-            _ensure_archive_limits(len(members), [member.file_size for member in members if not member.is_dir()])
-            normalized_names: set[str] = set()
-            validated_members: list[tuple[zipfile.ZipInfo, str]] = []
-            for member in members:
-                normalized_name = _ensure_safe_member(target, member.filename)
-                if normalized_name in normalized_names:
-                    raise RuntimeError(f"duplicate archive member path: {normalized_name}")
-                normalized_names.add(normalized_name)
-                _ensure_safe_zip_member_type(member)
-                validated_members.append((member, normalized_name))
-            for member, normalized_name in validated_members:
-                destination = target / normalized_name
-                if member.is_dir():
-                    destination.mkdir(parents=True, exist_ok=True)
-                    continue
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                try:
-                    with zf.open(member) as source, destination.open("wb") as output:
-                        shutil.copyfileobj(source, output)
-                except (EOFError, NotImplementedError, OSError, RuntimeError, zipfile.BadZipFile, zlib.error) as exc:
-                    destination.unlink(missing_ok=True)
-                    raise RuntimeError(f"invalid ZIP member data: {normalized_name}") from exc
-        return
-    if suffixes.endswith((".tar", ".tar.gz", ".tgz", ".tar.bz2", ".tbz2", ".tar.xz", ".txz")):
-        with tarfile.open(archive) as tf:
-            members = tf.getmembers()
-            _ensure_archive_limits(len(members), [member.size for member in members if member.isfile()])
-            for member in members:
-                _ensure_safe_member(target, member.name)
-                if not (member.isfile() or member.isdir()):
-                    raise RuntimeError(f"unsafe archive member type: {member.name}")
-            tf.extractall(target)
-        return
-    raise RuntimeError(f"unsupported archive type: {archive.name}")
-
-
-def _ensure_safe_member(root: Path, name: str) -> str:
-    normalized = name.replace("\\", "/")
-    if normalized.startswith("/") or re.match(r"^[a-zA-Z]:", normalized) or ".." in Path(normalized).parts:
-        raise RuntimeError(f"unsafe archive member path: {name}")
-    normalized = Path(normalized).as_posix()
-    resolved = (root / normalized).resolve()
-    if resolved != root and root not in resolved.parents:
-        raise RuntimeError(f"unsafe archive member path: {name}")
-    return normalized
-
-
-def _ensure_safe_zip_member_type(member: zipfile.ZipInfo) -> None:
-    if member.is_dir():
-        return
-    file_type = stat.S_IFMT(member.external_attr >> 16)
-    if file_type not in (0, stat.S_IFREG):
-        raise RuntimeError(f"unsafe archive member type: {member.filename}")
-
-
-def _ensure_archive_limits(member_count: int, expanded_sizes: list[int]) -> None:
-    if member_count > MAX_ARCHIVE_MEMBERS:
-        raise RuntimeError(f"archive member count exceeds limit: {member_count} > {MAX_ARCHIVE_MEMBERS}")
-    if any(size < 0 for size in expanded_sizes):
-        raise RuntimeError("archive expanded size is invalid")
-    expanded_size = sum(expanded_sizes)
-    if expanded_size > MAX_ARCHIVE_EXPANDED_BYTES:
-        raise RuntimeError(
-            f"archive expanded size exceeds limit: {expanded_size} > {MAX_ARCHIVE_EXPANDED_BYTES}"
-        )
 
 
 def _find_project_root(root: Path) -> Path:

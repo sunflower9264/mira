@@ -28,7 +28,7 @@
 - `useRunStore.status` 是前端 UI 状态，包含 `idle` / `starting` / 后端真实 run status；只有存在 `runId` 且状态可取消时才能调用 cancel。
 - 刷新或重新进入时通过 `useRunStore.restoreActiveRun` 恢复 active run；`pending`、`running`、`waiting_for_user` 进入 live SSE，`interrupted` 显示继续运行语义，终态 run 才按历史回放展示。
 - 运行和发布前使用 workflow lint；error 阻断，warning 只提示。`can_view_source=false` 的市场应用必须让后端基于真实 graph 预检，前端不展示内部节点/prompt 细节。
-- Run artifacts 通过 `GET /api/runs/:id/artifacts` 展示，Step Trace 的 artifacts 也由后端返回；两者只包含成功 artifact contract Step 声明的产物，不扫描 workspace。前端契约接收后端返回的 artifact identity、`origin` / 可选 `reused_from` lineage、`sha256`、`integrity`（`verified` / `modified`）和 `download_url`；响应没有内部 `path`，下载只使用 `download_url`，也不从 HTML 输出扫描文件链接。
+- Run artifacts 通过 `GET /api/runs/:id/artifacts` 展示，Step Trace 的 artifacts 也由后端返回；两者只包含成功 artifact contract Step 声明的产物，不扫描 workspace。前端契约接收后端返回的 artifact identity、`origin` / 可选 `reused_from` lineage、`sha256`、`integrity`（`verified` / `modified`）和 `download_url`；响应没有内部 `path`，下载只使用 `download_url`，也不从 HTML 输出扫描文件链接。Output HTML 如需内嵌下载或图片预览，只能使用 `data-mira-artifact-download` / `data-mira-artifact-preview` 按正式 artifact 展示名声明占位；`HtmlOutputFrame` 根据当前 Run artifacts API 返回的同名 `verified` 产物绑定签名 URL，不接受 HTML 自带的文件路径或 URL。
 - Prompt Assistant 生成态当前保存在 `useEditorStore.promptAssistantGenerations`，由 StepTab 发起 generate/resume/cancel；前端尚未通过 active endpoint 做刷新后恢复。若补恢复，必须先补 `lib/api.ts` helper，再接入 Editor/StepTab 恢复流程。
 
 ## Workflow Rules
@@ -53,6 +53,7 @@
 - `decision_request` UI 统一使用后端返回的 context/groups/options。面板先显示 `context.title` 和 `context.summary`；每组必须选择选项，补充文字和附件始终可用；多问题只在最后一题提交；提交后显示“已选择 / 已补充”摘要并保留停止入口。
 - 自然语言编辑首次提交允许附件；必须先通过 uploads API 获得 upload id，再随 `POST /api/nlcompile` 发送引用，不能只把文件名拼进 instruction。
 - HTML 输出只通过 `HtmlOutputFrame` iframe 隔离渲染；滚动应由外层 Preview/App View/Mobile 容器承载。
+- Skill 的 `dependency_status` / `dependency_error` 来自后端 Settings 契约；`pending` 或 `failed` 时 UI 只能继续禁用、预览或删除，不能发起启用或设为规划可用。
 - 视觉改动保持现有 Tailwind、黑白灰和少量强调色体系；图标优先使用现有组件或 `lucide-react`。
 
 ## Commands

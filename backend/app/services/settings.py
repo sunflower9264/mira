@@ -124,6 +124,12 @@ async def update_skill_enabled(
     ).scalar_one_or_none()
     if not skill:
         raise HTTPException(status_code=404, detail="未找到该 Skill")
+    if (
+        (enabled is True or planning_enabled is True)
+        and skill.dependency_status in {"pending", "failed"}
+    ):
+        detail = skill.dependency_error or "Skill Python 依赖尚未构建完成"
+        raise HTTPException(status_code=409, detail=detail)
     if enabled is not None:
         skill.enabled = enabled
     if planning_enabled is not None:

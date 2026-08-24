@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import os
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from app.config import get_settings
 from app.runtime.sandbox import (
+    DockerBindMount,
     DockerSandboxReply,
     DockerSandboxRunner,
     DockerSandboxSpec,
@@ -105,6 +107,8 @@ async def test_interactive_runner_applies_container_security_and_cleans_up(tmp_p
     uploads = tmp_path / "uploads"
     for path in (workspace, home, uploads):
         path.mkdir()
+    dependency_layer = tmp_path / "dependency-layer"
+    dependency_layer.mkdir()
     runner = DockerSandboxRunner(client=client)
     lines: list[str] = []
 
@@ -122,6 +126,16 @@ async def test_interactive_runner_applies_container_security_and_cleans_up(tmp_p
                 home_host=home,
                 uploads_host=uploads,
             ),
+            mounts=(
+                DockerBindMount(
+                    source=dependency_layer,
+                    target=Path("/home/mira/.agents/skills/skill_a/.deps"),
+                ),
+                DockerBindMount(
+                    source=dependency_layer,
+                    target=Path("/home/mira/.agents/skills/skill_b/.deps"),
+                ),
+            ),
         ),
         on_stdout_line=on_line,
         cancel_event=asyncio.Event(),
@@ -138,6 +152,15 @@ async def test_interactive_runner_applies_container_security_and_cleans_up(tmp_p
     assert kwargs["tty"] is False
     assert kwargs["cap_drop"] == ["ALL"]
     assert kwargs["security_opt"] == ["no-new-privileges:true"]
+    assert [mount["Source"] for mount in kwargs["mounts"]] == [
+        str(dependency_layer),
+        str(dependency_layer),
+    ]
+    assert [mount["Target"] for mount in kwargs["mounts"]] == [
+        "/home/mira/.agents/skills/skill_a/.deps",
+        "/home/mira/.agents/skills/skill_b/.deps",
+    ]
+    assert all(mount["ReadOnly"] is True for mount in kwargs["mounts"])
     assert kwargs["mem_limit"] == get_settings().runtime_container_memory
     assert kwargs["pids_limit"] == get_settings().runtime_container_pids_limit
     if get_settings().runtime_container_cpus > 0:

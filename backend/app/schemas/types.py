@@ -89,6 +89,8 @@ class SkillConfig(BaseModel):
     uploaded_at: str
     enabled: bool = True
     planning_enabled: bool = False
+    dependency_status: Literal["pending", "not_required", "ready", "failed"] = "pending"
+    dependency_error: str = ""
 
 
 class SkillMarkdownOut(BaseModel):
@@ -136,6 +138,8 @@ class RuntimeSkillConfig(BaseModel):
     id: str
     archive_path: str
     archive_md5: str = ""
+    skill_root: str = ""
+    dependency_key: str = ""
 
 
 class SkillUpdateIn(BaseModel):

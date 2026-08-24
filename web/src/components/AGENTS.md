@@ -23,6 +23,8 @@
 - 复杂业务流程放 store/helper/page 容器，展示组件只承担 UI 和局部交互。
 - `DecisionPromptPanel` 渲染后端返回的 decision_request context/groups/options；前端只处理标题摘要展示、选择、补充文本/附件、摘要态和多选互斥，不硬编码模型后续策略。
 - 跨桌面和手机复用的基础能力放 `common/`；手机端专用 shell/sheet 放 `mobile/`。
+- Preview 与 Mobile Run 共享 `HtmlOutputFrame` / `RunArtifactsPanel`；artifact 下载和图片预览必须从 artifacts API 的 `verified` 产物绑定，不能信任输出 HTML 自带的路径或 URL。
+- Settings 中的 Skill 控件必须服从后端依赖状态；依赖未就绪时仍允许禁用、预览和删除。
 - 视觉改动沿用现有 Tailwind、黑白灰和少量状态色，不引入新的设计系统。
 
 ## Verification

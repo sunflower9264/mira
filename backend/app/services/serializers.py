@@ -56,4 +56,6 @@ def skill_to_config(skill: Skill) -> SkillConfig:
         uploaded_at=iso(skill.uploaded_at) or "",
         enabled=skill.enabled,
         planning_enabled=skill.planning_enabled,
+        dependency_status=skill.dependency_status,  # type: ignore[arg-type]
+        dependency_error=skill.dependency_error,
     )
