@@ -65,6 +65,7 @@ Mira 是参考 Google Opal 产品思路构建的可视化 AI App 平台，使用
 - NL compile 是 `plan → confirm/apply` 的持久化两阶段流程；plan/refine/resume/cancel 以 `nlcompile_sessions` 为事实来源，附件保存当前用户 upload 引用并在挂载前重新校验。
 - Prompt Assistant 使用 `/api/prompt-assistant` 和 `prompt_assistant_generations` 持久化生成、waiting、resume 与 cancel；不要恢复 `prompt_helper` 命名。
 - 用户提问只走 Codex Plan 的原生 `item/tool/requestUserInput` JSON-RPC request，由 runtime 归一化为 Mira `DecisionRequest` 并把回答写回同一 request。Graph 不保存提问开关，也不增加 prompt/MCP 约定的第二条提问通道。
+- 页面 Prompt Assistant 使用独立 `prompt_assistant` 模板和 Codex 配置文件的默认模型/推理强度，最多进行一轮 1–3 个问题的原生提问；NL compile apply 使用独立 `nlcompile_prompt_refiner` 模板，不向用户提问。两者生成的用户可见提示词使用中文业务语言，不暴露内部字段和工作流协议。
 
 ## 修改规则
 

@@ -148,6 +148,59 @@ class PromptAssistantAskRuntime(PromptAssistantRuntime):
         return AgentExecutionResult(session_id=session_id, total_text=text, finished_with="done")
 
 
+class PromptAssistantDoubleAskRuntime(PromptAssistantRuntime):
+    def __init__(self) -> None:
+        super().__init__(text="")
+        self.second_error: str | None = None
+
+    async def execute(
+        self,
+        *,
+        prompt: str,
+        session_id: str | None,
+        model,
+        reasoning_effort,
+        cwd: Path,
+        on_chunk,
+        cancel_event: asyncio.Event,
+        on_decision_request=None,
+        runtime_tools=None,
+        runtime_policy="execute",
+        output_schema=None,
+    ) -> AgentExecutionResult:
+        self.last_prompt = prompt
+        self.model = model
+        self.reasoning_effort = reasoning_effort
+        self.runtime_policy = runtime_policy
+        self.output_schema = output_schema
+        if on_decision_request is None:
+            return AgentExecutionResult(session_id=session_id, total_text="", finished_with="error", error="missing decision_request")
+
+        def request(group_id: str, label: str) -> DecisionRequest:
+            return DecisionRequest(
+                context={"title": "确认提示词", "summary": "生成前确认一个会影响结果的选择。"},
+                groups=[
+                    {
+                        "id": group_id,
+                        "type": "single",
+                        "label": label,
+                        "options": [
+                            {"label": "选项一", "description": "按推荐方向继续。", "recommended": True},
+                            {"label": "选项二", "description": "按另一方向继续。", "recommended": False},
+                        ],
+                    }
+                ],
+                request_id=f"toolu_{group_id}",
+            )
+
+        first = await on_decision_request(request("first", "第一个问题"))
+        if not first.ok:
+            return AgentExecutionResult(session_id=session_id, total_text="", finished_with="error", error=first.error)
+        second = await on_decision_request(request("second", "第二轮问题"))
+        self.second_error = second.error
+        return AgentExecutionResult(session_id=session_id, total_text="", finished_with="error", error=second.error)
+
+
 def _assistant_result(prompt: str, output_contract=None) -> str:
     output_contract_json = json.dumps(output_contract, ensure_ascii=False) if output_contract is not None else None
     return json.dumps({"prompt": prompt, "output_contract_json": output_contract_json}, ensure_ascii=False)
@@ -202,8 +255,6 @@ def _assistant_payload(*, app_id: str, graph: dict | None = None, **overrides) -
         "graph": graph if graph is not None else _prompt_graph(),
         "node_id": "n_generate",
         "user_request": "写一个提示词",
-        "model": "test-model",
-        "reasoning_effort": "high",
     }
     payload.update(overrides)
     return payload
@@ -251,18 +302,20 @@ def test_prompt_assistant_uses_ai_with_graph_context_and_user_request(auth_clien
 
     assert response.status_code == 200, response.text
     assert response.json() == {"status": "completed", "prompt": "新的完整提示词", "output_contract": None}
-    assert runtime.model == "test-model"
-    assert runtime.reasoning_effort == "high"
+    assert runtime.model is None
+    assert runtime.reasoning_effort is None
     assert runtime.runtime_policy == "plan"
     assert runtime.output_schema == PROMPT_ASSISTANT_OUTPUT_SCHEMA
     assert runtime.last_prompt is not None
     assert "生成草稿" in runtime.last_prompt
     assert "保留这个输出格式。" in runtime.last_prompt
     assert "改成更适合市场分析" in runtime.last_prompt
-    assert "先选模式；有歧义时最小改动" in runtime.last_prompt
-    assert "以当前 prompt 为底稿" in runtime.last_prompt
-    assert "其余逐字保留" in runtime.last_prompt
-    assert "不写修改说明" in runtime.last_prompt
+    assert "先自动判断任务方式" in runtime.last_prompt
+    assert "以当前提示词为底稿精确修改" in runtime.last_prompt
+    assert "其余有效要求保持不变" in runtime.last_prompt
+    assert "一次提出 1–3 个通俗选择题" in runtime.last_prompt
+    assert "不输出节点 ID、连线 ID、原始字段名" in runtime.last_prompt
+    assert "Prompt Assistant Demo" in runtime.last_prompt
     assert "输入行业" in runtime.last_prompt
     assert "输出报告" in runtime.last_prompt
     assert "执行祖先节点" in runtime.last_prompt
@@ -314,7 +367,7 @@ def test_prompt_assistant_keeps_full_target_prompt_and_related_prompt_tail(auth_
     assert "中间已省略" in runtime.last_prompt
     assert '"summary"' in runtime.last_prompt
     assert "当前 output_contract" in runtime.last_prompt
-    assert "其余逐字保留" in runtime.last_prompt
+    assert "其余有效要求保持不变" in runtime.last_prompt
     assert "当前设置仍合适且无需修改时返回 null" in runtime.last_prompt
 
 
@@ -405,6 +458,30 @@ def test_prompt_assistant_repairs_malformed_structured_output(auth_client, confi
     assert runtime.call_count == 2
     assert runtime.output_schema == PROMPT_ASSISTANT_OUTPUT_SCHEMA
     assert "校验失败原因" in runtime.prompts[1]
+
+
+def test_prompt_assistant_repairs_internal_terms_in_visible_prompt(auth_client, configure_codex):
+    configure_codex()
+    app_id = _create_app(auth_client)
+    runtime = PromptAssistantRuntime(
+        texts=[
+            _assistant_result("读取 n_input 的内容并按 output_contract 生成结果。"),
+            _assistant_result("根据用户输入生成结果，并满足当前输出要求。"),
+        ]
+    )
+    set_runtime_override(runtime)
+    try:
+        response = auth_client.post(
+            "/api/prompt-assistant/generate",
+            json=_assistant_payload(app_id=app_id, user_request="生成结果"),
+        )
+    finally:
+        set_runtime_override(MockRuntime())
+
+    assert response.status_code == 200, response.text
+    assert response.json()["prompt"] == "根据用户输入生成结果，并满足当前输出要求。"
+    assert runtime.call_count == 2
+    assert "用户可见提示词包含内部字段或协议" in runtime.prompts[1]
 
 
 def test_prompt_assistant_includes_runtime_error_detail(auth_client, configure_codex):
@@ -662,6 +739,32 @@ def test_prompt_assistant_waits_for_user_and_resumes(auth_client, configure_code
         set_runtime_override(MockRuntime())
 
 
+def test_prompt_assistant_rejects_second_decision_round(auth_client, configure_codex):
+    configure_codex()
+    app_id = _create_app(auth_client)
+    generation_id = f"pa_{uuid.uuid4().hex[:10]}"
+    runtime = PromptAssistantDoubleAskRuntime()
+    set_runtime_override(runtime)
+    try:
+        waiting = auth_client.post(
+            "/api/prompt-assistant/generate",
+            json=_assistant_payload(app_id=app_id, generation_id=generation_id, user_request="帮我生成提示词"),
+        )
+        assert waiting.status_code == 200, waiting.text
+        assert waiting.json()["status"] == "waiting_for_user"
+
+        resumed = auth_client.post(
+            f"/api/prompt-assistant/{generation_id}/resume",
+            json={"answers": [{"group_id": "first", "selected": ["选项一"]}]},
+        )
+    finally:
+        set_runtime_override(MockRuntime())
+
+    assert resumed.status_code == 502, resumed.text
+    assert runtime.second_error == "提示词助手每次生成只允许一轮 decision_request"
+    assert "提示词助手每次生成只允许一轮" in resumed.json()["detail"]
+
+
 def test_prompt_assistant_waiting_active_endpoint(auth_client, configure_codex):
     configure_codex()
     app_id = _create_app(auth_client)
@@ -736,11 +839,10 @@ def test_prompt_assistant_guides_format_cleanup_as_edit(auth_client, configure_c
     assert runtime.last_prompt is not None
     assert "第一段目标。\n\n\n第二段约束。" in runtime.last_prompt
     assert "清除提示词多余的换行，换成正常的 txt 格式" in runtime.last_prompt
-    assert "格式清理**：只改排版和标点，不改文字、字面量或语义" in runtime.last_prompt
-    assert "格式清理和精确修改只用上下文理解指代" in runtime.last_prompt
-    assert "生成结果必须使用简洁中文" in runtime.last_prompt
-    assert "工具一律使用界面展示的中文标签" in runtime.last_prompt
-    assert "优先控制在 200 个中文字符内" in runtime.last_prompt
+    assert "只清理格式时，不改变文字、字面量和语义" in runtime.last_prompt
+    assert "使用简洁中文" in runtime.last_prompt
+    assert "工具只使用界面展示名称" in runtime.last_prompt
+    assert "长度只是建议" in runtime.last_prompt
 
 
 def test_prompt_assistant_returns_generate_output_contract(auth_client, configure_codex):
@@ -855,20 +957,23 @@ def test_prompt_assistant_preserves_office_validation_contract(auth_client, conf
     }
 
 
-def test_prompt_assistant_drops_json_field_level_contract(auth_client, configure_codex):
+def test_prompt_assistant_repairs_invalid_json_contract(auth_client, configure_codex):
     configure_codex()
     app_id = _create_app(auth_client)
     runtime = PromptAssistantRuntime(
-        text=json.dumps(
-            {
-                "prompt": "生成结构化摘要。",
-                "output_contract_json": json.dumps(
-                    {"type": "json", "required_fields": ["title"], "json_schema": {"type": "object"}},
-                    ensure_ascii=False,
-                ),
-            },
-            ensure_ascii=False,
-        )
+        texts=[
+            json.dumps(
+                {
+                    "prompt": "生成结构化摘要。",
+                    "output_contract_json": json.dumps(
+                        {"type": "json", "required_fields": ["title"], "json_schema": {"type": "object"}},
+                        ensure_ascii=False,
+                    ),
+                },
+                ensure_ascii=False,
+            ),
+            _assistant_result("生成结构化摘要。"),
+        ]
     )
     set_runtime_override(runtime)
     try:
@@ -881,19 +986,27 @@ def test_prompt_assistant_drops_json_field_level_contract(auth_client, configure
 
     assert response.status_code == 200, response.text
     assert response.json() == {"status": "completed", "prompt": "生成结构化摘要。", "output_contract": None}
+    assert runtime.call_count == 2
+    assert "output_contract 无效" in runtime.prompts[1]
 
 
-def test_prompt_assistant_drops_invalid_output_contract(auth_client, configure_codex):
+def test_prompt_assistant_repairs_invalid_output_contract(auth_client, configure_codex):
     configure_codex()
     app_id = _create_app(auth_client)
     runtime = PromptAssistantRuntime(
-        text=json.dumps(
-            {
-                "prompt": "生成结构化摘要。",
-                "output_contract_json": json.dumps({"type": "artifact", "artifact_kind": "exe"}, ensure_ascii=False),
-            },
-            ensure_ascii=False,
-        )
+        texts=[
+            json.dumps(
+                {
+                    "prompt": "生成结构化摘要。",
+                    "output_contract_json": json.dumps(
+                        {"type": "artifact", "artifact_kind": "exe"},
+                        ensure_ascii=False,
+                    ),
+                },
+                ensure_ascii=False,
+            ),
+            _assistant_result("生成结构化摘要。"),
+        ]
     )
     set_runtime_override(runtime)
     try:
@@ -906,6 +1019,8 @@ def test_prompt_assistant_drops_invalid_output_contract(auth_client, configure_c
 
     assert response.status_code == 200, response.text
     assert response.json() == {"status": "completed", "prompt": "生成结构化摘要。", "output_contract": None}
+    assert runtime.call_count == 2
+    assert "output_contract 无效" in runtime.prompts[1]
 
 
 def test_prompt_assistant_app_owned_by_other_user_returns_404(client, auth_client, configure_codex):

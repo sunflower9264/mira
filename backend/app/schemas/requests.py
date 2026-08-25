@@ -69,8 +69,6 @@ class PromptAssistantGenerateIn(BaseModel):
     graph: dict[str, Any]
     node_id: str
     user_request: str = ""
-    model: str | None = None
-    reasoning_effort: str | None = None
 
 
 class PromptAssistantResumeIn(BaseModel):

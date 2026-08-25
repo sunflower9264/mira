@@ -22,12 +22,7 @@ from app.services.execution_plan import ExecutionPlanError, compile_execution_pl
 from app.services.graph_inputs import prepare_planning_graph
 from app.services.output_contracts import validate_output_contract_config
 from app.services.prompts import get_prompt_content, render_prompt
-from app.services.prompt_contracts import (
-    build_structured_repair_prompt,
-    max_attempts_for,
-    output_schema_for,
-)
-from app.services.reasoning_effort import normalize_reasoning_effort
+from app.services.prompt_contracts import max_attempts_for, output_schema_for
 from app.services.runtime_paths import prompt_assistant_workspace
 from app.services.structured_output import parse_structured_json_object
 from app.services.tools import RuntimeToolConfig, planning_runtime_tools_for_graph
@@ -45,6 +40,21 @@ PROMPT_NODE_TYPES = {"generate", "condition", "output"}
 _TARGET_PROMPT_MAX_BYTES = 200 * 1024
 _ASSISTANT_PROMPT_MAX_BYTES = 200 * 1024
 _RELATED_PROMPT_LIMIT = 1200
+_INTERNAL_VISIBLE_PROMPT_TERMS = (
+    "output_contract",
+    "json_schema",
+    "artifact_kind",
+    "branch_key",
+    "execution_edges",
+    "reasoning_effort",
+    "node_id",
+    "edge_id",
+    "{{node.output}}",
+    "{{source.output}}",
+    "/workspace/.mira/run-context/",
+    "/mnt/inputs",
+    "/mnt/results",
+)
 
 _CANCELLED_DETAIL = "提示词生成已取消"
 _DECISION_WAITING_STOPPED_DETAIL = "decision_request runtime stopped while waiting; resume from persisted pending request"
@@ -60,8 +70,6 @@ class PromptAssistantSession:
     response_future: asyncio.Future[dict[str, Any]]
     cancel_event: asyncio.Event
     prompt: str
-    model: str | None
-    reasoning_effort: str | None
     graph: dict[str, Any]
     task: asyncio.Task[None] | None = None
     resume_future: asyncio.Future[DecisionResult] | None = None
@@ -145,6 +153,7 @@ async def generate_prompt_assistant(
         node_id=payload.node_id,
         user_request=payload.user_request,
         template=template,
+        app_context=_app_context(app),
     )
     row = PromptAssistantGenerationRow(
         id=generation_id,
@@ -152,8 +161,8 @@ async def generate_prompt_assistant(
         app_id=app.id,
         status="running",
         prompt_json=_json_dumps({"prompt": prompt, "graph": graph}),
-        model=(payload.model or "").strip() or None,
-        reasoning_effort=(payload.reasoning_effort or "").strip() or None,
+        model=None,
+        reasoning_effort=None,
         history_json="[]",
     )
     db.add(row)
@@ -184,8 +193,6 @@ async def _start_prompt_assistant_session_from_row(
         response_future=asyncio.get_running_loop().create_future(),
         cancel_event=asyncio.Event(),
         prompt=prompt,
-        model=row.model,
-        reasoning_effort=row.reasoning_effort,
         graph=graph,
     )
     _generation_sessions[row.id] = session
@@ -209,16 +216,21 @@ async def _run_prompt_assistant_session(
     replay_result: DecisionResult | None = None,
 ) -> None:
     replayed_result = replay_result
+    decision_request_seen = False
 
     async def on_decision_request(request: DecisionRequest) -> DecisionResult:
-        nonlocal replayed_result
+        nonlocal decision_request_seen, replayed_result
         if replayed_result is not None:
             result = replayed_result
             replayed_result = None
+            decision_request_seen = True
             return result
+        if decision_request_seen:
+            return DecisionResult(ok=False, error="提示词助手每次生成只允许一轮 decision_request")
         protocol_error = validate_decision_groups(request.groups)
         if protocol_error:
             return DecisionResult(ok=False, error=protocol_error)
+        decision_request_seen = True
         request = request.model_copy(update={"groups": append_none_option(request.groups)})
         if session.resume_future is not None and not session.resume_future.done():
             return DecisionResult(ok=False, error="不允许并发 decision_request")
@@ -250,12 +262,13 @@ async def _run_prompt_assistant_session(
             runtime=runtime,
             user_id=session.user_id,
             prompt=session.prompt,
-            model=session.model,
-            reasoning_effort=session.reasoning_effort,
+            model=None,
+            reasoning_effort=None,
             cancel_event=session.cancel_event,
             on_decision_request=on_decision_request,
             runtime_tools=runtime_tools,
             runtime_policy="plan",
+            forbidden_prompt_terms=prompt_internal_terms(session.graph),
         )
         completed = {
             "status": "completed",
@@ -428,6 +441,7 @@ async def run_prompt_assistant(
     on_decision_request=None,
     runtime_tools: RuntimeToolConfig | None = None,
     runtime_policy: str = "execute",
+    forbidden_prompt_terms: tuple[str, ...] = (),
 ) -> PromptAssistantResult:
     prompt_contract_key = "prompt_assistant"
     current_prompt = prompt
@@ -447,18 +461,15 @@ async def run_prompt_assistant(
         )
         previous_output = result_text
         try:
-            return _parse_prompt_assistant_output(result_text)
+            return _parse_prompt_assistant_output(result_text, forbidden_prompt_terms=forbidden_prompt_terms)
         except HTTPException as exc:
             last_error = str(exc.detail)
             if attempt >= max_attempts_for(prompt_contract_key):
                 raise
-            current_prompt = build_structured_repair_prompt(
-                task_name="提示词助手",
+            current_prompt = _build_prompt_assistant_repair_prompt(
                 original_prompt=prompt,
                 previous_output=previous_output,
                 validation_error=last_error,
-                output_shape='{"prompt":"完整 prompt 正文","output_contract_json":"{...}" 或 null}',
-                output_schema=output_schema_for(prompt_contract_key),
             )
     raise HTTPException(status_code=502, detail=last_error or "Agent 未返回提示词，请调整描述后重试")
 
@@ -485,7 +496,7 @@ async def _execute_prompt_assistant_once(
         prompt=prompt,
         session_id=None,
         model=(model or "").strip() or None,
-        reasoning_effort=normalize_reasoning_effort(reasoning_effort),
+        reasoning_effort=(reasoning_effort or "").strip() or None,
         cwd=prompt_assistant_workspace(user_id),
         on_chunk=on_chunk,
         cancel_event=cancel_event,
@@ -592,7 +603,42 @@ def build_prompt_assistant_prompt(
     node_id: str,
     user_request: str,
     template: str,
-    plan_context: str | None = None,
+    app_context: str,
+) -> str:
+    request_section = user_request.strip() or "（用户没有额外描述，请先用通俗选项问清真正影响结果的需求）"
+    return _render_node_prompt(
+        graph=graph,
+        node_id=node_id,
+        request_section=request_section,
+        template=template,
+        extra_context={"app_context": app_context.strip() or "（应用没有补充背景）"},
+    )
+
+
+def build_nlcompile_prompt_refiner_prompt(
+    *,
+    graph: dict,
+    node_id: str,
+    user_request: str,
+    template: str,
+    plan_context: str,
+) -> str:
+    return _render_node_prompt(
+        graph=graph,
+        node_id=node_id,
+        request_section=user_request.strip() or "（按已确认方案整理当前节点提示词）",
+        template=template,
+        extra_context={"plan_context": plan_context.strip() or "（无补充方案内容）"},
+    )
+
+
+def _render_node_prompt(
+    *,
+    graph: dict,
+    node_id: str,
+    request_section: str,
+    template: str,
+    extra_context: dict[str, str],
 ) -> str:
     node = _node_by_id(graph, node_id)
     if node is None:
@@ -607,9 +653,27 @@ def build_prompt_assistant_prompt(
             detail="当前节点提示词超过 200 KiB，提示词助手无法完整处理，请先缩短后重试",
         )
 
-    request_section = user_request.strip() or "（用户没有额外描述，请根据节点职责和上下游关系优化）"
-    supports_contract = node.get("type") == "generate"
-    contract_rules = (
+    variables = {
+        "user_request": request_section,
+        "node_context": _node_summary(node, detail="full"),
+        "upstream_context": _related_nodes_summary(graph, node_id, direction="upstream"),
+        "downstream_context": _related_nodes_summary(graph, node_id, direction="downstream"),
+        "contract_rules": _contract_rules(node),
+        **extra_context,
+    }
+    prompt = render_prompt(template, variables).strip()
+    if len(prompt.encode("utf-8")) > _ASSISTANT_PROMPT_MAX_BYTES:
+        raise HTTPException(
+            status_code=400,
+            detail="提示词助手上下文超过 200 KiB，请缩短用户说明或相邻节点提示词后重试",
+        )
+    return prompt
+
+
+def _contract_rules(node: dict[str, Any]) -> str:
+    if node.get("type") != "generate":
+        return "output_contract 规则：当前节点不是 generate 节点，output_contract 必须返回 null。"
+    return (
         """output_contract 规则：
 	- 当前节点是 generate 节点时，请同时给出建议的 output_contract。
 	- output_contract_json 只表示需要新增或变更的设置；当前设置仍合适且无需修改时返回 null，以保留现状。
@@ -621,27 +685,17 @@ def build_prompt_assistant_prompt(
 	- 只有用户明确要求 JSON、结构化字段、固定字段，或下游明显需要机器读取字段时，才建议 json，并给出 strict object JSON Schema：根 type 必须是 object，additionalProperties 必须是 false，required 必须包含所有 properties 字段；根对象及每个 properties 业务字段（含嵌套字段）都必须有简短准确的中文 title 和 description。
 	- 只有用户明确要求当前 generate 节点直接产出可嵌入预览的 HTML 片段时，才建议 html；最终展示通常由 output 节点负责，不要为了“好看”给中间 generate 节点套 html。
 	- 当用户明确要求图片、代码包、HTML 文件、Markdown 文件、CSV、Excel、DOCX、PPT、PDF、压缩包或其他可下载文件时，建议 artifact 并选择最贴近的 artifact_kind。"""
-        if supports_contract
-        else "output_contract 规则：当前节点不是 generate 节点，output_contract 必须返回 null。"
     )
 
-    prompt = render_prompt(
-        template,
-        {
-            "user_request": request_section,
-            "plan_context": (plan_context or "").strip() or "（无）",
-            "node_context": _node_summary(node, detail="full"),
-            "upstream_context": _related_nodes_summary(graph, node_id, direction="upstream"),
-            "downstream_context": _related_nodes_summary(graph, node_id, direction="downstream"),
-            "contract_rules": contract_rules,
-        },
-    ).strip()
-    if len(prompt.encode("utf-8")) > _ASSISTANT_PROMPT_MAX_BYTES:
-        raise HTTPException(
-            status_code=400,
-            detail="提示词助手上下文超过 200 KiB，请缩短用户说明或相邻节点提示词后重试",
-        )
-    return prompt
+
+def _app_context(app: App) -> str:
+    lines = [f"- 应用名称：{app.name}"]
+    description = str(app.description or "").strip()
+    if description:
+        lines.append(f"- 应用描述：{description}")
+    else:
+        lines.append("- 应用描述：未填写")
+    return "\n".join(lines)
 
 
 def _node_by_id(graph: dict, node_id: str) -> dict | None:
@@ -757,7 +811,35 @@ def _clip_head_tail(text: str, limit: int) -> str:
     )
 
 
-def _parse_prompt_assistant_output(text: str) -> PromptAssistantResult:
+def _build_prompt_assistant_repair_prompt(
+    *,
+    original_prompt: str,
+    previous_output: str,
+    validation_error: str,
+) -> str:
+    return "\n\n".join(
+        [
+            "你刚才生成的提示词或输出设置未通过校验。请根据失败原因做最小修正，保持原任务目标和用户明确要求不变。",
+            "只输出一个 JSON 对象，形状必须是 "
+            '{"prompt":"完整提示词正文","output_contract_json":"{...}" 或 null}。',
+            "不要输出 Markdown、解释、注释、代码块或额外字段；不要再向用户提问或调用工具。",
+            "原始任务：",
+            original_prompt,
+            "上一轮输出：",
+            previous_output,
+            "校验失败原因：",
+            validation_error,
+            "JSON Schema：",
+            json.dumps(output_schema_for("prompt_assistant"), ensure_ascii=False, separators=(",", ":")),
+        ]
+    )
+
+
+def _parse_prompt_assistant_output(
+    text: str,
+    *,
+    forbidden_prompt_terms: tuple[str, ...] = (),
+) -> PromptAssistantResult:
     try:
         parsed = parse_structured_json_object(text, label="提示词助手输出")
     except ValueError as exc:
@@ -767,9 +849,14 @@ def _parse_prompt_assistant_output(text: str) -> PromptAssistantResult:
         raise HTTPException(status_code=502, detail="Agent 未返回提示词，请调整描述后重试")
     if "output_contract_json" not in parsed:
         raise HTTPException(status_code=502, detail="Agent 返回的提示词缺少 output_contract，请稍后重试")
+    prompt = prompt.strip()
+    leaked_terms = _visible_prompt_leaks(prompt, forbidden_prompt_terms)
+    if leaked_terms:
+        joined = "、".join(f"`{term}`" for term in leaked_terms[:5])
+        raise HTTPException(status_code=502, detail=f"用户可见提示词包含内部字段或协议：{joined}")
     output_contract = _output_contract_from_json(parsed.get("output_contract_json"))
     return PromptAssistantResult(
-        prompt=prompt.strip(),
+        prompt=prompt,
         output_contract=output_contract,
     )
 
@@ -778,22 +865,25 @@ def _output_contract_from_json(value: Any) -> dict[str, Any] | None:
     if value is None:
         return None
     if not isinstance(value, str) or not value.strip():
-        return None
+        raise HTTPException(status_code=502, detail="Agent 返回的 output_contract 不是有效 JSON 对象字符串")
     try:
         parsed = json.loads(value)
-    except json.JSONDecodeError:
-        return None
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=502, detail="Agent 返回的 output_contract 不是有效 JSON") from exc
     return _clean_output_contract(parsed)
 
 
-def _clean_output_contract(value: Any) -> dict[str, Any] | None:
-    if value is None:
-        return None
+def _clean_output_contract(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
-        return None
+        raise HTTPException(status_code=502, detail="Agent 返回的 output_contract 必须是 JSON 对象")
     output_type = value.get("type")
     if output_type not in {"json", "html", "artifact"}:
-        return None
+        raise HTTPException(status_code=502, detail="Agent 返回的 output_contract.type 无效")
+    error = validate_output_contract_config(
+        {"id": "prompt_assistant", "type": "generate", "title": "提示词助手", "output_contract": value}
+    )
+    if error:
+        raise HTTPException(status_code=502, detail=f"Agent 返回的 output_contract 无效：{error}")
     cleaned: dict[str, Any] = {"type": output_type}
     if output_type == "json":
         json_schema = value.get("json_schema")
@@ -809,7 +899,23 @@ def _clean_output_contract(value: Any) -> dict[str, Any] | None:
         validate_office = value.get("validate_office_documents")
         if isinstance(validate_office, bool):
             cleaned["validate_office_documents"] = validate_office
-    error = validate_output_contract_config(
-        {"id": "prompt_assistant", "type": "generate", "title": "提示词助手", "output_contract": cleaned}
-    )
-    return None if error else cleaned
+    return cleaned
+
+
+def prompt_internal_terms(graph: dict[str, Any]) -> tuple[str, ...]:
+    terms = list(_INTERNAL_VISIBLE_PROMPT_TERMS)
+    for collection, key in ((graph.get("nodes"), "id"), (graph.get("execution_edges"), "id")):
+        if not isinstance(collection, list):
+            continue
+        for item in collection:
+            value = item.get(key) if isinstance(item, dict) else None
+            if isinstance(value, str):
+                normalized = value.strip()
+                if len(normalized) >= 8 or "_" in normalized or "-" in normalized:
+                    terms.append(normalized)
+    return tuple(dict.fromkeys(terms))
+
+
+def _visible_prompt_leaks(prompt: str, forbidden_terms: tuple[str, ...]) -> list[str]:
+    normalized = prompt.casefold()
+    return [term for term in forbidden_terms if term.casefold() in normalized]

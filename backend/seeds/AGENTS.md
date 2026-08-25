@@ -6,7 +6,7 @@
 
 - `gallery.json`：内置 `system_gallery` 应用及 graph 定义。
 - `assets/`：gallery 封面；seed 时导入为 Upload，并把 App cover 保存为 upload id。
-- `prompts/*.md`：带 front matter 的 Prompt Templates，当前包括 condition、graph layout、NL compile plan/apply、output repair/rendering、Prompt Assistant 和 Codex status smoke。
+- `prompts/*.md`：带 front matter 的 Prompt Templates，当前包括 condition、graph layout、NL compile plan/apply、NL compile 节点提示词整理、output repair/rendering、页面 Prompt Assistant 和 Codex status smoke。
 
 ## 同步语义
 
@@ -17,6 +17,7 @@
 - Settings 保存 Prompt Template 会同步写回同名 seed 文件，因此数据库与 seed 不应长期分叉。
 - supported models 由管理员随 Codex config 维护，不在 seed 中维护 provider 列表。
 - 用户决策使用 Codex 原生 `requestUserInput`；prompt 只规定业务判断和输出，不定义自造工具或第二传输协议。
+- 页面提示词创作使用 `prompt_assistant`，NL compile apply 后处理使用 `nlcompile_prompt_refiner`；不得重新合并成同时承担创作和压缩的单一模板。
 
 ## 修改规则
 

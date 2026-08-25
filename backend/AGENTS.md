@@ -50,4 +50,5 @@
 
 - Router 只做鉴权、schema 接收、HTTP 映射和 service 调用。ORM 变化必须新增 migration，并同步 schema、serializer、service、前端类型和测试。
 - Prompt seed 以 `seeds/prompts/` 为源码事实来源；Settings 保存会同步 seed。修改任何 seed 后同步开发与 deploy 数据库，做不到时明确说明。
+- 页面 Prompt Assistant 与 NL compile 节点提示词后处理分别使用 `prompt_assistant`、`nlcompile_prompt_refiner`；前者走 Codex Plan、使用 Codex 配置默认模型与推理强度并最多提问一轮，后者在 apply 阶段禁止提问。
 - 后端行为改动按范围运行 pytest，至少执行 `cd backend && uv run python -m compileall app scripts`；迁移执行 `uv run alembic upgrade head && uv run alembic current && uv run alembic check`。跨 wire shape 改动还要运行前端 typecheck，文档改动执行 `git diff --check`。

@@ -860,7 +860,9 @@ def test_nlcompile_applies_valid_patches_and_renders_plan(auth_client, configure
     assert '"action":"ask"' not in compile_prompt
     assert "JSON action 状态机" not in compile_prompt
     assistant_prompt = runtime.prompts[2]
-    assert "## 方案上下文" in assistant_prompt
+    assert "## 已确认方案" in assistant_prompt
+    assert "当前职责是整理 NL 编译已经生成的节点提示词" in assistant_prompt
+    assert "不罗列上下游节点或字段映射" in assistant_prompt
     assert "原始用户指令：加一个生成节点" in assistant_prompt
     assert "按用户指令更新 Mira 画布" in assistant_prompt
     patch_prompt = runtime.prompts[1]

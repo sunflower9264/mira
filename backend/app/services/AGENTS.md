@@ -43,8 +43,8 @@
 - App 默认使用当前启用 Tools，`graph.tools.disabled_tool_ids` 只表达排除；Run 创建时快照 allowed IDs，运行时再与当前启用状态求交集。NL compile、Prompt Assistant 和 Run planning 额外要求 `planning_enabled=true`。
 - Skill ZIP 只能有一个 canonical `SKILL.md`，archive MD5 与 root 在安装时复验。`requirements.lock` 优先于同目录 `requirements.txt`；`skill_dependencies.py` 只接受包索引 requirement，不允许 URL/路径/pip 执行选项，并以 `--only-binary=:all:` 下载 wheel、离线安装到 `.deps`。
 - 依赖 builder 使用 runtime 镜像但不挂载 Codex 凭据、workspace、uploads 或 Docker socket；下载阶段可联网，安装阶段禁网。缓存绑定 requirements、policy、Python ABI 和镜像身份，挂载前复验 manifest/tree hash；失败 Skill 禁用。
-- NL compile 以 `nlcompile_sessions` 持久化 plan/wait/refine/apply/cancel：plan 可原生提问，apply 禁止再提问；patch batch 必须在临时 graph 整批模拟、重试与完整校验，失败不返回半应用 graph，成功前再做 Prompt Assistant 后处理和 layout。
-- Prompt Assistant 以 `prompt_assistant_generations` 持久化 running/waiting/resume/cancel/active；内存 session 只做当前进程快速等待。数据库状态是恢复事实来源。
+- NL compile 以 `nlcompile_sessions` 持久化 plan/wait/refine/apply/cancel：plan 可原生提问，apply 禁止再提问；patch batch 必须在临时 graph 整批模拟、重试与完整校验，失败不返回半应用 graph，成功前使用独立 `nlcompile_prompt_refiner` 整理节点提示词并做 layout。
+- Prompt Assistant 以 `prompt_assistant_generations` 持久化 running/waiting/resume/cancel/active；内存 session 只做当前进程快速等待。页面生成使用 Codex 配置默认模型与推理强度，最多接受一轮 1–3 个问题，用户可见提示词拒绝内部字段或协议。数据库状态是恢复事实来源。
 
 ## 修改与验证
 

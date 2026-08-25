@@ -33,7 +33,11 @@ from app.services.graph_inputs import prepare_planning_graph, prepare_structural
 from app.services.graph_layout import beautify_graph_layout_with_runtime
 from app.services import runtime_config
 from app.services.prompts import get_prompt_content, render_prompt
-from app.services.prompt_assistant import build_prompt_assistant_prompt, run_prompt_assistant
+from app.services.prompt_assistant import (
+    build_nlcompile_prompt_refiner_prompt,
+    prompt_internal_terms,
+    run_prompt_assistant,
+)
 from app.services.prompt_contracts import (
     append_patch_protocol,
     build_structured_repair_prompt,
@@ -415,7 +419,7 @@ async def apply_compile(
 
     await runtime_config.write_configs(db)
     prompt_template = await get_prompt_content(db, "nlcompile_graph_patch")
-    prompt_assistant_template = await get_prompt_content(db, "prompt_assistant")
+    prompt_assistant_template = await get_prompt_content(db, "nlcompile_prompt_refiner")
     graph_layout_template = await get_prompt_content(db, "graph_layout_beautify")
     attachment_refs = _initial_attachment_runtime_refs(user_id, session.history)
     prompt = build_patch_prompt(
@@ -1132,7 +1136,7 @@ async def _apply_prompt_assistant_to_patches(
     async def generate_for(index: int, patch: dict[str, Any], node: dict[str, Any]) -> Any:
         async with semaphore:
             try:
-                assistant_prompt = build_prompt_assistant_prompt(
+                assistant_prompt = build_nlcompile_prompt_refiner_prompt(
                     graph=graph,
                     node_id=str(node.get("id") or ""),
                     user_request=(
@@ -1150,6 +1154,7 @@ async def _apply_prompt_assistant_to_patches(
                     model=str(node.get("model") or "").strip() or None,
                     reasoning_effort=max_reasoning_effort(),
                     cancel_event=cancel_event,
+                    forbidden_prompt_terms=prompt_internal_terms(graph),
                 )
             except HTTPException as exc:
                 return PatchFailure(

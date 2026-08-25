@@ -55,6 +55,7 @@ def test_prompt_templates_are_seeded_and_saved_to_seed(auth_client):
     assert {
         "nlcompile_graph_patch",
         "nlcompile_plan",
+        "nlcompile_prompt_refiner",
         "condition_choice",
         "status_smoke",
         "prompt_assistant",
@@ -85,18 +86,18 @@ def test_prompt_templates_are_seeded_and_saved_to_seed(auth_client):
     assert "中文 title 和 description" in items["nlcompile_graph_patch"]["content"]
     assert "禁止制造交叉连接" not in items["nlcompile_graph_patch"]["content"]
     assert items["prompt_assistant"]["name"] == "提示词助手"
-    assert "执行祖先/后继关系" in items["prompt_assistant"]["description"]
-    assert "先选模式；有歧义时最小改动" in items["prompt_assistant"]["content"]
-    assert "其余逐字保留" in items["prompt_assistant"]["content"]
-    assert "变量、字段和示例只在执行确实依赖且契约未表达时保留" in items["prompt_assistant"]["content"]
-    assert "不写修改说明" in items["prompt_assistant"]["content"]
-    assert "最短充分 prompt" in items["prompt_assistant"]["content"]
-    assert "生成结果必须使用简洁中文" in items["prompt_assistant"]["content"]
-    assert "工具一律使用界面展示的中文标签" in items["prompt_assistant"]["content"]
-    assert "上游字段优先用中文业务含义表达" in items["prompt_assistant"]["content"]
-    assert "优先控制在 200 个中文字符内" in items["prompt_assistant"]["content"]
-    assert "中文 `title` 与 `description`" in items["prompt_assistant"]["content"]
-    assert "否则采用保守默认直接生成" in items["prompt_assistant"]["content"]
+    assert "$app_context" in items["prompt_assistant"]["content"]
+    assert "一次提出 1–3 个通俗选择题" in items["prompt_assistant"]["content"]
+    assert "其余有效要求保持不变" in items["prompt_assistant"]["content"]
+    assert "不超过 6 个短条目" in items["prompt_assistant"]["content"]
+    assert "长度只是建议" in items["prompt_assistant"]["content"]
+    assert "不输出节点 ID、连线 ID、原始字段名" in items["prompt_assistant"]["content"]
+    assert "React、FastAPI、ZIP" in items["prompt_assistant"]["content"]
+    assert "工具只使用界面展示名称" in items["prompt_assistant"]["content"]
+    assert items["nlcompile_prompt_refiner"]["name"] == "NL 编译节点提示词整理"
+    assert "$plan_context" in items["nlcompile_prompt_refiner"]["content"]
+    assert "确认方案已经完成，不得提问" in items["nlcompile_prompt_refiner"]["content"]
+    assert "不罗列上下游节点或字段映射" in items["nlcompile_prompt_refiner"]["content"]
     assert items["graph_layout_beautify"]["name"] == "美化样式节点布局"
     assert "$graph_json" in items["graph_layout_beautify"]["content"]
     assert "$node_sizes_json" in items["graph_layout_beautify"]["content"]
@@ -113,6 +114,7 @@ def test_prompt_templates_are_seeded_and_saved_to_seed(auth_client):
     assert "完整 HTML 放入 `html` 字段" in items["output_html_rendering"]["content"]
     assert len(items["nlcompile_graph_patch"]["content"]) < 2600
     assert len(items["prompt_assistant"]["content"]) < 2600
+    assert len(items["nlcompile_prompt_refiner"]["content"]) < 2200
     assert "$contract" in items["output_contract_repair"]["content"]
     assert "$validation_error" in items["output_contract_repair"]["content"]
     assert "$original_output" in items["output_contract_repair"]["content"]
@@ -131,6 +133,7 @@ def test_prompt_templates_are_seeded_and_saved_to_seed(auth_client):
         "status_smoke": "DB_ONLY_STATUS",
         "nlcompile_plan": "DB_ONLY_NLCOMPILE_PLAN",
         "nlcompile_graph_patch": "DB_ONLY_NLCOMPILE",
+        "nlcompile_prompt_refiner": "DB_ONLY_NLCOMPILE_REFINER",
         "prompt_assistant": "DB_ONLY_PROMPT_ASSISTANT",
         "output_html_rendering": "DB_ONLY_OUTPUT_HTML",
         "output_contract_repair": "DB_ONLY_OUTPUT_CONTRACT_REPAIR",

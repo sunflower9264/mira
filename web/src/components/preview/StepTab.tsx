@@ -823,8 +823,6 @@ function PromptField({
         graph: app.graph,
         node_id: node.id,
         user_request: requestText,
-        model: node.model,
-        reasoning_effort: node.reasoning_effort,
       }, controller.signal);
       keepSession = handlePromptAssistantResponse(result, generationId);
     } catch (e) {

@@ -18,6 +18,7 @@
 - Run、NL compile 和 Prompt Assistant 的附件只接收当前用户 upload 引用；路径和元数据由 service 解析。
 - NL compile 响应是 planned/completed/waiting/progress 联合类型；apply 前不能返回 `new_graph`。
 - Prompt Assistant 响应是 completed/waiting/interrupted 联合类型。
+- Prompt Assistant generate 请求只携带应用、graph、目标节点和用户说明；模型与推理强度不从节点或请求传入，使用 Codex 配置默认值。
 - 决策请求统一使用 `context + groups + request_id`，恢复答案使用 `DecisionAnswer`；不定义另一套提问协议。
 - Artifact 响应包含 hash、integrity、来源关系和签名下载 URL，不返回 runtime 内部路径。
 

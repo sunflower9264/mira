@@ -257,7 +257,7 @@ def _is_html_schema(schema: dict | None) -> bool:
 
 def _extract_assistant_current_prompt(prompt: str) -> str:
     match = re.search(
-        r"- 当前提示词：\n(.*?)(?:\n- 分支：|\n\n## 执行祖先节点)",
+        r"- 当前提示词：\n(.*?)(?:\n- 当前 output_contract：|\n- 分支：|\n\n## 执行祖先节点)",
         prompt,
         flags=re.DOTALL,
     )

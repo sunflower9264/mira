@@ -24,7 +24,6 @@ import type {
   NodeOutputContract,
   NlCompilePlan,
   PromptTemplate,
-  ReasoningEffort,
   Run,
   RunArtifactsOut,
   RunSummary,
@@ -509,8 +508,6 @@ export async function generatePromptAssistant(input: {
   graph: App['graph'];
   node_id: string;
   user_request: string;
-  model?: string;
-  reasoning_effort?: ReasoningEffort;
 }, signal?: AbortSignal): Promise<PromptAssistantResponse> {
   return request<PromptAssistantResponse>('/api/prompt-assistant/generate', { method: 'POST', body: input, signal });
 }
