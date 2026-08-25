@@ -106,12 +106,6 @@ API 文档：http://localhost:8000/api/docs
 - 后端：FastAPI、SQLAlchemy、Pydantic、SQLite、Alembic
 - Runtime：Docker sandbox、Codex App Server
 
-## 应用截图与交互浏览器
-
-`/opt/mira/capture_screenshots.py` 只接受当前 workspace 内的 `--project-dir`，并强制复用已有的 `node_modules`；缺失时直接失败，不会联网安装依赖。工具会执行项目声明的 `db:init`、`db:seed`，再启动开发服务器并截图。生成的 ZIP 只包含 PNG、manifest 和日志，不负责打包项目源码；如果应用另行生成项目交付 ZIP，应排除 `node_modules`，可以保留已经构建的 `dist`、`package.json` 和锁文件。
-
-需要执行表单填写、点击、提交或刷新持久化验证时，runtime 镜像提供固定版本的 `mira-browser`。先运行 `mira-browser doctor`，然后使用 `mira-browser open/snapshot/click/fill/screenshot`；它固定绑定 `/usr/bin/chromium`，运行期不会通过 `npx`、`npm install` 或浏览器下载补依赖。该入口与 `/opt/mira/capture_screenshots.py` 分工独立。
-
 ## License
 
 [MIT](LICENSE)
