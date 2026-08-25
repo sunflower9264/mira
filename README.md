@@ -1,21 +1,87 @@
 # Mira
 
-Mira 是一个参考 Google Opal 思路的可视化 AI App 搭建与运行项目。它将自然语言编辑、节点工作流、Agent runtime、运行预览和中段交互组合在一起，用于快速构建可运行、可分享的 mini AI app。
+Mira 是一个由 Codex 驱动的 AI App 创建与运行平台：用一句自然语言描述需求，Agent 会完成规划并生成可运行的应用，用户可以直接试用、继续修改和再次运行。
 
-> Mira 不是 Google 官方项目，也不隶属于 Google。Google Opal 是 Google 的产品或实验名称；本项目仅参考其产品思路进行复刻和优化。
+> Mira 参考了 Google Opal 的产品思路，但不是 Google 官方项目，也与 Google 无官方关联。
 
-## 项目特点
+## Mira 解决什么问题
 
-- **自然语言搭建应用**：可在首次指令中附带需求文档或截图，通过 Agent 生成或调整工作流，先确认方案再应用修改；关键信息不足时由 Codex Plan 原生提问。
-- **可视化执行工作流**：使用输入、素材、生成、条件和输出节点组织执行顺序；一次运行由一个 RunAgent 在共享会话与 workspace 中持续推进，无需为上下游数据引用绘制大量交叉连线，并支持 AI 布局、撤销重做和节点级 Prompt Assistant。
-- **隔离的 Codex runtime**：Codex App Server 只在 Docker sandbox 中运行；线性节点延续同一 thread 与 workspace，真正并行时才通过 `thread/fork` 创建分支 thread 与 CoW workspace，汇合时由协调 Agent 合并分支。
-- **可靠的运行与调试**：支持依赖驱动并发、强输出契约、workspace checkpoint、SSE 流式事件、运行快照、Trace、历史回放、中断恢复和从检查点重新执行。
-- **多种输出形式**：支持自由文本、内部结构化 JSON 契约、HTML 预览和可下载文件产物；复杂 JSON Schema 由 AI 维护，不暴露给普通用户编辑。
-- **完整的应用使用链路**：包含应用市场、公开运行或克隆、用户数据隔离，以及适配手机端的应用运行入口。
+创建一个 AI 应用，不应该从学习节点、连线和执行规则开始。Mira 把这些结构交给 Agent 处理，让用户专注于自己真正想完成的事情：
+
+```text
+描述一句需求
+    ↓
+Agent 自动规划
+    ↓
+生成可运行的应用
+    ↓
+直接试用并查看结果
+    ↓
+用自然语言继续修改
+    ↓
+再次运行
+```
+
+在 Mira 中，用户拥有和操作的是 **App**，而不是一张工作流图。节点、执行边、运行线程和输出契约仍然存在，但它们主要作为系统内部的可靠执行模型；需要精确控制或排查问题时，也可以通过高级结构视图和运行记录查看。
+
+## 核心体验
+
+- **自然语言创建**：输入目标，也可以附带需求文档或截图；Agent 先生成可确认的计划，再把需求转成可运行的 AI App。关键信息不足时，Codex 会在规划阶段直接提问。
+- **围绕结果持续修改**：先运行和预览，再用自然语言说明需要增加、删除或调整的内容；Mira 在现有应用上继续修改，而不是要求用户重新搭建流程。
+- **应用即用即跑**：应用提供独立运行入口，支持中段交互、历史结果回放、HTML 预览和文件产物下载，也适配手机端使用。
+- **复杂度由系统承担**：Mira 在内部使用结构化执行图组织输入、素材、生成、条件和输出，支持依赖驱动并发、运行快照、中断恢复和检查点重新执行。
+- **Codex 隔离运行**：Codex App Server 只在 Docker sandbox 中运行。一次应用运行由一个逻辑 RunAgent 持续推进，线性步骤复用同一 thread 和 workspace，只有真实分支才创建隔离的 branch。
+- **结果可验证**：支持自由文本、内部结构化 JSON 契约、HTML 和文件产物；正式产物经过类型、路径、大小和 SHA-256 完整性验证后才提供下载。
+- **创建之后还能分享**：应用可以保留为私有项目，也可以公开运行或允许他人克隆；应用、运行数据和文件按用户隔离。
+
+## 产品界面
+
+### 创建、管理和发现应用
+
+从自己的应用库继续工作，或从应用市场选择模板开始。
+
+![首页与应用市场](docs/screenshots/home-library-market.png)
+
+### 直接运行生成的应用
+
+应用拥有独立运行入口。用户只需要提供本次输入，不必理解它背后的执行结构。
+
+![独立应用运行页](docs/screenshots/app-run-view.png)
+
+### 查看结果和历史运行
+
+每次运行都保留快照、结果与正式文件，可以回看历史输出，也可以从检查点创建新的运行。
+
+![历史运行结果回放](docs/screenshots/run-preview-trace.png)
+
+### 在需要时查看执行结构
+
+节点编辑器是 Agent 生成应用时使用的高级结构视图，用于理解执行计划、进行精确调整和排查复杂问题；它不是创建应用的必要前提。
+
+![应用执行结构](docs/screenshots/workflow-editor.png)
+
+### 在手机端运行
+
+已创建的应用可以通过适配手机端的入口随时运行。
+
+![手机端运行入口](docs/screenshots/mobile-run.png)
+
+## 为什么底层仍然使用结构化执行模型
+
+自然语言负责表达意图，结构化执行模型负责让应用稳定工作。Mira 在创建应用时把 Agent 的规划固化为可验证的运行结构，因此可以：
+
+- 重复运行同一个应用，而不是每次依赖临场发挥；
+- 明确输入、条件、输出和直接前置依赖；
+- 冻结每次运行使用的应用版本；
+- 在失败后定位阶段、恢复执行或从检查点重跑；
+- 对 HTML、JSON 和文件产物执行强契约与完整性校验；
+- 在公开运行应用时隐藏内部提示词、图结构和运行日志。
+
+这使 Mira 同时具备自然语言产品的低门槛，以及工作流运行系统的可重复、可恢复和可验证。
 
 ## 使用 Codex 启动项目
 
-建议使用能够读取文件并执行终端命令的 Codex，让它先完整阅读根目录 [`AGENTS.md`](AGENTS.md)，再根据其中的项目规则、必读文件和运行要求完成环境检查与启动。
+建议使用能够读取文件并执行终端命令的 Codex。让它先完整阅读根目录 [`AGENTS.md`](AGENTS.md)，再按照其中的项目规则、必读文件和运行要求完成环境检查与启动。
 
 可以直接告诉 Codex：
 
@@ -40,39 +106,11 @@ API 文档：http://localhost:8000/api/docs
 - 后端：FastAPI、SQLAlchemy、Pydantic、SQLite、Alembic
 - Runtime：Docker sandbox、Codex App Server
 
-## 功能截图
+## 应用截图与交互浏览器
 
-### 首页与应用市场
+`/opt/mira/capture_screenshots.py` 只接受当前 workspace 内的 `--project-dir`，并强制复用已有的 `node_modules`；缺失时直接失败，不会联网安装依赖。工具会执行项目声明的 `db:init`、`db:seed`，再启动开发服务器并截图。生成的 ZIP 只包含 PNG、manifest 和日志，不负责打包项目源码；如果应用另行生成项目交付 ZIP，应排除 `node_modules`，可以保留已经构建的 `dist`、`package.json` 和锁文件。
 
-![首页与应用市场](docs/screenshots/home-library-market.png)
-
-### 可视化工作流编辑器
-
-![可视化工作流编辑器](docs/screenshots/workflow-editor.png)
-
-### 独立应用运行页
-
-![独立应用运行页](docs/screenshots/app-run-view.png)
-
-### 历史运行结果回放
-
-![历史运行结果回放](docs/screenshots/run-preview-trace.png)
-
-### Skills 与规划工具设置
-
-![Skills 与规划工具设置](docs/screenshots/settings-runtime-tools.png)
-
-### 手机端运行入口
-
-![手机端运行入口](docs/screenshots/mobile-run.png)
-
-## Skill Python 依赖与项目截图
-
-Skill 可以在 `SKILL.md` 同目录声明 `requirements.lock` 或 `requirements.txt`，两者同时存在时优先使用 `requirements.lock`。Mira 在隔离的依赖构建容器中安装纯 Python 包，按 Skill 与 runtime 版本缓存依赖层，并在运行时把它只读挂载为 Skill 根目录下的 `.deps/`。Python Skill 必须显式把自己的 `.deps` 加入 `sys.path`；需要 Chromium、LibreOffice、FFmpeg 或系统动态库的依赖仍应固化到 runtime 镜像，不能通过 Python 依赖层安装。依赖构建未完成或失败的 Skill 不能启用，Settings 会展示当前状态和失败原因。
-
-`/opt/mira/capture_screenshots.py` 只接受当前 workspace 内的 `--project-dir`，并强制复用已有的 `node_modules`；缺失时直接失败，不会联网安装依赖。工具会执行项目声明的 `db:init`、`db:seed`，再启动开发服务器并截图。截图工具生成的 ZIP 只包含 PNG、manifest 和日志，不负责打包项目源码；若工作流另行生成项目交付 ZIP，应排除 `node_modules`，可保留已构建的 `dist`、`package.json` 和锁文件。
-
-需要执行表单填写、点击、提交或刷新持久化验证时，runtime 镜像提供固定版本的 `mira-browser` 入口。先运行 `mira-browser doctor`，然后使用 `mira-browser open/snapshot/click/fill/screenshot`；它固定绑定 `/usr/bin/chromium`，运行期不通过 `npx`、`npm install` 或浏览器下载补依赖。该入口和 `/opt/mira/capture_screenshots.py` 分工独立。
+需要执行表单填写、点击、提交或刷新持久化验证时，runtime 镜像提供固定版本的 `mira-browser`。先运行 `mira-browser doctor`，然后使用 `mira-browser open/snapshot/click/fill/screenshot`；它固定绑定 `/usr/bin/chromium`，运行期不会通过 `npx`、`npm install` 或浏览器下载补依赖。该入口与 `/opt/mira/capture_screenshots.py` 分工独立。
 
 ## License
 
