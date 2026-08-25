@@ -37,7 +37,7 @@ from app.services.run_agent import RunAgent, RunAgentError
 from app.services.run_hub import RunChannel, get_run_hub
 from app.services.run_serializer import step_to_out
 from app.services.runs import touch_run_heartbeat
-from app.services.runtime_paths import run_workspace
+from app.services.runtime_paths import compact_run_scoped_home, run_workspace
 from app.services.tools import planning_runtime_tools_for_graph, runtime_tools_for_graph
 from app.services.workflow_data import build_output_envelope
 from app.utils import iso, loads, now_utc
@@ -91,6 +91,10 @@ async def start_run(run_id: str, *, continuation: bool = False) -> None:
     finally:
         heartbeat_task.cancel()
         if close_channel:
+            try:
+                await asyncio.to_thread(compact_run_scoped_home, run_id)
+            except OSError:
+                logger.warning("failed to compact terminal run HOME: run=%s", run_id, exc_info=True)
             await channel.close()
 
 

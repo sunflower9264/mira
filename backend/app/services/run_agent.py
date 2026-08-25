@@ -280,16 +280,22 @@ class RunAgent:
         base_snapshot = self.workspaces.checkpoint_snapshot(base_checkpoint_id)
         base_tree = await asyncio.to_thread(scan_tree, base_snapshot)
         staging.mkdir(parents=True, exist_ok=False)
-        shutil.copytree(base_snapshot, staging / "base", symlinks=True)
+        await asyncio.to_thread(
+            self.workspaces.materialize_checkpoint,
+            base_checkpoint_id,
+            staging / "base",
+        )
         manifests: dict[str, list[dict[str, Any]]] = {}
         for source in sources:
             snapshot = await self.latest_checkpoint(source.id)
-            source_snapshot = (
-                (self.run_root / snapshot.snapshot_relpath).resolve()
-                if snapshot is not None
-                else self._workspace(source)
-            )
-            shutil.copytree(source_snapshot, branches_dir / source.id, symlinks=True)
+            if snapshot is not None:
+                await asyncio.to_thread(
+                    self.workspaces.materialize_checkpoint,
+                    snapshot.id,
+                    branches_dir / source.id,
+                )
+            else:
+                shutil.copytree(self._workspace(source), branches_dir / source.id, symlinks=True)
             manifests[source.id] = [
                 change.as_dict()
                 for change in await asyncio.to_thread(

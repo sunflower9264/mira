@@ -4,13 +4,14 @@ import asyncio
 import json
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 from app.db import SessionLocal
 from app.models import App
 from app.runtime.base import AgentChunk, AgentExecutionResult, AgentRuntimeStatus
 from app.runtime.factory import set_runtime_override
 from app.services.admin import ADMIN_USER_ID
-from app.services.runtime_paths import run_workspace
+from app.services.runtime_paths import run_scoped_home_path, run_workspace, scoped_codex_home
 from app.services.uploads import resolve_upload
 from app.utils import dumps, now_utc
 from tests.auth_helpers import create_regular_user
@@ -154,6 +155,28 @@ def test_create_run_rejects_unknown_input_key(auth_client, configure_codex):
     )
     assert response.status_code == 400
     assert "不存在" in response.json()["detail"]
+
+
+def test_create_run_rejects_insufficient_runtime_storage(
+    auth_client,
+    configure_codex,
+    monkeypatch,
+):
+    configure_codex()
+    app_id = _build_app(auth_client, graph=_user_input_output_graph())
+    monkeypatch.setattr(
+        "app.services.runs.shutil.disk_usage",
+        lambda _: SimpleNamespace(free=1),
+    )
+
+    response = auth_client.post(
+        "/api/runs",
+        json={"app_id": app_id, "inputs": {"n_input": "x"}},
+    )
+
+    assert response.status_code == 507
+    assert "运行存储空间不足" in response.json()["detail"]
+    assert len(response.text) < 500
 
 
 def test_create_run_rejects_non_empty_graph_without_output(auth_client):
@@ -529,12 +552,15 @@ def test_delete_run_only_after_terminal(auth_client, configure_codex):
     final = _wait_for_terminal(auth_client, run["run_id"])
     assert final["status"] == "success"
     workspace = run_workspace(ADMIN_USER_ID, app_id, run["run_id"])
+    home = scoped_codex_home(workspace, session_scope=f"run:{run['run_id']}")
+    (home / "session.txt").write_text("runtime residue", encoding="utf-8")
     (workspace / "delete-me.txt").write_text("runtime residue", encoding="utf-8")
     response = auth_client.delete(f"/api/runs/{run['run_id']}")
     assert response.status_code == 204
     response = auth_client.get(f"/api/runs/{run['run_id']}")
     assert response.status_code == 404
     assert not workspace.exists()
+    assert not run_scoped_home_path(run["run_id"]).parent.exists()
 
 
 def test_delete_app_cleans_run_input_uploads(auth_client, configure_codex):

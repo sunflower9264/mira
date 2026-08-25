@@ -18,6 +18,7 @@ from app.services.graph_inputs import (
     validate_asset_upload_ownership,
 )
 from app.services.graph_validation import GraphValidationError
+from app.services.runtime_paths import remove_run_scoped_home, runtime_dir
 from app.services.uploads import copy_upload, delete_upload, is_upload_id, resolve_upload, seed_upload_from_file
 from app.utils import dumps, loads, new_id, now_utc
 
@@ -342,10 +343,12 @@ async def delete_app_tree(db: AsyncSession, app: App) -> None:
         await db.execute(delete(Step).where(Step.run_id.in_(run_ids)))
         await db.execute(delete(Run).where(Run.id.in_(run_ids)))
     await db.execute(delete(AppVersion).where(AppVersion.app_id == app.id))
-    workspace = __import__("app.services.runtime_paths", fromlist=["runtime_dir"]).runtime_dir() / "workspaces" / app.owner_id / app.id
+    workspace = runtime_dir() / "workspaces" / app.owner_id / app.id
     shutil.rmtree(workspace, ignore_errors=True)
     await db.delete(app)
     await db.commit()
+    for run_id in run_ids:
+        remove_run_scoped_home(run_id)
     for owner_id, upload_ids in upload_ids_by_owner.items():
         for upload_id in upload_ids:
             delete_upload(owner_id, upload_id)

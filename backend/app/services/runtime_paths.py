@@ -1,5 +1,7 @@
 import hashlib
+import os
 import shutil
+import uuid
 from pathlib import Path
 
 from app.config import get_settings
@@ -54,6 +56,8 @@ def scoped_codex_home(cwd: Path, *, session_scope: str | None = None) -> Path:
     scope = session_scope.strip() if isinstance(session_scope, str) and session_scope.strip() else str(cwd.resolve())
     path = _scoped_codex_home_path(scope)
     path.mkdir(parents=True, exist_ok=True)
+    if scope.startswith("run:"):
+        (path.parent / ".mira-scope").write_text(scope, encoding="utf-8")
     return path
 
 
@@ -63,7 +67,82 @@ def clone_run_scoped_homes(source_run_id: str, target_run_id: str) -> None:
     source = _scoped_codex_home_path(source_scope)
     if source.is_dir():
         target = _scoped_codex_home_path(target_scope)
-        shutil.copytree(source, target, symlinks=True, dirs_exist_ok=True)
+        if target.exists():
+            raise FileExistsError(f"目标 Run HOME 已存在：{target_run_id}")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        temporary = target.parent / f".{target.name}.tmp-{uuid.uuid4().hex}"
+        try:
+            shutil.copytree(
+                source,
+                temporary,
+                symlinks=True,
+                ignore=shutil.ignore_patterns(
+                    ".npm",
+                    ".cache",
+                    ".tmp",
+                    "tmp",
+                    "logs_*.sqlite*",
+                    "thread-writer-locks",
+                    "skills",
+                ),
+            )
+            os.replace(temporary, target)
+            (target.parent / ".mira-scope").write_text(target_scope, encoding="utf-8")
+        except Exception:
+            shutil.rmtree(temporary, ignore_errors=True)
+            raise
+
+
+def run_scoped_home_path(run_id: str) -> Path:
+    return _scoped_codex_home_path(f"run:{run_id}")
+
+
+def compact_run_scoped_home(run_id: str) -> None:
+    home = _scoped_codex_home_path(f"run:{run_id}")
+    if not home.is_dir():
+        return
+    for name in (".npm", ".cache", ".tmp", "tmp", "thread-writer-locks", "skills"):
+        shutil.rmtree(home / name, ignore_errors=True)
+    shutil.rmtree(home / ".agents" / "skills", ignore_errors=True)
+    for path in home.glob("logs_*.sqlite*"):
+        path.unlink(missing_ok=True)
+
+
+def remove_run_scoped_home(run_id: str) -> None:
+    home = _scoped_codex_home_path(f"run:{run_id}")
+    shutil.rmtree(home.parent, ignore_errors=True)
+
+
+def run_scoped_home_size(run_id: str) -> int:
+    home = _scoped_codex_home_path(f"run:{run_id}")
+    total = 0
+    if not home.is_dir():
+        return total
+    for root, _, files in os.walk(home):
+        for name in files:
+            try:
+                total += (Path(root) / name).stat().st_size
+            except OSError:
+                pass
+    return total
+
+
+def run_scoped_home_clone_size(run_id: str) -> int:
+    home = _scoped_codex_home_path(f"run:{run_id}")
+    excluded_dirs = {".npm", ".cache", ".tmp", "tmp", "thread-writer-locks", "skills"}
+    total = 0
+    if not home.is_dir():
+        return total
+    for root, dirs, files in os.walk(home):
+        dirs[:] = [name for name in dirs if name not in excluded_dirs]
+        for name in files:
+            if name.startswith("logs_") and ".sqlite" in name:
+                continue
+            try:
+                total += (Path(root) / name).stat().st_size
+            except OSError:
+                pass
+    return total
 
 
 def _scoped_codex_home_path(scope: str) -> Path:

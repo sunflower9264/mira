@@ -15,12 +15,12 @@
 
 1. 同一 branch 上的顺序节点复用 Codex thread 和可写 workspace。
 2. `user_input` 与 `asset` 不创建独立数据总线，而是在 Agent 首次使用前写入 branch workspace 的 `.mira/run-context/`；附件复制到 `inputs/`。
-3. 真正 fan-out 在父节点 post-checkpoint 上创建子 branch：workspace 优先 reflink、失败时 copy fallback；Codex App Server 使用 `thread/fork` 创建子 thread。
+3. 真正 fan-out 在父节点 post-checkpoint 上创建子 branch：checkpoint 是版本化 manifest 与不可变内容对象，分支从指定 manifest 物化为独立可写 workspace；Codex App Server 使用 `thread/fork` 创建子 thread。
 4. fan-in 不做“最后写入胜出”或后端主分支选择。协调 Agent必须读取共同父、所有 branch snapshot、branch context 和 diff manifest，完成合并并返回严格 receipt。后端验证覆盖路径、来源集合、删除状态、hash 以及证据目录未被篡改。
-5. 每个成功节点创建 immutable checkpoint。节点正式回复仍经过统一 Envelope 和 output contract；一次 repair 在原 thread/workspace 内完成，不回滚工作区。
-6. rerun-from 改为 checkpoint rerun：新 Run 克隆 cut 前 checkpoint、必要的 scoped HOME 与 thread lineage，冻结 cut 前 step；当前 App graph 只执行 cut 与 descendants。当前 Graph 新增的 cut 前节点标记 `checkpoint_reused`。来源 Run 永远只读。
+5. 每个成功节点创建 immutable checkpoint。同一 Run 内相同 SHA-256 文件内容只保存一次，节点 checkpoint 仅重复保存轻量 manifest，因此不依赖宿主文件系统 reflink。节点正式回复仍经过统一 Envelope 和 output contract；一次 repair 在原 thread/workspace 内完成，不回滚工作区。
+6. rerun-from 改为 checkpoint rerun：新 Run 克隆 cut 前 manifest/对象引用、必要的精简 scoped HOME 与 thread lineage，冻结 cut 前 step，并只物化 cut checkpoint 的执行 branch；当前 App graph 只执行 cut 与 descendants。当前 Graph 新增的 cut 前节点标记 `checkpoint_reused`。来源 Run 永远只读。
 7. Codex thread ID、branch ID 和 checkpoint ID 是后端内部状态，不出现在 Step/Trace 前端契约。
-8. 需要补充用户决策时，Codex turn 使用 `collaborationMode=plan`；外层 Docker 将 branch workspace 只读挂载，App Server 使用 `externalSandbox`，避免在受限容器中嵌套 Linux sandbox。App Server 的原生 `item/tool/requestUserInput` 由 runtime 归一化后接入现有 waiting/SSE/UI 回答链路，回答通过同一 JSON-RPC request 返回并在同一 turn 内继续；前端消费 `run.resumed` 清除已回答问题，使历史 SSE 重放最终与当前 Run 状态一致。规划若仍声明缺少用户决策却没有发起原生提问，只重试一次，随后按 contract 失败并禁止进入执行阶段。
+8. 需要补充用户决策时，Codex turn 使用 `collaborationMode=plan`；外层 Docker 将 branch workspace 只读挂载，App Server 使用 `externalSandbox`，避免在受限容器中嵌套 Linux sandbox。App Server 的原生 `item/tool/requestUserInput` 由 runtime 归一化后接入现有 waiting/SSE/UI 回答链路，回答通过同一 JSON-RPC request 返回并在同一 turn 内继续；前端消费 `run.resumed` 清除已回答问题，使历史 SSE 重放最终与当前 Run 状态一致。提问只收集当前节点能直接采用的信息，不承担返回上游、改变分支、重新执行节点或重试工具错误；这些控制流由运行结束后的 checkpoint rerun 创建新 Run。规划若仍声明缺少用户决策却没有发起原生提问，只重试一次，随后按 contract 失败并禁止进入执行阶段。
 
 ## 不变量
 
@@ -30,6 +30,8 @@
 - workspace 可承载运行内隐式信息，但 artifacts API 只读取成功 artifact contract Step 的正式 manifest，不扫描 workspace。
 - Run 只有唯一 output Step 成功、其它 Step 为 `success` / `skipped` / `checkpoint_reused` 且 artifact 复验通过时才成功。
 - 没有有效 pre-checkpoint 的历史 Run/cut 不支持新式 continue 或 rerun。
+- 旧目录 checkpoint 必须保持可读；转换为内容寻址格式时先复验数据库 `tree_hash`，新 manifest 再次复验通过后才能删除旧 tree。
+- scoped HOME 的 npm/cache/tmp/logs 和派生 Skills 不属于 thread lineage；终态可删除这些内容，但必须保留 session/state 数据供 rerun fork。
 - 用户提问只使用 App Server 原生 server request，不通过 prompt 约定工具或增加第二条传输通道。
 - planning 容器必须对 branch workspace 强制只读；不能通过放宽 Docker capability、开启 privileged 或修改宿主机 user namespace 来支持嵌套 sandbox。
 

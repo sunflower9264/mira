@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Run
-from app.services.runtime_paths import run_workspaces_root_path
+from app.services.runtime_paths import run_workspaces_root_path, runtime_dir
 
 logger = logging.getLogger(__name__)
 
@@ -35,4 +35,28 @@ async def cleanup_orphan_run_workspaces(db: AsyncSession) -> int:
                     removed += 1
                 except OSError:
                     logger.warning("failed to remove orphan run workspace: %s", run_dir, exc_info=True)
+    return removed
+
+
+async def cleanup_orphan_run_homes(db: AsyncSession) -> int:
+    root = runtime_dir() / "homes" / "_scoped"
+    if not root.is_dir():
+        return 0
+    live_run_ids = set((await db.execute(select(Run.id))).scalars().all())
+    removed = 0
+    for scope_dir in root.iterdir():
+        if not scope_dir.is_dir() or scope_dir.is_symlink():
+            continue
+        marker = scope_dir / ".mira-scope"
+        try:
+            scope = marker.read_text(encoding="utf-8").strip()
+        except OSError:
+            continue
+        if not scope.startswith("run:") or scope.removeprefix("run:") in live_run_ids:
+            continue
+        try:
+            shutil.rmtree(scope_dir)
+            removed += 1
+        except OSError:
+            logger.warning("failed to remove orphan run HOME: %s", scope_dir, exc_info=True)
     return removed

@@ -7,6 +7,7 @@ import json
 import time
 from typing import Any
 
+from app.services.node_handlers import _build_planning_prompt
 from tests.auth_helpers import create_regular_user
 
 
@@ -133,6 +134,14 @@ def _request_id_for(auth_client, run_id: str, node_id: str) -> str:
 
 
 # --- spec §7 矩阵 ------------------------------------------------------------
+
+
+def test_planning_prompt_does_not_offer_graph_navigation_as_user_choice() -> None:
+    prompt = _build_planning_prompt("检查上游截图门禁并生成材料。")
+
+    assert "当前节点可以在本次执行中直接采用" in prompt
+    assert "重新执行上游节点" in prompt
+    assert "checkpoint rerun" in prompt
 
 
 def test_single_decision_request_emit_step_waiting_and_resume_success(auth_client, configure_codex):

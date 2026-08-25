@@ -36,7 +36,7 @@ Mira 是参考 Google Opal 产品思路构建的可视化 AI App 平台，使用
 - Workflow 节点类型只有 `user_input`、`asset`、`generate`、`condition`、`output`。最多一个 `user_input` 和一个 `output`；可执行图必须有且只有一个可达的终点 `output`，`output` 不能出边。
 - `execution_edges` 只表达执行顺序，不是字段绑定；condition 出边用 `branch_key`。输入/素材不能作为连线终点，所有节点和 condition 分支都必须能到达 output。
 - App 不保存 runtime 选择，执行固定使用 Codex。App 通过 `graph.tools.disabled_tool_ids` 排除 Tools，Run 创建时把允许项冻结到 `graph._runtime_tools.allowed_tool_ids`。
-- 一次 Application Run 对应一个逻辑 RunAgent。线性节点复用同一 Codex thread 和 branch workspace；`user_input` / `asset` 写入 `.mira/run-context/`，附件复制到 `inputs/`。只有真实 fan-out 才通过 checkpoint、`thread/fork` 和 CoW workspace 分支；fan-in 由协调 Agent 合并，后端验证 receipt 后才清理源分支。不得恢复 `/mnt/results`、每节点 workspace/thread 或手工 sidecar 通道。
+- 一次 Application Run 对应一个逻辑 RunAgent。线性节点复用同一 Codex thread 和 branch workspace；`user_input` / `asset` 写入 `.mira/run-context/`，附件复制到 `inputs/`。只有真实 fan-out 才通过 checkpoint、`thread/fork` 和独立物化的可写 workspace 分支；checkpoint 使用 manifest 与不可变内容对象，同一 Run 内相同文件内容只保存一次，不依赖宿主 reflink。fan-in 由协调 Agent 合并，后端验证 receipt 后才清理源分支。不得恢复 `/mnt/results`、每节点 workspace/thread 或手工 sidecar 通道。
 - Run 创建时冻结 `graph_json`；执行、waiting resume、恢复、历史回放和序列化使用 Run 快照。checkpoint rerun 创建新 Run，冻结 cut 前 workspace、thread lineage 和 step；旧 Run 只读。
 - Run 按直接前置依赖调度，ready 节点可并发。Run 只有唯一 output Step 为 `success`、其他 Step 为 `success` / `skipped` / `checkpoint_reused`，并且所有正式 Artifact 复验通过时才能成功。
 - `failure_kind` 只使用 `runtime`、`contract`、`routing`、`integrity`、`internal`。业务验收不通过应作为正常业务输出，不伪装成执行异常。

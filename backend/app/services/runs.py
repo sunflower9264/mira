@@ -8,7 +8,9 @@
 
 from __future__ import annotations
 
+import errno
 import logging
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -40,8 +42,14 @@ from app.services.graph_inputs import prepare_executable_graph
 from app.services.decision_prompts import validate_decision_answers
 from app.services.execution_plan import compile_execution_plan
 from app.services.run_serializer import run_to_out, run_to_summary_out
-from app.services.runtime_paths import clone_run_scoped_homes, run_workspace, run_workspace_path
-from app.services.workspace_tree import WorkspaceTree, remove_tree
+from app.services.runtime_paths import (
+    clone_run_scoped_homes,
+    remove_run_scoped_home,
+    run_scoped_home_clone_size,
+    run_workspace,
+    run_workspace_path,
+)
+from app.services.workspace_tree import WorkspaceTree, remove_tree, scan_tree
 from app.services.workflow_data import copy_reused_output_envelope
 from app.services.tools import stamp_run_tools_snapshot
 from app.services.uploads import resolve_upload, delete_upload
@@ -169,6 +177,7 @@ async def create_run_record(
     service 层耦合 asyncio runtime。
     """
 
+    _require_runtime_capacity()
     app = await get_visible_app_or_404(db, app_id, user_id)
     if not can_run_app(app):
         raise HTTPException(status_code=400, detail="应用已下架，不能继续运行")
@@ -313,6 +322,12 @@ async def create_rerun_from_record(
     source_cut_checkpoint = await db.get(RunWorkspaceCheckpoint, source_cut_step.pre_checkpoint_id)
     if source_cut_checkpoint is None or source_cut_checkpoint.run_id != source_run.id:
         raise HTTPException(status_code=409, detail="来源运行的 workspace checkpoint 已失效")
+    source_workspace_path = run_workspace_path(source_run.owner_id, source_run.app_id, source_run.id)
+    source_snapshot = (source_workspace_path / source_cut_checkpoint.snapshot_relpath).resolve()
+    required_bytes = sum(
+        entry.size for entry in scan_tree(source_snapshot).values() if entry.kind == "file"
+    ) + run_scoped_home_clone_size(source_run.id)
+    _require_runtime_capacity(required_bytes)
 
     graph_snapshot = _graph_with_condition_branch_override(graph, branch_test) if branch_test else graph
     graph_snapshot = await stamp_run_tools_snapshot(db, graph_snapshot)
@@ -402,9 +417,15 @@ async def create_rerun_from_record(
             remove_tree(target_workspace)
         except OSError:
             logger.warning("failed to clean rejected rerun workspace: %s", target_workspace, exc_info=True)
+        remove_run_scoped_home(run.id)
+        if _is_no_space_error(exc):
+            raise HTTPException(status_code=507, detail=_storage_capacity_detail()) from None
+        reason = str(exc)
+        if len(reason) > 500:
+            reason = f"{reason[:500]}…"
         raise HTTPException(
             status_code=409,
-            detail=f"历史节点结果不可复用，请从更早节点重新执行：{exc}",
+            detail=f"历史节点结果不可复用，请从更早节点重新执行：{reason}",
         ) from None
 
     await db.commit()
@@ -531,8 +552,55 @@ async def delete_run_record(db: AsyncSession, run_id: str, user_id: str) -> None
         remove_tree(workspace)
     except OSError:
         logger.warning("failed to delete run workspace: %s", workspace, exc_info=True)
+    remove_run_scoped_home(run.id)
     for upload_id in upload_ids:
         delete_upload(user_id, upload_id)
+
+
+def _require_runtime_capacity(required_bytes: int = 0) -> None:
+    settings = get_settings()
+    settings.runtime_dir.mkdir(parents=True, exist_ok=True)
+    free = shutil.disk_usage(settings.runtime_dir).free
+    minimum = settings.disk_min_free_bytes + max(0, required_bytes)
+    if free < minimum:
+        raise HTTPException(status_code=507, detail=_storage_capacity_detail(required_bytes, free))
+
+
+def _storage_capacity_detail(required_bytes: int = 0, free_bytes: int | None = None) -> str:
+    settings = get_settings()
+    free = shutil.disk_usage(settings.runtime_dir).free if free_bytes is None else free_bytes
+    required = settings.disk_min_free_bytes + max(0, required_bytes)
+    return (
+        "运行存储空间不足："
+        f"至少需要 {_format_bytes(required)}，当前可用 {_format_bytes(free)}。"
+        "请删除不再需要的历史运行或联系管理员扩容。"
+    )
+
+
+def _format_bytes(value: int) -> str:
+    amount = float(max(0, value))
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if amount < 1024 or unit == "TB":
+            return f"{amount:.1f} {unit}"
+        amount /= 1024
+    return f"{amount:.1f} TB"
+
+
+def _is_no_space_error(exc: BaseException) -> bool:
+    pending: list[Any] = [exc]
+    seen = 0
+    while pending and seen < 10_000:
+        current = pending.pop()
+        seen += 1
+        if isinstance(current, OSError) and current.errno == errno.ENOSPC:
+            return True
+        if isinstance(current, BaseException):
+            pending.extend(current.args)
+        elif isinstance(current, (list, tuple)):
+            pending.extend(current)
+        elif isinstance(current, str) and "No space left on device" in current:
+            return True
+    return False
 
 
 # --- resume （decision_request 续接）-----------------------------------------------

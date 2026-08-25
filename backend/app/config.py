@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     max_input_size_bytes: int = 1_000_000
     max_resume_text_bytes: int = 8_192
     disk_warn_bytes: int = 5_000_000_000
+    disk_min_free_bytes: int = 2_000_000_000
     runtime_sandbox_image: str = "mira-agent-runtime:latest"
     runtime_docker_network: str = ""
     runtime_container_memory: str = "2g"

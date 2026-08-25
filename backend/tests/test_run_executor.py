@@ -8,6 +8,7 @@ import threading
 import time
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 from sqlalchemy import select
@@ -2052,6 +2053,44 @@ def test_rerun_from_reuses_ancestor_outputs_and_uses_current_graph(auth_client, 
     source_after = auth_client.get(f"/api/runs/{source['run_id']}").json()
     assert source_after["status"] == "success"
     assert {step["node_id"]: step for step in source_after["steps"]}["n_gen_a"]["output"] == "OLD_A"
+
+
+def test_rerun_from_rejects_insufficient_storage_before_creating_run(
+    auth_client,
+    configure_codex,
+    monkeypatch,
+):
+    configure_codex()
+    graph = {
+        "nodes": [
+            USER_INPUT_NODE,
+            _generate_node("n_gen", prompt="生成 [[respond:OLD]]"),
+            _output_node("n_out", source="n_gen", prompt="输出 [[respond:<section>OLD</section>]]"),
+        ],
+        "execution_edges": [
+            {"id": "e1", "source": "n_input", "target": "n_gen"},
+            {"id": "e2", "source": "n_gen", "target": "n_out"},
+        ],
+    }
+    app_id = _build_app(auth_client, graph=graph)
+    source = auth_client.post(
+        "/api/runs",
+        json={"app_id": app_id, "inputs": {"n_input": "old"}},
+    ).json()
+    assert _wait_for_terminal(auth_client, source["run_id"])["status"] == "success"
+    monkeypatch.setattr(
+        "app.services.runs.shutil.disk_usage",
+        lambda _: SimpleNamespace(free=1),
+    )
+
+    response = auth_client.post(
+        f"/api/runs/{source['run_id']}/rerun-from",
+        json={"app_id": app_id, "node_id": "n_gen"},
+    )
+
+    assert response.status_code == 507
+    assert "运行存储空间不足" in response.json()["detail"]
+    assert len(response.text) < 500
 
 
 def test_rerun_from_forks_frozen_checkpoint_session_without_exposing_it(auth_client, configure_codex):

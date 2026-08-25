@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import hashlib
 import shutil
 import sys
 from collections.abc import Mapping, Sequence
@@ -15,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.db import SessionLocal
 from app.models import App, AppVersion, Run, RunEvent, Step, StepLog
-from app.services.runtime_paths import run_workspace_path, runtime_dir
+from app.services.runtime_paths import run_scoped_home_path, run_workspace_path
 from app.services.uploads import delete_upload
 from app.utils import loads
 
@@ -60,7 +59,7 @@ async def main() -> None:
             run_workspace_path(run["owner_id"], run["app_id"], run["id"])
             for run in runs
         ]
-        scoped_homes = _scoped_home_paths(workspaces)
+        scoped_homes = {run_scoped_home_path(run["id"]).parent for run in runs}
 
         print("Workflow run reset plan:")
         print(f"  runs: {len(runs)}")
@@ -160,21 +159,6 @@ def _upload_ids(value: Any) -> set[str]:
     for nested in value.values():
         found.update(_upload_ids(nested))
     return found
-
-
-def _scoped_home_paths(workspaces: list[Path]) -> set[Path]:
-    scoped_root = runtime_dir() / "homes" / "_scoped"
-    paths: set[Path] = set()
-    for workspace in workspaces:
-        candidates = [workspace]
-        nodes = workspace / "nodes"
-        if nodes.is_dir():
-            candidates.extend(path for path in nodes.glob("*/attempt-*/work") if path.is_dir())
-        for candidate in candidates:
-            digest = hashlib.sha256(str(candidate.resolve()).encode("utf-8")).hexdigest()[:20]
-            paths.add(scoped_root / digest)
-    return paths
-
 
 if __name__ == "__main__":
     asyncio.run(main())

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-import os
+import shutil
 import time
 from contextlib import asynccontextmanager
 from uuid import uuid4
@@ -22,7 +22,7 @@ from app.services.prompt_assistant import mark_active_prompt_assistant_sessions_
 from app.services.prompts import seed_prompt_templates
 from app.services.runs import mark_active_runs_interrupted
 from app.services.skills import reconcile_skill_dependencies
-from app.services.workspace_gc import cleanup_orphan_run_workspaces
+from app.services.workspace_gc import cleanup_orphan_run_homes, cleanup_orphan_run_workspaces
 
 
 @asynccontextmanager
@@ -40,6 +40,7 @@ async def lifespan(app: FastAPI):
         await seed_gallery(db)
         await mark_active_runs_interrupted(db)
         await cleanup_orphan_run_workspaces(db)
+        await cleanup_orphan_run_homes(db)
         await mark_active_nlcompile_sessions_interrupted(db)
         await mark_active_prompt_assistant_sessions_interrupted(db)
     disk_task = asyncio.create_task(disk_monitor_loop())
@@ -96,20 +97,11 @@ app.include_router(api_router, prefix="/api")
 async def disk_monitor_loop() -> None:
     settings = get_settings()
     while True:
-        total = _dir_size(settings.data_dir) + _dir_size(settings.runtime_dir)
-        if total > settings.disk_warn_bytes:
-            request_logger.warning("data/runtime size exceeds threshold: %s bytes", total)
+        free = shutil.disk_usage(settings.runtime_dir).free
+        if free < settings.disk_min_free_bytes:
+            request_logger.warning(
+                "runtime filesystem free space below threshold: free=%s threshold=%s",
+                free,
+                settings.disk_min_free_bytes,
+            )
         await asyncio.sleep(3600)
-
-
-def _dir_size(path) -> int:
-    if not path.exists():
-        return 0
-    total = 0
-    for root, _, files in os.walk(path):
-        for name in files:
-            try:
-                total += (path.__class__(root) / name).stat().st_size
-            except OSError:
-                pass
-    return total

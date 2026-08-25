@@ -8,7 +8,7 @@
 - Graph：`graph_validation.py`、`graph_inputs.py`、`workflow_lint.py`、`execution_plan.py`；hard validation 决定能否执行，lint 只提供可读 error/warning/info，拓扑与祖先/后代关系以 `ExecutionPlan` 为准。
 - Run 入口：`runs.py` 创建/查询/取消/继续/rerun，`run_orchestrator.py` 依赖驱动调度，`node_handlers.py` 执行节点，`run_agent.py` 管理 thread/workspace/checkpoint/分支。
 - Run 数据：`workflow_data.py` 定义正式 Envelope，`output_contracts.py` 校验与提交输出，`run_artifacts.py`、`run_trace.py`、`run_serializer.py` 负责查询、完整性、Trace 和脱敏。
-- 事件与路径：`run_events.py` 持久化事件，`run_hub.py` 只做当前进程广播/取消/等待；`runtime_paths.py` 是 data/runtime 路径事实来源，`workspace_tree.py` 管理 checkpoint 与 CoW 分支。
+- 事件与路径：`run_events.py` 持久化事件，`run_hub.py` 只做当前进程广播/取消/等待；`runtime_paths.py` 是 data/runtime 路径事实来源，`workspace_tree.py` 通过 manifest 与不可变内容对象管理 checkpoint，并物化隔离的可写分支。
 - Tools 与 Skills：`tools.py` 管理库存、App 排除、Run 快照与 planning 过滤；`skills.py` 负责上传/状态，`skills_install.py` 校验解压和 runtime mount，`skill_dependencies.py` 构建内容寻址 Python 依赖层。
 - Agent 辅助流程：`nlcompile.py`、`prompt_assistant.py`、`graph_layout.py`、`prompts.py`；Codex config/runtime 配置分别在 `codex_config.py`、`runtime_config.py`。
 
@@ -26,9 +26,11 @@
 - `run_orchestrator.py` 只等待直接前置，ready 节点可并发；condition 把未选分支置为 skipped。失败保留 error 与 `runtime|contract|routing|integrity|internal`，取消不得被晚到的 success 覆盖。
 - `run_agent.py` 统一拥有 branch、Codex thread lineage、workspace 与 checkpoint。线性节点复用 branch；真实 fan-out 从同一 checkpoint 创建 child workspace 并 `thread/fork`；fan-in 由协调 Agent 读取完整 base/branch/context 证据，receipt 的路径、来源和结果 hash 全部校验后才消费来源 branch。
 - `user_input` / `asset` 写 `.mira/run-context/` 并将文件复制到 `inputs/`。workspace 中未声明文件可供同 Run 后续推理，但不能进入 Files/Trace/下载接口；不要新增 `/mnt/results`、每节点 workspace 或 handoff sidecar。
-- 除 `output` 外的 LLM 节点先运行 read-only planning turn，自主决定是否通过 Codex 原生 `requestUserInput` 等待用户；回答落库并回填同一 JSON-RPC request。规划必须明确返回 `ready` 或 `needs_user_input`；后者若未真正发起原生提问，只允许在同一 thread 重试一次，仍未提问则按 contract 失败，不得进入正式执行。正式执行使用同 branch 的可写 thread，output 不再重复 planning。
+- 除 `output` 外的 LLM 节点先运行 read-only planning turn，自主决定是否通过 Codex 原生 `requestUserInput` 等待用户；回答落库并回填同一 JSON-RPC request。提问只收集当前节点能在本次执行中直接采用的信息，不得把返回上游、重新执行节点、改变分支或重试工具错误伪装成用户选项；这些控制流只能走运行结束后的 checkpoint rerun。规划必须明确返回 `ready` 或 `needs_user_input`；后者若未真正发起原生提问，只允许在同一 thread 重试一次，仍未提问则按 contract 失败，不得进入正式执行。正式执行使用同 branch 的可写 thread，output 不再重复 planning。
 - startup 将未完成 Run 标记为 `interrupted` 并清理数据库无对应记录的普通 Run workspace；继续运行跳过已成功/已跳过节点，不承诺中断节点副作用去重。
 - rerun-from 创建新 Run，使用当前 App graph，但要求来源 cut Step 有有效 pre-checkpoint；cut 前节点按当前拓扑冻结为 checkpoint reuse，复制所需 branch/checkpoint/scoped HOME 与已声明 artifact，cut 及后代重新执行。旧 Run 只读，condition 分支测试仅写入新 Run snapshot。
+- checkpoint 不保存逐节点完整目录副本；同一 Run 内相同 SHA-256 内容只保存一次。rerun 克隆 manifest/对象引用并只物化 cut branch。旧目录 checkpoint 保持可读，迁移必须先复验 `tree_hash`，不得在校验前删除旧 tree。
+- Run scoped HOME 在终态删除 npm/cache/tmp/logs 与派生 Skills，但保留 thread/session 数据；rerun、Run/App 删除和启动 GC 必须同步清理明确属于 Run 的 HOME。运行创建及 rerun 必须保留配置的最小磁盘余量，容量不足返回简短 507，不泄漏批量文件异常。
 
 ## 输出与 Artifact
 
