@@ -38,6 +38,7 @@ import { RunArtifactsPanel, useRunArtifacts } from '../../components/preview/Run
 import { MobileSheet } from '../../components/mobile/MobileSheet';
 import { useAppCoverUrl } from '../../hooks/useAppCoverUrl';
 import { showCaughtError } from '../../stores/useErrorDialogStore';
+import { useWikiAwareRunStart } from '../../hooks/useWikiAwareRunStart';
 
 type View = 'result' | 'process';
 type LaunchInputs = Record<string, string | { value: string; attachments?: { id: string; name?: string }[] }>;
@@ -85,7 +86,6 @@ export function MobileRun() {
 
   const settings = useSettingsStore((s) => s.settings);
   const loadSettings = useSettingsStore((s) => s.load);
-  const startRun = useRunStore((s) => s.start);
   const resumeRun = useRunStore((s) => s.resume);
   const restoreActiveRun = useRunStore((s) => s.restoreActiveRun);
   const replayRun = useRunStore((s) => s.replay);
@@ -101,6 +101,7 @@ export function MobileRun() {
   const mode = useRunStore((s) => s.mode);
   const replay = useRunStore((s) => s.replayRun);
   const waitingInput = useRunStore((s) => s.waitingInput);
+  const { start: startWithWiki, dialog: wikiAccessDialog } = useWikiAwareRunStart(app, () => setView('process'));
 
   useEffect(() => {
     if (!settings) void loadSettings().catch(() => undefined);
@@ -179,8 +180,7 @@ export function MobileRun() {
         const uploaded = attachments.length ? await uploadAttachments(attachments, setAttachments) : [];
         inputs[activeInput.id] = uploaded.length ? { value: inputValue, attachments: uploaded } : inputValue;
       }
-      await startRun(app, inputs);
-      setView('process');
+      await startWithWiki(inputs);
     } catch (err) {
       showCaughtError(err, '启动运行失败', '启动失败');
     } finally {
@@ -195,8 +195,7 @@ export function MobileRun() {
     }
     const previous = await api.getRun(runId);
     resetRun();
-    await startRun(app, previous.inputs);
-    setView('process');
+    await startWithWiki(previous.inputs);
   };
 
   if (loading) {
@@ -378,6 +377,7 @@ export function MobileRun() {
           onAppChange={setApp}
         />
       ) : null}
+      {wikiAccessDialog}
     </div>
   );
 }

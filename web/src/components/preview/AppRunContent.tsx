@@ -9,6 +9,7 @@ import { HtmlOutputFrame } from './HtmlOutputFrame';
 import { RunArtifactsPanel, useRunArtifacts } from './RunArtifactsPanel';
 import { RunProgress } from './RunProgress';
 import { WaitingInputPanel } from './WaitingInputPanel';
+import { useWikiAwareRunStart } from '../../hooks/useWikiAwareRunStart';
 
 type RunContentVariant = 'preview' | 'app';
 type FailureErrorPlacement = 'top' | 'bottom' | 'hidden';
@@ -32,7 +33,6 @@ export function AppRunContent({
   const status = useRunStore((s) => s.status);
   const steps = useRunStore((s) => s.steps);
   const error = useRunStore((s) => s.error);
-  const startRun = useRunStore((s) => s.start);
   const mode = useRunStore((s) => s.mode);
   const replayRun = useRunStore((s) => s.replayRun);
   const runId = useRunStore((s) => s.runId);
@@ -40,6 +40,7 @@ export function AppRunContent({
   const resetRun = useRunStore((s) => s.reset);
   const waitingInput = useRunStore((s) => s.waitingInput);
   const continueRun = useRunStore((s) => s.continueRun);
+  const { start: startWithWiki, dialog: wikiAccessDialog } = useWikiAwareRunStart(app);
 
   const displayGraph = runGraph ?? app.graph;
   const outputs = useMemo(() => displayGraph.nodes.filter((n) => n.type === 'output'), [displayGraph.nodes]);
@@ -62,7 +63,7 @@ export function AppRunContent({
     // 启动失败由 store 的 status='failed' + error 派生至 phase=done 的运行失败红框。
     if (!app.can_run) throw new Error('应用已下架，不能继续运行');
     await flushSave();
-    await startRun(app, inputs);
+    await startWithWiki(inputs);
   };
 
   const restartFromCurrentRun = async () => {
@@ -136,6 +137,7 @@ export function AppRunContent({
           density={isAppView ? 'spacious' : 'compact'}
         />
       )}
+      {wikiAccessDialog}
 
       {(phase === 'running' || phase === 'done') && (
         <div className={isAppView ? `flex flex-col gap-5 px-6 py-10 ${isWaiting ? 'min-h-0 flex-1' : 'min-h-full'}` : 'flex min-h-0 flex-1 flex-col gap-5 p-5'}>

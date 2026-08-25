@@ -57,6 +57,7 @@ class RunCreateIn(BaseModel):
 
     app_id: str
     inputs: dict[str, Any] = Field(default_factory=dict)
+    wiki_mode: Literal["auto", "without"] = "auto"
 
     @model_validator(mode="after")
     def _validate(self) -> "RunCreateIn":

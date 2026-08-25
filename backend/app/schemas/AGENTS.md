@@ -7,6 +7,7 @@
 - `requests.py`：Auth、App、Version、NL compile、Graph Layout、Workflow Lint 和 Prompt Assistant 请求体。
 - `runs.py`：Run/Step 状态、输入附件、创建/恢复/rerun 请求、Trace、Artifacts、waiting 和运行摘要响应。
 - `decision.py`：NL compile、Prompt Assistant 和 Application Run 共用的决策 context/group/option/answer。
+- `wiki.py`：Wiki 管理、operation/revision/lint 与 App 访问授权契约。
 - `types.py`：App/Version、Codex config、Settings/Skills/MCP、Upload、NL compile、Lint 和 Prompt Assistant 响应。
 - `__init__.py`：稳定的集中导出面；router/service 优先从此处导入公共 schema。
 

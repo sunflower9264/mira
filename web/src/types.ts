@@ -59,6 +59,78 @@ export interface Graph {
   viewport?: { x: number; y: number; zoom: number };
 }
 
+export type WikiSourceStatus = 'pending' | 'ready' | 'unsupported' | 'failed' | 'pending_delete';
+export type WikiOperationStatus = 'pending' | 'running' | 'success' | 'failed' | 'cancelled';
+
+export interface WikiInfo {
+  id: string;
+  purpose: string;
+  schema: string;
+  current_revision_id: string | null;
+  file_count: number;
+  source_count: number;
+  total_size: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WikiSource {
+  id: string;
+  path: string;
+  name: string;
+  mime: string;
+  size: number;
+  sha256: string;
+  status: WikiSourceStatus;
+  error?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WikiFile {
+  path: string;
+  size: number;
+  sha256: string;
+  mime: string;
+  download_url: string;
+}
+
+export interface WikiOperation {
+  id: string;
+  source_id?: string | null;
+  kind: string;
+  status: WikiOperationStatus;
+  instruction?: string | null;
+  error?: string | null;
+  created_at: string;
+  started_at?: string | null;
+  finished_at?: string | null;
+}
+
+export interface WikiRevision {
+  id: string;
+  parent_revision_id?: string | null;
+  message: string;
+  tree_hash: string;
+  file_count: number;
+  created_at: string;
+  current: boolean;
+}
+
+export interface WikiLintResult {
+  ok: boolean;
+  issues: { severity: 'error' | 'warning' | 'info'; path?: string | null; detail: string }[];
+}
+
+export interface WikiAccess {
+  app_id: string;
+  graph_sha256: string;
+  has_wiki: boolean;
+  owner_app: boolean;
+  requires_consent: boolean;
+  granted: boolean;
+}
+
 export interface WorkflowLintIssue {
   severity: 'error' | 'warning' | 'info';
   code: string;

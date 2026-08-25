@@ -349,6 +349,7 @@ async def delete_app_tree(db: AsyncSession, app: App) -> None:
     await db.commit()
     for run_id in run_ids:
         remove_run_scoped_home(run_id)
+        shutil.rmtree(runtime_dir() / "wiki-snapshots" / "runs" / run_id, ignore_errors=True)
     for owner_id, upload_ids in upload_ids_by_owner.items():
         for upload_id in upload_ids:
             delete_upload(owner_id, upload_id)

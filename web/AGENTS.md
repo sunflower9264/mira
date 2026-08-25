@@ -56,6 +56,7 @@
 - HTML 输出只通过 `HtmlOutputFrame` iframe 隔离渲染；滚动应由外层 Preview/App View/Mobile 容器承载。
 - Skill 的 `dependency_status` / `dependency_error` 来自后端 Settings 契约；`pending` 或 `failed` 时 UI 只能继续禁用、预览或删除，不能发起启用或设为规划可用。
 - 视觉改动保持现有 Tailwind、黑白灰和少量强调色体系；图标优先使用现有组件或 `lucide-react`。
+- 桌面 `/wiki` 管理当前用户的长期 Wiki；Mobile 只遵守授权与自动使用规则，不提供 Wiki 管理。第三方 App 的 Wiki 授权必须按后端返回的 graph digest 确认，也必须保留“不使用 Wiki 运行”。
 
 ## Commands
 

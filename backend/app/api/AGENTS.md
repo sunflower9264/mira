@@ -14,6 +14,7 @@
 - `nlcompile.py`：持久化 plan/refine/resume/apply/cancel 两阶段流程。
 - `prompt_assistant.py`：节点提示词生成、waiting resume/cancel 和 active 查询。
 - `runs.py`：创建/读取/重命名/取消/继续/恢复/删除、checkpoint rerun、SSE、Trace 和 Artifacts。
+- `wiki.py`：当前用户 Wiki 管理、文件预览/下载、operation、revision、lint 与 App Wiki 授权。
 
 ## 请求链路与权限
 

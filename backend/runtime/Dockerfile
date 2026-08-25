@@ -28,6 +28,8 @@ RUN npm install -g @openai/codex@${CODEX_VERSION} \
     && test "$(playwright-cli --version)" = "${PLAYWRIGHT_CLI_VERSION}" \
     && test -x /usr/bin/chromium
 
+RUN pip install --no-cache-dir 'markitdown[pdf,docx,pptx,xls,xlsx,outlook]==0.1.7'
+
 LABEL mira.runtime.definition-sha256="${RUNTIME_DEFINITION_SHA256}" \
     mira.runtime.codex-version="${CODEX_VERSION}" \
     mira.runtime.playwright-cli-version="${PLAYWRIGHT_CLI_VERSION}"
@@ -38,8 +40,9 @@ WORKDIR /workspace
 
 COPY runtime/scripts/capture_screenshots.py /opt/mira/capture_screenshots.py
 COPY runtime/scripts/mira-browser /opt/mira/mira-browser
+COPY runtime/scripts/convert_to_markdown.py /opt/mira/convert_to_markdown.py
 COPY runtime/playwright-cli.config.json /opt/mira/playwright-cli.config.json
-RUN chmod 0755 /opt/mira/capture_screenshots.py /opt/mira/mira-browser \
+RUN chmod 0755 /opt/mira/capture_screenshots.py /opt/mira/mira-browser /opt/mira/convert_to_markdown.py \
     && ln -s /opt/mira/mira-browser /usr/local/bin/mira-browser \
     && chown -R mira:mira /opt/mira
 
@@ -48,4 +51,6 @@ USER mira
 ENV HOME=/home/mira \
     USERPROFILE=/home/mira \
     CODEX_HOME=/home/mira \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
     PATH=/home/mira/.local/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin

@@ -53,6 +53,11 @@ from app.services.workspace_tree import WorkspaceTree, remove_tree, scan_tree
 from app.services.workflow_data import copy_reused_output_envelope
 from app.services.tools import stamp_run_tools_snapshot
 from app.services.uploads import resolve_upload, delete_upload
+from app.services.wiki import (
+    clone_run_wiki_snapshot,
+    freeze_wiki_for_run,
+    remove_run_wiki_snapshot,
+)
 from app.utils import display_now, dumps, loads, new_id, now_utc
 
 logger = logging.getLogger(__name__)
@@ -170,6 +175,7 @@ async def create_run_record(
     user_id: str,
     app_id: str,
     raw_inputs: dict[str, Any] | None,
+    wiki_mode: str = "auto",
 ) -> tuple[str, dict[str, Any]]:
     """完成 POST /api/runs 的所有校验和 DB 落地，返回 (run_id, graph_snapshot)。
 
@@ -217,23 +223,30 @@ async def create_run_record(
         error=None,
     )
     db.add(run)
-    for index, node in enumerate(ordered):
-        node_id = node.get("id")
-        if not isinstance(node_id, str):
-            continue
-        db.add(
-            Step(
-                id=new_id("step"),
-                run_id=run.id,
-                node_id=node_id,
-                ordering=index,
-                status="pending",
-                attempt=0,
-                input_json="null",
-                output_json=None,
+    try:
+        await db.flush()
+        await freeze_wiki_for_run(db, user_id=user_id, app=app, run_id=run.id, wiki_mode=wiki_mode)
+        for index, node in enumerate(ordered):
+            node_id = node.get("id")
+            if not isinstance(node_id, str):
+                continue
+            db.add(
+                Step(
+                    id=new_id("step"),
+                    run_id=run.id,
+                    node_id=node_id,
+                    ordering=index,
+                    status="pending",
+                    attempt=0,
+                    input_json="null",
+                    output_json=None,
+                )
             )
-        )
-    await db.commit()
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        remove_run_wiki_snapshot(run.id)
+        raise
     await db.refresh(run)
     return run.id, graph_for_viewer(app, user_id, graph_snapshot)
 
@@ -382,6 +395,7 @@ async def create_rerun_from_record(
         branch_id_map, checkpoint_id_map, cut_execution_branch_id = checkpoint_maps
         new_steps_by_node[node_id].branch_id = cut_execution_branch_id
         clone_run_scoped_homes(source_run.id, run.id)
+        await clone_run_wiki_snapshot(db, source_run.id, run.id)
         for frozen_node_id in frozen_node_ids:
             source_step = source_steps_by_node.get(frozen_node_id)
             target_step = new_steps_by_node[frozen_node_id]
@@ -418,6 +432,7 @@ async def create_rerun_from_record(
         except OSError:
             logger.warning("failed to clean rejected rerun workspace: %s", target_workspace, exc_info=True)
         remove_run_scoped_home(run.id)
+        remove_run_wiki_snapshot(run.id)
         if _is_no_space_error(exc):
             raise HTTPException(status_code=507, detail=_storage_capacity_detail()) from None
         reason = str(exc)
@@ -553,6 +568,7 @@ async def delete_run_record(db: AsyncSession, run_id: str, user_id: str) -> None
     except OSError:
         logger.warning("failed to delete run workspace: %s", workspace, exc_info=True)
     remove_run_scoped_home(run.id)
+    remove_run_wiki_snapshot(run.id)
     for upload_id in upload_ids:
         delete_upload(user_id, upload_id)
 

@@ -4,7 +4,7 @@
 
 ## Role
 
-`pages/` 存放路由级页面：登录、首页、编辑器、应用运行视图和手机端执行入口。
+`pages/` 存放路由级页面：登录、首页、Wiki 管理、编辑器、应用运行视图和手机端执行入口。
 
 ## Rules
 
@@ -15,6 +15,7 @@
 - App View 的 `/market/apps/:id` 或 `can_edit=false` 必须保持只读，不显示编辑、发布、版本管理等 owner-only 入口。
 - Editor 页面快捷键必须跳过 `input`、`textarea`、`contentEditable`，让文本框使用浏览器原生 undo/redo。
 - Mobile 页面只承载执行入口：登录、应用列表、最近运行、市场、运行、历史、结果和 owner 运行设置；不要加节点编辑、Prompt 编辑、管理员设置或版本管理。
+- Wiki 管理只在桌面 `/wiki` 提供；Mobile Run 仍必须执行第三方 App Wiki 授权。
 - Mobile Run 不使用 Editor store，避免把 React Flow、自动保存和 selection 状态带入手机端。
 - App View 与 Mobile Run 的 HTML 结果都通过共享 `HtmlOutputFrame` 渲染；内嵌 artifact 下载/预览只能绑定当前 Run artifacts API 返回的受验证产物。
 

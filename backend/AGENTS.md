@@ -22,6 +22,7 @@
 - `backend/data/`、`backend/logs/`、`backend/runtime/homes/`、`backend/runtime/workspaces/` 是本地运行产物，不作为源码维护。路径统一经 `app/services/runtime_paths.py` 计算。
 - Codex config/auth 正文加密存库；shared/scoped fake HOME 是派生物，可被重写。不要读取宿主机 Codex 登录态，也不要恢复宿主机直跑 Codex。
 - Agent 容器启用 Docker init，只挂载当前 branch workspace、scoped HOME、必要输入和 Skill 依赖；不挂载宿主 HOME、仓库根、Docker socket、`.env` 或其他用户 workspace。Office artifact 深检在后端宿主机的独立受限进程中执行，不打入 Agent 镜像。
+- Run 可额外把冻结 Wiki snapshot 只读挂载到 `/mnt/wiki`。Wiki 不复制进 branch workspace/checkpoint；NL compile 与 Prompt Assistant 不挂载 Wiki。
 
 ## Runtime、Skill 与浏览器
 

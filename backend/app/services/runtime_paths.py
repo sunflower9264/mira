@@ -42,6 +42,16 @@ def uploads_dir(user_id: str) -> Path:
     return path
 
 
+def wiki_data_dir(user_id: str) -> Path:
+    path = data_dir() / user_id / "wiki"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def wiki_run_snapshot_path(run_id: str) -> Path:
+    return runtime_dir() / "wiki-snapshots" / "runs" / run_id
+
+
 SHARED_HOME_OWNER = "_shared"
 
 

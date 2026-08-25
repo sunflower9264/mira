@@ -22,6 +22,21 @@ from .runs import (
     StepStatus,
 )
 from .decision import DecisionAnswer, DecisionGroup, DecisionOption, DecisionRequestContext
+from .wiki import (
+    WikiAccessGrantIn,
+    WikiAccessOut,
+    WikiFileContentOut,
+    WikiFileOut,
+    WikiLintIssueOut,
+    WikiLintOut,
+    WikiMaintenanceIn,
+    WikiOperationOut,
+    WikiOut,
+    WikiPatchIn,
+    WikiRevisionOut,
+    WikiSourceOut,
+    WikiSourcePatchIn,
+)
 from .types import (
     AppOut,
     AppVersionOut,
@@ -113,4 +128,17 @@ __all__ = [
     "WorkflowLintIssueOut",
     "WorkflowLintOut",
     "WorkflowLintSummaryOut",
+    "WikiAccessGrantIn",
+    "WikiAccessOut",
+    "WikiFileContentOut",
+    "WikiFileOut",
+    "WikiLintIssueOut",
+    "WikiLintOut",
+    "WikiMaintenanceIn",
+    "WikiOperationOut",
+    "WikiOut",
+    "WikiPatchIn",
+    "WikiRevisionOut",
+    "WikiSourceOut",
+    "WikiSourcePatchIn",
 ]

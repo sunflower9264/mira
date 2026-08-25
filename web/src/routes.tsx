@@ -8,6 +8,7 @@ const Home = lazy(() => import('./pages/Home').then((m) => ({ default: m.Home })
 const Editor = lazy(() => import('./pages/Editor').then((m) => ({ default: m.Editor })));
 const AppView = lazy(() => import('./pages/AppView').then((m) => ({ default: m.AppView })));
 const Login = lazy(() => import('./pages/Login').then((m) => ({ default: m.Login })));
+const Wiki = lazy(() => import('./pages/Wiki').then((m) => ({ default: m.Wiki })));
 const MobileHome = lazy(() => import('./pages/mobile/MobileHome').then((m) => ({ default: m.MobileHome })));
 const MobileAuth = lazy(() => import('./pages/mobile/MobileAuth').then((m) => ({ default: m.MobileAuth })));
 const MobileRun = lazy(() => import('./pages/mobile/MobileRun').then((m) => ({ default: m.MobileRun })));
@@ -96,6 +97,7 @@ function AdminCodexSetupGate({ children }: { children: ReactElement }) {
 export const router = createBrowserRouter([
   { path: '/', element: <DeviceRouteGate><RequireAuth>{withSuspense(<Home />)}</RequireAuth></DeviceRouteGate> },
   { path: '/login', element: <DeviceRouteGate>{withSuspense(<Login />)}</DeviceRouteGate> },
+  { path: '/wiki', element: <RequireAuth>{withSuspense(<Wiki />)}</RequireAuth> },
   { path: '/apps/:id/editor', element: <DeviceRouteGate><RequireAuth>{withSuspense(<Editor />)}</RequireAuth></DeviceRouteGate> },
   { path: '/apps/:id/view', element: <DeviceRouteGate><RequireAuth>{withSuspense(<AppView />)}</RequireAuth></DeviceRouteGate> },
   { path: '/market/apps/:id', element: <DeviceRouteGate><RequireAuth>{withSuspense(<AppView readOnly />)}</RequireAuth></DeviceRouteGate> },

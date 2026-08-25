@@ -33,6 +33,13 @@ import type {
   SkillMarkdown,
   UploadRef,
   WorkflowLintResult,
+  WikiAccess,
+  WikiFile,
+  WikiInfo,
+  WikiLintResult,
+  WikiOperation,
+  WikiRevision,
+  WikiSource,
 } from '../types';
 import { clearToken, clearUser, getToken } from './auth';
 
@@ -567,8 +574,89 @@ export async function cancelPromptAssistant(generationId: string): Promise<void>
 export async function createRun(payload: {
   app_id: string;
   inputs: Record<string, unknown>;
+  wiki_mode?: 'auto' | 'without';
 }): Promise<{ run_id: string; graph: Run['graph'] }> {
   return request<{ run_id: string; graph: Run['graph'] }>('/api/runs', { method: 'POST', body: payload });
+}
+
+// --- Wiki -----------------------------------------------------------------
+
+export async function getWiki(): Promise<WikiInfo> {
+  return request<WikiInfo>('/api/wiki');
+}
+
+export async function updateWiki(payload: { purpose?: string; schema?: string }): Promise<WikiInfo> {
+  return request<WikiInfo>('/api/wiki', { method: 'PATCH', body: payload });
+}
+
+export async function listWikiSources(): Promise<WikiSource[]> {
+  return request<WikiSource[]>('/api/wiki/sources');
+}
+
+export async function uploadWikiSource(file: File, path = file.name): Promise<{ source: WikiSource; operation: WikiOperation }> {
+  const body = new FormData();
+  body.append('file', file);
+  body.append('path', path);
+  return request<{ source: WikiSource; operation: WikiOperation }>('/api/wiki/sources', { method: 'POST', body });
+}
+
+export async function renameWikiSource(sourceId: string, path: string): Promise<WikiSource> {
+  return request<WikiSource>(`/api/wiki/sources/${sourceId}`, { method: 'PATCH', body: { path } });
+}
+
+export async function deleteWikiSource(sourceId: string): Promise<WikiOperation> {
+  return request<WikiOperation>(`/api/wiki/sources/${sourceId}`, { method: 'DELETE' });
+}
+
+export async function listWikiTree(): Promise<WikiFile[]> {
+  return request<WikiFile[]>('/api/wiki/tree');
+}
+
+export async function getWikiFileContent(path: string): Promise<{ path: string; mime: string; content: string }> {
+  return request<{ path: string; mime: string; content: string }>('/api/wiki/content', { query: { path } });
+}
+
+export async function listWikiOperations(): Promise<WikiOperation[]> {
+  return request<WikiOperation[]>('/api/wiki/operations');
+}
+
+export async function retryWikiOperation(operationId: string): Promise<WikiOperation> {
+  return request<WikiOperation>(`/api/wiki/operations/${operationId}/retry`, { method: 'POST' });
+}
+
+export async function cancelWikiOperation(operationId: string): Promise<WikiOperation> {
+  return request<WikiOperation>(`/api/wiki/operations/${operationId}/cancel`, { method: 'POST' });
+}
+
+export async function maintainWiki(instruction: string): Promise<WikiOperation> {
+  return request<WikiOperation>('/api/wiki/maintenance', { method: 'POST', body: { instruction } });
+}
+
+export async function lintWiki(): Promise<WikiLintResult> {
+  return request<WikiLintResult>('/api/wiki/lint', { method: 'POST' });
+}
+
+export async function listWikiRevisions(): Promise<WikiRevision[]> {
+  return request<WikiRevision[]>('/api/wiki/revisions');
+}
+
+export async function restoreWikiRevision(revisionId: string): Promise<WikiRevision> {
+  return request<WikiRevision>(`/api/wiki/revisions/${revisionId}/restore`, { method: 'POST' });
+}
+
+export async function getWikiAccess(appId: string): Promise<WikiAccess> {
+  return request<WikiAccess>(`/api/apps/${appId}/wiki-access`);
+}
+
+export async function grantWikiAccess(appId: string, graphSha256: string): Promise<WikiAccess> {
+  return request<WikiAccess>(`/api/apps/${appId}/wiki-access`, {
+    method: 'POST',
+    body: { graph_sha256: graphSha256 },
+  });
+}
+
+export async function revokeWikiAccess(appId: string): Promise<void> {
+  await request<void>(`/api/apps/${appId}/wiki-access`, { method: 'DELETE' });
 }
 
 /**

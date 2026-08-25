@@ -34,6 +34,21 @@ def signed_run_artifact_download_url(run: Run, relative_path: str, sha256: str |
     return f"/api/runs/{quote(run.id, safe='')}/artifacts/{encoded_path}?download_token={quote(token, safe='')}"
 
 
+def signed_wiki_file_download_url(user_id: str, revision_id: str, relative_path: str, sha256: str) -> str:
+    token = _encode_download_token({
+        "kind": "wiki_file",
+        "sub": user_id,
+        "revision_id": revision_id,
+        "path": relative_path,
+        "sha256": sha256,
+    })
+    return (
+        f"/api/wiki/files/{quote(relative_path, safe='/')}"
+        f"?revision_id={quote(revision_id, safe='')}&sha256={quote(sha256, safe='')}"
+        f"&download_token={quote(token, safe='')}"
+    )
+
+
 def verify_upload_download_token(upload_id: str, token: str) -> str:
     payload = _decode_download_token(token)
     if payload.get("kind") != "upload" or payload.get("upload_id") != upload_id:
@@ -69,6 +84,26 @@ def verify_run_artifact_download_token(
                 raise HTTPException(status_code=401, detail="下载链接已失效")
         elif token_sha256 != sha256:
             raise HTTPException(status_code=401, detail="下载链接已失效")
+    return user_id
+
+
+def verify_wiki_file_download_token(
+    revision_id: str,
+    relative_path: str,
+    sha256: str,
+    token: str,
+) -> str:
+    payload = _decode_download_token(token)
+    if (
+        payload.get("kind") != "wiki_file"
+        or payload.get("revision_id") != revision_id
+        or payload.get("path") != relative_path
+        or payload.get("sha256") != sha256
+    ):
+        raise HTTPException(status_code=401, detail="下载链接已失效")
+    user_id = payload.get("sub")
+    if not isinstance(user_id, str) or not user_id:
+        raise HTTPException(status_code=401, detail="下载链接已失效")
     return user_id
 
 

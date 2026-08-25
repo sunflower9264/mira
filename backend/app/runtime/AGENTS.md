@@ -16,7 +16,7 @@
 
 - Codex App Server 只能经 `DockerSandboxRunner` 运行；禁止宿主机 `subprocess.Popen`、读取宿主 Codex 登录态或引入其他生产 runtime fallback。
 - 容器使用后端进程 UID/GID（无该能力的平台才用镜像用户），启用 Docker init，drop all capabilities、`no-new-privileges`，并应用配置的 memory/CPU/pids/network。
-- 只挂载当前 branch workspace 到 `/workspace`、scoped HOME 到 `/home/mira`、必要上传到只读 `/mnt/inputs`，以及选中 Skill 的只读依赖层。不要挂载宿主 HOME、仓库根、Docker socket、`.env`、共享 runtime 根或其他用户 workspace。
+- 只挂载当前 branch workspace 到 `/workspace`、scoped HOME 到 `/home/mira`、必要上传到只读 `/mnt/inputs`、Run 冻结 Wiki 到只读 `/mnt/wiki`，以及选中 Skill 的只读依赖层。不要挂载宿主 HOME、仓库根、Docker socket、`.env`、共享 runtime 根或其他用户 workspace。
 - config/auth 从数据库派生的 shared HOME 复制到 scoped HOME；MCP URL/header 写入 scoped `config.toml`，不得通过 argv 或日志暴露 token/header。敏感环境变量不透传。
 - stdout/stderr 使用跨 Docker frame 的增量 UTF-8 decoder；不要对单个 frame 使用 `errors=ignore`。容器/宿主路径通过 `RuntimePathMap` 改写，不向模型或前端制造第二套路径协议。
 

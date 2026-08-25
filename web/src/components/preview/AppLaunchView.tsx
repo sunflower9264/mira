@@ -7,6 +7,8 @@ import { showCaughtError } from '../../stores/useErrorDialogStore';
 import * as api from '../../lib/api';
 import type { App, ConditionNode, GenerateNode, OutputNode, UserInputNode, WorkflowLintResult, WorkflowNode } from '../../types';
 import { useAppCoverUrl } from '../../hooks/useAppCoverUrl';
+import { BookOpen } from 'lucide-react';
+import type { WikiAccess } from '../../types';
 
 type Density = 'compact' | 'spacious';
 
@@ -115,6 +117,7 @@ export function AppLaunchView({ app, onStart, onToolsChange, density = 'compact'
   const [lintResult, setLintResult] = useState<WorkflowLintResult | null>(null);
   const [lintLoading, setLintLoading] = useState(false);
   const [lintError, setLintError] = useState<string | null>(null);
+  const [wikiAccess, setWikiAccess] = useState<WikiAccess | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -133,6 +136,14 @@ export function AppLaunchView({ app, onStart, onToolsChange, density = 'compact'
       });
     return () => controller.abort();
   }, [app.can_view_source, app.id, app.graph]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void api.getWikiAccess(app.id)
+      .then((value) => { if (!cancelled) setWikiAccess(value); })
+      .catch(() => { if (!cancelled) setWikiAccess(null); });
+    return () => { cancelled = true; };
+  }, [app.id, app.graph]);
 
   const invalidPromptMessages = useMemo(() => {
     if (sourceHidden) return [];
@@ -226,6 +237,12 @@ export function AppLaunchView({ app, onStart, onToolsChange, density = 'compact'
         />
       )}
       <div className={`${t.metaText} text-black/55`}>{meta}</div>
+      {wikiAccess?.has_wiki ? (
+        <div className="mt-2 flex w-fit items-center gap-1.5 rounded-full border border-black/[0.08] bg-white px-2.5 py-1 text-[11px] text-black/55">
+          <BookOpen className="h-3.5 w-3.5" />
+          {wikiAccess.owner_app || wikiAccess.granted ? '运行时自动使用 Wiki' : '运行时会询问 Wiki 权限'}
+        </div>
+      ) : null}
       {!app.can_run && (
         <div className="text-xs text-black/55">应用已下架，只能查看历史运行记录。</div>
       )}

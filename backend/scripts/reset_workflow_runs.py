@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.db import SessionLocal
 from app.models import App, AppVersion, Run, RunEvent, Step, StepLog
-from app.services.runtime_paths import run_scoped_home_path, run_workspace_path
+from app.services.runtime_paths import run_scoped_home_path, run_workspace_path, wiki_run_snapshot_path
 from app.services.uploads import delete_upload
 from app.utils import loads
 
@@ -60,6 +60,7 @@ async def main() -> None:
             for run in runs
         ]
         scoped_homes = {run_scoped_home_path(run["id"]).parent for run in runs}
+        wiki_snapshots = [wiki_run_snapshot_path(run["id"]) for run in runs]
 
         print("Workflow run reset plan:")
         print(f"  runs: {len(runs)}")
@@ -69,6 +70,7 @@ async def main() -> None:
         print(f"  run_uploads: {len(run_uploads)}")
         print(f"  run_workspaces: {len(workspaces)}")
         print(f"  scoped_homes: {len(scoped_homes)}")
+        print(f"  wiki_snapshots: {len(wiki_snapshots)}")
         if not args.apply:
             print("dry-run only; pass --apply to execute")
             return
@@ -88,6 +90,8 @@ async def main() -> None:
         shutil.rmtree(workspace, ignore_errors=True)
     for home in scoped_homes:
         shutil.rmtree(home, ignore_errors=True)
+    for snapshot in wiki_snapshots:
+        shutil.rmtree(snapshot, ignore_errors=True)
     for owner_id, upload_id in run_uploads:
         delete_upload(owner_id, upload_id)
     print("Workflow run reset complete")
@@ -159,6 +163,7 @@ def _upload_ids(value: Any) -> set[str]:
     for nested in value.values():
         found.update(_upload_ids(nested))
     return found
+
 
 if __name__ == "__main__":
     asyncio.run(main())

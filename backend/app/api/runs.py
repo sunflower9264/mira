@@ -110,7 +110,7 @@ async def create_run(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> RunCreatedOut:
-    run_id, graph = await create_run_record(db, user.id, payload.app_id, payload.inputs)
+    run_id, graph = await create_run_record(db, user.id, payload.app_id, payload.inputs, payload.wiki_mode)
     # 必须在派发后台任务前先把 channel 注册进 hub，否则 orchestrator
     # 启动竞速时 hub.get(run_id) 可能拿到 None 而直接 publish run.end failed。
     await get_run_hub().create(run_id)

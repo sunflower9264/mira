@@ -1,6 +1,6 @@
 # AGENTS.md
 
-本文件约束 `backend/migrations/`。该目录保存 Mira 的 Alembic 迁移链，当前唯一 head 为 `0025_skill_dependency_layers`。
+本文件约束 `backend/migrations/`。该目录保存 Mira 的 Alembic 迁移链，当前唯一 head 为 `0026_user_wiki`。
 
 ## 目录职责
 
@@ -12,12 +12,13 @@
 - `versions/0023_codex_only_control_plane.py`：迁移到单一 Codex 控制面与 supported models。
 - `versions/0024_remove_legacy_ask_user.py`：移除旧节点提问配置和遗留 pending 状态。
 - `versions/0025_skill_dependency_layers.py`：增加 Skill 根目录与 Python 依赖层状态字段。
+- `versions/0026_user_wiki.py`：增加用户 Wiki、source/revision/operation、Run snapshot 与第三方授权。
 
 历史 migration 为从旧库升级所必需；其中出现的旧表或字段不是当前架构入口，不要据此恢复生产 model/service。
 
 ## 迁移规则
 
-- ORM 结构变化必须新增 revision，并以当前 head `0025_skill_dependency_layers` 为 `down_revision`；保持单线链路，除非明确处理分支合并。
+- ORM 结构变化必须新增 revision，并以当前 head `0026_user_wiki` 为 `down_revision`；保持单线链路，除非明确处理分支合并。
 - Migration 必须可从空库升级到 head，也能在已有 SQLite 库上顺序执行。
 - SQLite 删除/修改列优先使用 `batch_alter_table`，并显式处理索引、server default、nullable 和数据回填顺序。
 - 不依赖本机数据、runtime 文件、外部服务或 seed 才能完成 schema migration。

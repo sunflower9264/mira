@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     max_skill_size_bytes: int = 10_000_000
     max_upload_bytes: int = 20_000_000
+    max_wiki_bytes: int = 500_000_000
     max_input_size_bytes: int = 1_000_000
     max_resume_text_bytes: int = 8_192
     disk_warn_bytes: int = 5_000_000_000

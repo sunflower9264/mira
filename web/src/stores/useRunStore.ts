@@ -37,7 +37,7 @@ interface RunStoreState {
   replayRun: Run | null;
   waitingInput: WaitingInputRequest | null;
 
-  start(app: App, inputs: Record<string, unknown>): Promise<string>;
+  start(app: App, inputs: Record<string, unknown>, wikiMode?: 'auto' | 'without'): Promise<string>;
   rerunFrom(
     sourceRunId: string,
     app: App,
@@ -180,7 +180,7 @@ export const useRunStore = create<RunStoreState>((set, get) => ({
     }
   },
 
-  async start(app, inputs) {
+  async start(app, inputs, wikiMode = 'auto') {
     closeStream();
     const token = ++activeRunToken;
     const steps = Object.fromEntries(app.graph.nodes.map((node) => [node.id, emptyStep(node)]));
@@ -204,7 +204,7 @@ export const useRunStore = create<RunStoreState>((set, get) => ({
       const lint = await api.lintAppGraph(app.id, app.can_view_source ? app.graph : undefined);
       const lintMessage = blockingWorkflowLintMessage(lint);
       if (lintMessage) throw new Error(lintMessage);
-      const created = await api.createRun({ app_id: app.id, inputs });
+      const created = await api.createRun({ app_id: app.id, inputs, wiki_mode: wikiMode });
       runId = created.run_id;
       graph = created.graph;
     } catch (error) {

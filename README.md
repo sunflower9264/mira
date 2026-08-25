@@ -33,6 +33,7 @@ Agent 自动规划
 - **Codex 隔离运行**：Codex App Server 只在 Docker sandbox 中运行。一次应用运行由一个逻辑 RunAgent 持续推进，线性步骤复用同一 thread 和 workspace，只有真实分支才创建隔离的 branch。
 - **结果可验证**：支持自由文本、内部结构化 JSON 契约、HTML 和文件产物；正式产物经过类型、路径、大小和 SHA-256 完整性验证后才提供下载。
 - **创建之后还能分享**：应用可以保留为私有项目，也可以公开运行或允许他人克隆；应用、运行数据和文件按用户隔离。
+- **长期 Wiki**：每个用户拥有独立文件空间。Mira Maintainer 把可解析来源整理成 Markdown Wiki；工作流按需读取冻结的只读版本，不做 embedding、向量检索或自动回写。
 
 ## 产品界面
 
@@ -65,6 +66,12 @@ Agent 自动规划
 已创建的应用可以通过适配手机端的入口随时运行。
 
 ![手机端运行入口](docs/screenshots/mobile-run.png)
+
+### 管理长期 Wiki
+
+桌面端首页顶部可进入 Wiki，上传原始资料、查看自动维护活动、运行结构检查并恢复历史版本。普通工作流自动使用当前用户的 Wiki；运行第三方应用时，Mira 会在首次读取前请求授权，拒绝后仍可不挂载 Wiki 运行。
+
+![长期 Wiki 文件空间](docs/screenshots/wiki.png)
 
 ## 为什么底层仍然使用结构化执行模型
 

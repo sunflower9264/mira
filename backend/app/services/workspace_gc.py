@@ -60,3 +60,20 @@ async def cleanup_orphan_run_homes(db: AsyncSession) -> int:
         except OSError:
             logger.warning("failed to remove orphan run HOME: %s", scope_dir, exc_info=True)
     return removed
+
+
+async def cleanup_orphan_run_wiki_snapshots(db: AsyncSession) -> int:
+    root = runtime_dir() / "wiki-snapshots" / "runs"
+    if not root.is_dir():
+        return 0
+    live_run_ids = set((await db.execute(select(Run.id))).scalars().all())
+    removed = 0
+    for snapshot in root.iterdir():
+        if not snapshot.is_dir() or snapshot.is_symlink() or snapshot.name in live_run_ids:
+            continue
+        try:
+            shutil.rmtree(snapshot)
+            removed += 1
+        except OSError:
+            logger.warning("failed to remove orphan Run Wiki snapshot: %s", snapshot, exc_info=True)
+    return removed

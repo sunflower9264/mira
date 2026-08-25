@@ -34,6 +34,7 @@ from app.services.runtime_paths import codex_home, scoped_codex_home
 from app.services.runtime_uploads import current_runtime_upload_context, stage_decision_request_result_for_runtime
 from app.services.skills_install import sync_runtime_skills
 from app.services.tools import RuntimeToolConfig
+from app.services.wiki import runtime_wiki_mount
 from app.utils import now_utc
 
 logger = logging.getLogger(__name__)
@@ -138,6 +139,22 @@ class CodexRuntime:
         home, skill_mounts = _prepare_scoped_home(
             codex_home(), cwd, runtime_tools, session_scope=session_scope
         )
+        wiki_mounts: tuple[DockerBindMount, ...] = ()
+        if isinstance(session_scope, str) and session_scope.startswith("run:"):
+            try:
+                wiki_tree = runtime_wiki_mount(session_scope.removeprefix("run:"))
+            except Exception as exc:  # noqa: BLE001
+                detail = str(exc) or "Run Wiki 快照不可用"
+                await on_chunk(AgentChunk(type="error", text=detail))
+                return AgentExecutionResult(session_id=session_id, finished_with="error", error=detail)
+            if wiki_tree is not None:
+                wiki_mounts = (DockerBindMount(source=wiki_tree, target=Path("/mnt/wiki"), read_only=True),)
+                prompt = (
+                    prompt.rstrip()
+                    + "\n\n## Mira Wiki（只读）\n"
+                    + "当前用户的冻结 Wiki 挂载在 /mnt/wiki。仅在任务需要时使用 find、rg、sed 等读取；"
+                    + "任务生成内容必须写入 /workspace，绝不能尝试回写 /mnt/wiki。"
+                )
         path_map = RuntimePathMap.for_call(workspace=cwd, home=home)
         effective_model = (model or "").strip() or _configured_model(home)
         if runtime_policy == "plan" and not effective_model:
@@ -277,7 +294,7 @@ class CodexRuntime:
                         prompt=initial_input,
                         env=_clean_env(CONTAINER_HOME),
                         path_map=path_map,
-                        mounts=skill_mounts,
+                        mounts=skill_mounts + wiki_mounts,
                         workspace_read_only=runtime_policy == "plan",
                     ),
                     on_stdout_line=on_stdout_line,

@@ -29,6 +29,7 @@ def _runtime_definition_files() -> tuple[Path, ...]:
         BACKEND_ROOT / "runtime" / "playwright-cli.config.json",
         BACKEND_ROOT / "runtime" / "scripts" / "capture_screenshots.py",
         BACKEND_ROOT / "runtime" / "scripts" / "mira-browser",
+        BACKEND_ROOT / "runtime" / "scripts" / "convert_to_markdown.py",
     )
 
 

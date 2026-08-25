@@ -8,6 +8,7 @@ from .run import Run, RunAgentBranch, RunAgentOperation, RunEvent, RunWorkspaceC
 from .settings import SettingsRow
 from .skill import Skill
 from .user import User
+from .wiki import RunWikiSnapshot, Wiki, WikiAccessGrant, WikiOperation, WikiRevision, WikiSource
 
 __all__ = [
     "App",
@@ -26,4 +27,10 @@ __all__ = [
     "SettingsRow",
     "Skill",
     "User",
+    "Wiki",
+    "WikiAccessGrant",
+    "WikiOperation",
+    "WikiRevision",
+    "WikiSource",
+    "RunWikiSnapshot",
 ]
