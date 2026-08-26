@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { PlayIcon, SendIcon } from '../common/Icons';
+import { PlayIcon } from '../common/Icons';
 import { PillInputBar, type PillAttachment } from '../common/PillInputBar';
 import { AppToolsInlineSelect } from '../common/AppToolsInlineSelect';
 import { WorkflowLintNotice } from '../common/WorkflowLintNotice';
@@ -7,6 +7,7 @@ import { showCaughtError } from '../../stores/useErrorDialogStore';
 import * as api from '../../lib/api';
 import type { App, ConditionNode, GenerateNode, OutputNode, UserInputNode, WorkflowLintResult, WorkflowNode } from '../../types';
 import { useAppCoverUrl } from '../../hooks/useAppCoverUrl';
+import { hasRunInputContent } from '../../lib/runInput';
 import { BookOpen } from 'lucide-react';
 import type { WikiAccess } from '../../types';
 
@@ -156,7 +157,7 @@ export function AppLaunchView({ app, onStart, onToolsChange, density = 'compact'
     setInputValues((current) => ({ ...current, [id]: value }));
 
   const activeFilled = activeUserInput
-    ? (inputValues[activeUserInput.id] ?? '').trim().length > 0
+    ? hasRunInputContent(inputValues[activeUserInput.id] ?? '', attachments.length)
     : true;
   const hasLintErrors = (lintResult?.summary.errors ?? 0) > 0;
   const canStart = app.can_run && !empty && activeFilled && !submitting && invalidPromptMessages.length === 0 && !hasLintErrors;
@@ -257,16 +258,6 @@ export function AppLaunchView({ app, onStart, onToolsChange, density = 'compact'
     </section>
   );
 
-  const renderFileInput = (node: UserInputNode) => {
-    return (
-      <input
-        type="file"
-        onChange={(event) => setValue(node.id, event.target.value)}
-        className="block w-full text-sm text-black/70 file:mr-3 file:rounded-full file:border-0 file:bg-black file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-white hover:file:bg-black/85"
-      />
-    );
-  };
-
   const renderFooter = (
     <div className={`shrink-0 ${t.footerPad}`}>
       <div className="mx-auto w-full max-w-[560px] px-4">
@@ -282,35 +273,18 @@ export function AppLaunchView({ app, onStart, onToolsChange, density = 'compact'
               {submitting ? '启动中…' : '开始'}
             </button>
           </div>
-        ) : activeUserInput.input_schema.kind !== 'file' ? (
+        ) : (
           <PillInputBar
             value={inputValues[activeUserInput.id] ?? ''}
             onChange={(v) => setValue(activeUserInput.id, v)}
             onSubmit={() => void handleStart()}
             placeholder={getInputPlaceholder(activeUserInput)}
-            canSubmit={app.can_run && (canStart || attachments.length > 0)}
+            canSubmit={canStart}
             submitting={submitting}
             allowAttachments
             attachments={attachments}
             onAttachmentsChange={setAttachments}
           />
-        ) : (
-          <div className="flex items-center gap-2 bg-white border border-black/10 rounded-full shadow-pill px-4 py-2">
-            {renderFileInput(activeUserInput)}
-            <button
-              type="button"
-              aria-label="发送"
-              onClick={() => void handleStart()}
-              disabled={!canStart}
-              className="p-1.5 rounded-full bg-black text-white disabled:bg-black/30 shrink-0"
-            >
-              {submitting ? (
-                <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white" />
-              ) : (
-                <SendIcon className="w-4 h-4" />
-              )}
-            </button>
-          </div>
         )}
       </div>
     </div>

@@ -113,6 +113,14 @@ def serialize_run_inputs(inputs: dict[str, RunInputValue]) -> dict[str, Any]:
     return {key: value.model_dump(mode="json") for key, value in inputs.items()}
 
 
+def require_run_input_content(
+    inputs: dict[str, RunInputValue],
+    user_input_ids: set[str],
+) -> None:
+    if user_input_ids and not any(value.value.strip() or value.attachments for value in inputs.values()):
+        raise HTTPException(status_code=400, detail="请输入文本或上传文件")
+
+
 def default_run_name(app_name: str, inputs: dict[str, RunInputValue]) -> str:
     for value in inputs.values():
         text = _compact_text(value.value)
@@ -197,7 +205,9 @@ async def create_run_record(
         raise HTTPException(status_code=400, detail=str(exc)) from None
 
     graph_snapshot = await stamp_run_tools_snapshot(db, graph)
-    inputs = normalize_run_inputs(raw_inputs, user_input_node_ids(graph))
+    input_node_ids = user_input_node_ids(graph)
+    inputs = normalize_run_inputs(raw_inputs, input_node_ids)
+    require_run_input_content(inputs, input_node_ids)
     inputs_payload = serialize_run_inputs(inputs)
     inputs_json = dumps(inputs_payload)
     if len(inputs_json.encode("utf-8")) > get_settings().max_input_size_bytes:
@@ -312,6 +322,7 @@ async def create_rerun_from_record(
             if key in rerun_node_ids:
                 effective_inputs[key] = value
     inputs = normalize_run_inputs(effective_inputs, input_node_ids)
+    require_run_input_content(inputs, input_node_ids)
     inputs_payload = serialize_run_inputs(inputs)
     inputs_json = dumps(inputs_payload)
     if len(inputs_json.encode("utf-8")) > get_settings().max_input_size_bytes:

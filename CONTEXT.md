@@ -5,7 +5,7 @@ Mira 把一次 Application Run 视为一个逻辑 RunAgent，而不是一组彼�
 ## 核心模型
 
 - 线性执行：节点延续同一个 Codex thread，并在同一个 branch workspace 中读写。
-- 非 Agent 输入：`user_input` 与 `asset` 写入 `/workspace/.mira/run-context/`；附件副本写入 `/workspace/inputs/`。
+- 非 Agent 输入：`user_input` 接受文本、附件或两者组合，至少一项非空后写入 `/workspace/.mira/run-context/`；附件副本写入 `/workspace/inputs/`。`asset` 使用同一上下文目录。
 - 并行：只有一个已完成节点产生多个实际活动后继时才 fan-out。每个后继从同一 checkpoint 通过 Codex App Server `thread/fork` 创建 thread，并从内容寻址 checkpoint 物化独立可写 workspace。
 - 汇合：RunAgent 创建协调 branch，把共同父 checkpoint、完整分支快照、节点上下文和 diff manifest 交给协调 Agent。后端验证 receipt 的路径、来源和最终 hash 后，才消费并清理源分支。
 - 正式输出：共享 workspace 不替代节点输出 Envelope。JSON、HTML 和 artifact 继续执行强契约；首次契约失败只允许在原 thread/workspace 修正一次。

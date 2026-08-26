@@ -39,6 +39,7 @@ import { MobileSheet } from '../../components/mobile/MobileSheet';
 import { useAppCoverUrl } from '../../hooks/useAppCoverUrl';
 import { showCaughtError } from '../../stores/useErrorDialogStore';
 import { useWikiAwareRunStart } from '../../hooks/useWikiAwareRunStart';
+import { hasRunInputContent } from '../../lib/runInput';
 
 type View = 'result' | 'process';
 type LaunchInputs = Record<string, string | { value: string; attachments?: { id: string; name?: string }[] }>;
@@ -167,7 +168,7 @@ export function MobileRun() {
   const showIdle = status === 'idle';
   const activeFilled =
     !activeInput ||
-    inputForNode(activeInput, inputValue, attachments).filled;
+    inputForNode(inputValue, attachments).filled;
   const hasLintErrors = (lintResult?.summary.errors ?? 0) > 0;
   const canStart = !!app && app.can_run && appGraphNodes.length > 0 && activeFilled && !submitting && !hasLintErrors;
 
@@ -880,9 +881,8 @@ function findActiveInput(app: App | null): UserInputNode | null {
   return app.graph.nodes.find((node): node is UserInputNode => node.type === 'user_input') ?? null;
 }
 
-function inputForNode(node: UserInputNode, text: string, attachments: PillAttachment[]) {
-  if (node.input_schema.kind === 'file') return { filled: attachments.length > 0 || text.trim().length > 0 };
-  return { filled: text.trim().length > 0 || attachments.length > 0 };
+function inputForNode(text: string, attachments: PillAttachment[]) {
+  return { filled: hasRunInputContent(text, attachments.length) };
 }
 
 const mobileSelectButtonCls = 'flex h-11 w-full items-center rounded-2xl border border-black/10 bg-white px-3 text-left text-sm outline-none transition hover:bg-black/[0.02] focus:border-black/35';

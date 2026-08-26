@@ -14,7 +14,7 @@
 一次 Application Run 对应一个逻辑 RunAgent。
 
 1. 同一 branch 上的顺序节点复用 Codex thread 和可写 workspace。
-2. `user_input` 与 `asset` 不创建独立数据总线，而是在 Agent 首次使用前写入 branch workspace 的 `.mira/run-context/`；附件复制到 `inputs/`。
+2. `user_input` 与 `asset` 不创建独立数据总线，而是在 Agent 首次使用前写入 branch workspace 的 `.mira/run-context/`；`user_input` 可提交文本、附件或两者组合，附件复制到 `inputs/`。
 3. 真正 fan-out 在父节点 post-checkpoint 上创建子 branch：checkpoint 是版本化 manifest 与不可变内容对象，分支从指定 manifest 物化为独立可写 workspace；Codex App Server 使用 `thread/fork` 创建子 thread。
 4. fan-in 不做“最后写入胜出”或后端主分支选择。协调 Agent必须读取共同父、所有 branch snapshot、branch context 和 diff manifest，完成合并并返回严格 receipt。后端验证覆盖路径、来源集合、删除状态、hash 以及证据目录未被篡改。
 5. 每个成功节点创建 immutable checkpoint。同一 Run 内相同 SHA-256 文件内容只保存一次，节点 checkpoint 仅重复保存轻量 manifest，因此不依赖宿主文件系统 reflink。节点正式回复仍经过统一 Envelope 和 output contract；一次 repair 在原 thread/workspace 内完成，不回滚工作区。

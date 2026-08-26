@@ -157,6 +157,16 @@ def test_create_run_rejects_unknown_input_key(auth_client, configure_codex):
     assert "不存在" in response.json()["detail"]
 
 
+def test_create_run_rejects_empty_user_input(auth_client, configure_codex):
+    configure_codex()
+    app_id = _build_app(auth_client, graph=_user_input_output_graph())
+
+    for inputs in ({}, {"n_input": "   "}, {"n_input": {"value": "", "attachments": []}}):
+        response = auth_client.post("/api/runs", json={"app_id": app_id, "inputs": inputs})
+        assert response.status_code == 400
+        assert response.json()["detail"] == "请输入文本或上传文件"
+
+
 def test_create_run_rejects_insufficient_runtime_storage(
     auth_client,
     configure_codex,
@@ -302,7 +312,7 @@ def test_runtime_prompt_uses_staged_upload_path_for_input_attachment(auth_client
                 "app_id": app_id,
                 "inputs": {
                     "n_input": {
-                        "value": "hello",
+                        "value": "",
                         "attachments": [{"id": upload_id, "name": "brief.txt"}],
                     }
                 },
