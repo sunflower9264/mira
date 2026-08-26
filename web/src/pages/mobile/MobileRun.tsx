@@ -28,7 +28,7 @@ import type {
   WorkflowLintResult,
   WorkflowNode,
 } from '../../types';
-import { PillInputBar, type PillAttachment } from '../../components/common/PillInputBar';
+import { hasPendingAttachments, PillInputBar, type PillAttachment } from '../../components/common/PillInputBar';
 import { SelectDropdown } from '../../components/common/SelectDropdown';
 import { AppToolsInlineSelect, AppToolsSummary } from '../../components/common/AppToolsInlineSelect';
 import { WorkflowLintNotice } from '../../components/common/WorkflowLintNotice';
@@ -170,7 +170,7 @@ export function MobileRun() {
     !activeInput ||
     inputForNode(inputValue, attachments).filled;
   const hasLintErrors = (lintResult?.summary.errors ?? 0) > 0;
-  const canStart = !!app && app.can_run && appGraphNodes.length > 0 && activeFilled && !submitting && !hasLintErrors;
+  const canStart = !!app && app.can_run && appGraphNodes.length > 0 && activeFilled && !submitting && !hasLintErrors && !hasPendingAttachments(attachments);
 
   const start = async () => {
     if (!app || !canStart) return;
@@ -506,7 +506,7 @@ function StartComposer({
       onChange={onInputValueChange}
       onSubmit={onStart}
       placeholder={input.input_schema.placeholder ?? input.input_schema.label ?? '输入内容...'}
-      canSubmit={canStart || attachments.length > 0}
+      canSubmit={canStart}
       submitting={submitting}
       allowAttachments
       attachments={attachments}

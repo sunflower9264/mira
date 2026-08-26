@@ -10,6 +10,7 @@
 
 - 保持组件通用，不引入页面专属 store 状态；复杂流程由调用方或 store 负责。
 - 通用 HTTP 调用只在已有模式明确需要时出现，例如上传、封面、发布或通用选择器；不要把页面业务流程塞进 common。
+- `PillInputBar` 选中附件后立即调用 uploads API。图片在输入框上方显示缩略图，上传中用灰色蒙层和转圈，完成后露出原图；非图片仍用文件名 chip。决策多题切换必须传 `onAttachmentUpdate`，按附件 id 回写，不能只改当前正在显示的那一题。
 - `DecisionPromptPanel` 只渲染后端返回的 context/groups/options 和前端本地选择态；`以上都不是` 的追加归后端，组件只处理标题摘要展示、多选互斥、补充文本/附件、题目切换和摘要态。
 - `PromptTokenEditor` 只把系统工具、Skill 和 MCP 显示为标签；不要加入节点字段、JSON 路径或祖先结果引用 token，运行时由同一 RunAgent 会话与 workspace 保留上下文。
 - `AppToolsInlineSelect` / `AppToolsSummary` 读取 Settings 中启用的 Tools，用 `disabled_tool_ids` 表达 App 级排除；不要把 Tools 转成节点级配置。

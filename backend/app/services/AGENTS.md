@@ -26,7 +26,7 @@
 - `run_orchestrator.py` 只等待直接前置，ready 节点可并发；condition 把未选分支置为 skipped。失败保留 error 与 `runtime|contract|routing|integrity|internal`，取消不得被晚到的 success 覆盖。
 - `run_agent.py` 统一拥有 branch、Codex thread lineage、workspace 与 checkpoint。线性节点复用 branch；真实 fan-out 从同一 checkpoint 创建 child workspace 并 `thread/fork`；fan-in 由协调 Agent 读取完整 base/branch/context 证据，receipt 的路径、来源和结果 hash 全部校验后才消费来源 branch。
 - `user_input` / `asset` 写 `.mira/run-context/` 并将文件复制到 `inputs/`。workspace 中未声明文件可供同 Run 后续推理，但不能进入 Files/Trace/下载接口；不要新增 `/mnt/results`、每节点 workspace 或 handoff sidecar。
-- `wiki.py` 管理用户单例 Wiki、source、operation、不可变 revision、第三方授权与 Run snapshot。Run Wiki 只读挂载到 `/mnt/wiki`，不进入 workspace/checkpoint；Run 输出不得调用 Wiki mutation。
+- `wiki.py` 管理用户单例 Wiki、source、operation、不可变 revision、第三方授权与 Run snapshot。上传和重命名只接受 `wiki_parser` 的可转换文档与图片；压缩包和其他无法解析的格式直接拒绝。Run Wiki 只读挂载到 `/mnt/wiki`，不进入 workspace/checkpoint；Run 输出不得调用 Wiki mutation。
 - 除 `output` 外的 LLM 节点先运行 read-only planning turn，自主决定是否通过 Codex 原生 `requestUserInput` 等待用户；回答落库并回填同一 JSON-RPC request。提问只收集当前节点能在本次执行中直接采用的信息，不得把返回上游、重新执行节点、改变分支或重试工具错误伪装成用户选项；这些控制流只能走运行结束后的 checkpoint rerun。规划必须明确返回 `ready` 或 `needs_user_input`；后者若未真正发起原生提问，只允许在同一 thread 重试一次，仍未提问则按 contract 失败，不得进入正式执行。正式执行使用同 branch 的可写 thread，output 不再重复 planning。
 - startup 将未完成 Run 标记为 `interrupted` 并清理数据库无对应记录的普通 Run workspace；继续运行跳过已成功/已跳过节点，不承诺中断节点副作用去重。
 - rerun-from 创建新 Run，使用当前 App graph，但要求来源 cut Step 有有效 pre-checkpoint；cut 前节点按当前拓扑冻结为 checkpoint reuse，复制所需 branch/checkpoint/scoped HOME 与已声明 artifact，cut 及后代重新执行。旧 Run 只读，condition 分支测试仅写入新 Run snapshot。

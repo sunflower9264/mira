@@ -11,7 +11,7 @@ import {
   type DecisionSubmittedSummary,
   type DecisionSupplementDrafts,
 } from '../common/decisionInput';
-import { PillInputBar, type PillAttachment } from '../common/PillInputBar';
+import { hasPendingAttachments, hasPendingDraftAttachments, patchDraftAttachment, PillInputBar, type PillAttachment } from '../common/PillInputBar';
 import { StopIcon } from '../common/Icons';
 
 export function WaitingInputPanel() {
@@ -63,11 +63,15 @@ export function WaitingInputPanel() {
   const showSubmitButton = groups.length > 0 ? activeIsLastDecisionGroup && submittedDecisionSummary === null : true;
   const hideSupplementInput = groups.length > 0 && submittedDecisionSummary !== null;
 
+  const attachmentsPending = groups.length > 0
+    ? hasPendingDraftAttachments(decisionDrafts)
+    : hasPendingAttachments(attachments);
   const canSubmitInput =
     (groups.length > 0
       ? allDecisionGroupsComplete && activeIsLastDecisionGroup
       : text.trim().length > 0 || attachments.length > 0) &&
-    !submitting;
+    !submitting &&
+    !attachmentsPending;
 
   const updateActiveDecisionDraft = (patch: Partial<{ text: string; attachments: PillAttachment[] }>) => {
     if (!effectiveDecisionGroupId) return;
@@ -266,6 +270,7 @@ export function WaitingInputPanel() {
             allowAttachments={groups.length > 0 ? activeAllowsFiles : true}
             attachments={groups.length > 0 ? (activeAllowsFiles ? activeDecisionAttachments : []) : submitting ? [] : attachments}
             onAttachmentsChange={groups.length > 0 ? (next) => updateActiveDecisionDraft({ attachments: next }) : setAttachments}
+            onAttachmentUpdate={groups.length > 0 ? (id, patch) => setDecisionDrafts((current) => patchDraftAttachment(current, id, patch)) : undefined}
             readOnly={submitting}
             hideSubmit
           />

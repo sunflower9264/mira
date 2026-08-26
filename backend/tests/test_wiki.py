@@ -5,6 +5,12 @@ import time
 from app.services.runtime_paths import wiki_run_snapshot_path
 from tests.auth_helpers import create_regular_user
 
+PNG_1X1 = (
+    b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+    b"\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\nIDATx\x9cc\x00\x01"
+    b"\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82"
+)
+
 
 GRAPH = {
     "nodes": [
@@ -37,11 +43,11 @@ def _wait_operations(client, *, timeout: float = 5.0) -> list[dict]:
     raise AssertionError("Wiki operation did not finish")
 
 
-def _upload_unsupported(client, name: str = "archive.bin") -> dict:
+def _upload_image(client, name: str = "notes.png") -> dict:
     response = client.post(
         "/api/wiki/sources",
         data={"path": name},
-        files={"file": (name, b"binary knowledge", "application/octet-stream")},
+        files={"file": (name, PNG_1X1, "image/png")},
     )
     assert response.status_code == 200, response.text
     operations = _wait_operations(client)
@@ -64,17 +70,39 @@ def test_wiki_initializes_required_files_and_rejects_unsafe_paths(auth_client):
     assert response.status_code == 400
 
 
-def test_unsupported_source_is_preserved_and_revision_can_restore(auth_client):
-    source = _upload_unsupported(auth_client)
+def test_non_convertible_source_is_rejected(auth_client):
+    response = auth_client.post(
+        "/api/wiki/sources",
+        data={"path": "archive.zip"},
+        files={"file": ("archive.zip", b"PK\x03\x04not-a-real-zip", "application/zip")},
+    )
+    assert response.status_code == 400
+    assert "压缩包" in response.json()["detail"]
+    assert auth_client.get("/api/wiki/sources").json() == []
+
+    binary = auth_client.post(
+        "/api/wiki/sources",
+        data={"path": "notes.bin"},
+        files={"file": ("notes.bin", b"binary knowledge", "application/octet-stream")},
+    )
+    assert binary.status_code == 400
+
+    source = _upload_image(auth_client, "keep.png")
+    renamed = auth_client.patch(f"/api/wiki/sources/{source['id']}", json={"path": "archive.zip"})
+    assert renamed.status_code == 400
+
+
+def test_uploaded_source_is_preserved_and_revision_can_restore(auth_client):
+    source = _upload_image(auth_client)
     sources = auth_client.get("/api/wiki/sources").json()
     assert sources[0]["id"] == source["id"]
-    assert sources[0]["status"] == "unsupported"
+    assert sources[0]["status"] == "ready"
 
     files = auth_client.get("/api/wiki/tree").json()
-    raw = next(item for item in files if item["path"] == "raw/archive.bin")
+    raw = next(item for item in files if item["path"] == "raw/notes.png")
     download = auth_client.get(raw["download_url"])
     assert download.status_code == 200
-    assert download.content == b"binary knowledge"
+    assert download.content == PNG_1X1
 
     revisions = auth_client.get("/api/wiki/revisions").json()
     assert len(revisions) >= 2
@@ -83,7 +111,7 @@ def test_unsupported_source_is_preserved_and_revision_can_restore(auth_client):
     assert restored.status_code == 200
     assert restored.json()["current"] is True
     restored_paths = {item["path"] for item in auth_client.get("/api/wiki/tree").json()}
-    assert "raw/archive.bin" not in restored_paths
+    assert "raw/notes.png" not in restored_paths
 
 
 def test_third_party_app_requires_graph_bound_consent_and_can_skip(
@@ -102,7 +130,7 @@ def test_third_party_app_requires_graph_bound_consent_and_can_skip(
 
     runner = create_regular_user("wiki-consent-runner")
     auth_client.headers.update({"Authorization": f"Bearer {runner['token']}"})
-    _upload_unsupported(auth_client, "private-notes.bin")
+    _upload_image(auth_client, "private-notes.png")
 
     access = auth_client.get(f"/api/apps/{app['id']}/wiki-access")
     assert access.status_code == 200
@@ -132,12 +160,12 @@ def test_third_party_app_requires_graph_bound_consent_and_can_skip(
     )
     assert created.status_code == 200, created.text
     snapshot = wiki_run_snapshot_path(created.json()["run_id"])
-    assert (snapshot / "tree" / "raw" / "private-notes.bin").read_bytes() == b"binary knowledge"
+    assert (snapshot / "tree" / "raw" / "private-notes.png").read_bytes() == PNG_1X1
 
 
 def test_owner_run_freezes_revision_without_writing_back(auth_client, configure_codex):
     configure_codex()
-    _upload_unsupported(auth_client, "facts.bin")
+    _upload_image(auth_client, "facts.png")
     before = auth_client.get("/api/wiki").json()["current_revision_id"]
     app = auth_client.post("/api/apps", json={"name": "Owner Wiki App"}).json()
     assert auth_client.patch(f"/api/apps/{app['id']}", json={"graph": GRAPH}).status_code == 200

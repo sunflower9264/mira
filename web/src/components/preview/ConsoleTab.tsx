@@ -998,17 +998,17 @@ function TimelineView({
           return (
             <li
               key={`${entry.kind}-${entry.nodeId}-${idx}`}
-              className={`flex gap-2 px-4 py-2 text-[12px] ${
+              className={`flex items-start gap-2 px-4 py-2 text-[12px] ${
                 failed ? 'border-l-2 border-l-red-400' : ''
               }`}
             >
               <span className="shrink-0 font-mono text-black/40">{formatTime(log.ts)}</span>
               <span
-                className={`shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] ${levelChipTone(log.level)}`}
+                className={`h-fit shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] leading-4 ${levelChipTone(log.level)}`}
               >
                 {log.level}
               </span>
-              <span className="max-w-40 shrink-0 truncate rounded-full border border-black/10 bg-white px-1.5 py-0.5 text-[10px] text-black/55">
+              <span className="h-fit max-w-40 shrink-0 truncate rounded-full border border-black/10 bg-white px-1.5 py-0.5 text-[10px] leading-4 text-black/55">
                 {entry.nodeTitle}
               </span>
               <span

@@ -933,10 +933,10 @@ export interface UploadOut {
  * 请求体：multipart/form-data，字段名 `file`。
  * 响应体：UploadOut（id 可在 Run.inputs / resume payload 中复用）。
  */
-export async function uploadFile(file: File): Promise<UploadOut> {
+export async function uploadFile(file: File, signal?: AbortSignal): Promise<UploadOut> {
   const form = new FormData();
   form.append('file', file, file.name);
-  return request<UploadOut>('/api/uploads', { method: 'POST', body: form });
+  return request<UploadOut>('/api/uploads', { method: 'POST', body: form, signal });
 }
 
 /**

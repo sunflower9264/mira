@@ -30,6 +30,9 @@ import { showCaughtError } from '../stores/useErrorDialogStore';
 
 type FileView = 'raw' | 'wiki';
 
+const WIKI_SOURCE_ACCEPT = '.txt,.md,.markdown,.csv,.json,.xml,.html,.htm,.pdf,.docx,.pptx,.xls,.xlsx,.msg,.eml,.png,.jpg,.jpeg,.webp,.gif';
+const WIKI_SOURCE_SUFFIX = /\.(txt|md|markdown|csv|json|xml|html|htm|pdf|docx|pptx|xls|xlsx|msg|eml|png|jpe?g|webp|gif)$/i;
+
 export function Wiki() {
   const navigate = useNavigate();
   const uploadRef = useRef<HTMLInputElement>(null);
@@ -119,9 +122,14 @@ export function Wiki() {
     const picked = Array.from(event.target.files ?? []);
     event.target.value = '';
     if (!picked.length) return;
+    const allowed = picked.filter((file) => WIKI_SOURCE_SUFFIX.test(file.name));
+    if (allowed.length !== picked.length) {
+      showCaughtError(new Error('Wiki 只接受可转换的文档和图片，不接受压缩包或其他无法解析的格式'), '上传 Wiki 文件失败', '上传失败');
+    }
+    if (!allowed.length) return;
     setUploading(true);
     try {
-      for (const file of picked) await api.uploadWikiSource(file);
+      for (const file of allowed) await api.uploadWikiSource(file);
       await load(true);
     } catch (error) {
       showCaughtError(error, '上传 Wiki 文件失败', '上传失败');
@@ -187,8 +195,8 @@ export function Wiki() {
               {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
               {uploading ? '正在加入队列…' : '添加原始文件'}
             </button>
-            <input ref={uploadRef} type="file" multiple className="hidden" onChange={(event) => void upload(event)} />
-            <p className="mt-2 text-center text-[11px] leading-4 text-black/40">单文件 20 MB · Wiki 总容量 500 MB</p>
+            <input ref={uploadRef} type="file" multiple accept={WIKI_SOURCE_ACCEPT} className="hidden" onChange={(event) => void upload(event)} />
+            <p className="mt-2 text-center text-[11px] leading-4 text-black/40">Markdown / Office / PDF / 文本 / 图片 · 单文件 20 MB · 总容量 500 MB</p>
           </div>
           <div className="p-3">
             <div className="grid grid-cols-2 rounded-full bg-black/[0.05] p-1 text-xs">

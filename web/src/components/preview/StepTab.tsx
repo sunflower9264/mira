@@ -37,7 +37,7 @@ import {
   type DecisionSubmittedSummary,
   type DecisionSupplementDrafts,
 } from '../common/decisionInput';
-import { PillInputBar, type PillAttachment } from '../common/PillInputBar';
+import { hasPendingDraftAttachments, patchDraftAttachment, PillInputBar, type PillAttachment } from '../common/PillInputBar';
 import { PromptTokenEditor, type PromptTokenEditorHandle } from '../common/PromptTokenEditor';
 import { buildPromptTokens, promptTokenOptionLabel, type PromptTokenDefinition } from '../common/promptTokens';
 import { EditIcon, PlusIcon, SendIcon, SparkleIcon, StopIcon, TrashIcon } from '../common/Icons';
@@ -644,7 +644,7 @@ function PromptField({
   const activePromptDecisionIsLast = waitingRequest
     ? activeDecisionGroupIndex >= waitingRequest.groups.length - 1
     : false;
-  const canSubmitPromptDecision = !!completedPromptDecisionAnswers && activePromptDecisionIsLast && !submittingDecision;
+  const canSubmitPromptDecision = !!completedPromptDecisionAnswers && activePromptDecisionIsLast && !submittingDecision && !hasPendingDraftAttachments(decisionDrafts);
   const showDecisionForm = !!waitingRequest && !submittedDecisionSummary && !submittingDecision;
   const showPromptTextarea = !showDecisionForm;
   const promptTokens = useMemo(() => {
@@ -932,6 +932,7 @@ function PromptField({
                 allowAttachments={!!activeDecisionGroupId}
                 attachments={activeDecisionAttachments}
                 onAttachmentsChange={(next) => updateActiveDecisionDraft({ attachments: next })}
+                onAttachmentUpdate={(id, patch) => setDecisionDrafts((current) => patchDraftAttachment(current, id, patch))}
                 readOnly={submittingDecision}
                 hideSubmit
               />

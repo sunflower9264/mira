@@ -28,6 +28,10 @@ def conversion_kind(path: str) -> str:
     return "unsupported"
 
 
+def is_allowed_wiki_source(path: str) -> bool:
+    return conversion_kind(path) != "unsupported"
+
+
 async def convert_to_markdown(source: Path) -> str:
     return await asyncio.to_thread(_convert_to_markdown_sync, source)
 

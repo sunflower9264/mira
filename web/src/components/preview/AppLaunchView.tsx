@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { PlayIcon } from '../common/Icons';
-import { PillInputBar, type PillAttachment } from '../common/PillInputBar';
+import { hasPendingAttachments, PillInputBar, type PillAttachment } from '../common/PillInputBar';
 import { AppToolsInlineSelect } from '../common/AppToolsInlineSelect';
 import { WorkflowLintNotice } from '../common/WorkflowLintNotice';
 import { showCaughtError } from '../../stores/useErrorDialogStore';
@@ -160,7 +160,7 @@ export function AppLaunchView({ app, onStart, onToolsChange, density = 'compact'
     ? hasRunInputContent(inputValues[activeUserInput.id] ?? '', attachments.length)
     : true;
   const hasLintErrors = (lintResult?.summary.errors ?? 0) > 0;
-  const canStart = app.can_run && !empty && activeFilled && !submitting && invalidPromptMessages.length === 0 && !hasLintErrors;
+  const canStart = app.can_run && !empty && activeFilled && !submitting && invalidPromptMessages.length === 0 && !hasLintErrors && !hasPendingAttachments(attachments);
 
   const [uploadError, setUploadError] = useState<string | null>(null);
 

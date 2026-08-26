@@ -40,12 +40,13 @@ from app.schemas import (
 from app.services.artifacts import file_sha256, signed_wiki_file_download_url
 from app.services.apps import get_visible_app_or_404
 from app.services.runtime_paths import wiki_data_dir, wiki_run_snapshot_path
-from app.services.wiki_parser import WikiParseError, conversion_kind, convert_to_markdown
+from app.services.wiki_parser import WikiParseError, conversion_kind, convert_to_markdown, is_allowed_wiki_source
 from app.utils import dumps, iso, loads, new_id, now_utc
 
 
 REQUIRED_WIKI_FILES = ("wiki/index.md", "wiki/log.md", "wiki/overview.md")
 TEXT_PREVIEW_SUFFIXES = {".md", ".markdown", ".txt", ".json", ".csv", ".html", ".htm", ".xml"}
+UNSUPPORTED_WIKI_SOURCE_DETAIL = "Wiki 只接受可转换的文档和图片，不接受压缩包或其他无法解析的格式"
 _operation_tasks: dict[str, asyncio.Task] = {}
 _wiki_operation_locks: dict[str, asyncio.Lock] = {}
 
@@ -60,6 +61,11 @@ def normalize_wiki_path(value: str) -> str:
     if any(ord(char) < 32 for char in raw):
         raise HTTPException(status_code=400, detail="Wiki 文件路径无效")
     return path.as_posix()
+
+
+def _require_allowed_wiki_source(path: str) -> None:
+    if not is_allowed_wiki_source(path):
+        raise HTTPException(status_code=400, detail=UNSUPPORTED_WIKI_SOURCE_DETAIL)
 
 
 async def get_or_create_wiki(db: AsyncSession, owner_id: str) -> Wiki:
@@ -135,6 +141,7 @@ async def create_source(
         raise HTTPException(status_code=413, detail="文件超出大小限制")
     name = (file.filename or "source").strip() or "source"
     path = normalize_wiki_path(logical_path or name)
+    _require_allowed_wiki_source(path)
     existing = await _sources(db, wiki.id)
     if any(row.path == path and row.status != "pending_delete" for row in existing):
         raise HTTPException(status_code=409, detail="Wiki 中已存在同名原始文件")
@@ -178,6 +185,7 @@ async def create_source(
 async def rename_source(db: AsyncSession, owner_id: str, source_id: str, path: str) -> WikiSourceOut:
     wiki, source = await _owned_source(db, owner_id, source_id)
     normalized = normalize_wiki_path(path)
+    _require_allowed_wiki_source(normalized)
     rows = await _sources(db, wiki.id)
     if any(row.id != source.id and row.path == normalized and row.status != "pending_delete" for row in rows):
         raise HTTPException(status_code=409, detail="Wiki 中已存在同名原始文件")

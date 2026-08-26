@@ -3,7 +3,7 @@
 // and apply graph patches to the canvas.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { PillInputBar, type PillAttachment } from '../common/PillInputBar';
+import { hasPendingAttachments, hasPendingDraftAttachments, patchDraftAttachment, PillInputBar, type PillAttachment } from '../common/PillInputBar';
 import { AppDialog } from '../common/AppDialog';
 import { ConfirmDialog } from '../common/ConfirmDialog';
 import { completeDecisionAnswers, DecisionPromptPanel } from '../common/DecisionPromptPanel';
@@ -121,8 +121,8 @@ export function NlInputBar({ empty }: { empty: boolean }) {
   const regeneratingPlan = activeCompileKind === 'regenerate';
   const resumingDecision = activeCompileKind === 'resume';
   const canSubmit = waitingCompile
-    ? allDecisionGroupsComplete && activeIsLastDecisionGroup && !submitting && !pending
-    : !!app && (!!value.trim() || attachments.length > 0) && !submitting && !pending;
+    ? allDecisionGroupsComplete && activeIsLastDecisionGroup && !submitting && !pending && !hasPendingDraftAttachments(decisionDrafts)
+    : !!app && (!!value.trim() || attachments.length > 0) && !submitting && !pending && !hasPendingAttachments(attachments);
   const placeholder = waitingCompile
     ? '输入补充说明'
     : empty
@@ -574,6 +574,7 @@ export function NlInputBar({ empty }: { empty: boolean }) {
         allowAttachments={waitingCompile ? activeAllowsFiles : true}
         attachments={waitingCompile ? (submittedDecisionSummary ? [] : activeAllowsFiles ? activeDecisionAttachments : []) : attachments}
         onAttachmentsChange={waitingCompile ? (next) => updateActiveDecisionDraft({ attachments: next }) : setAttachments}
+        onAttachmentUpdate={waitingCompile ? (id, patch) => setDecisionDrafts((current) => patchDraftAttachment(current, id, patch)) : undefined}
         readOnly={submitting}
         hideSubmit={!!waitingCompile}
         topSlot={

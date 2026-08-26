@@ -36,7 +36,7 @@
 
 - Workflow 节点类型是 `user_input`、`asset`、`generate`、`condition`、`output`。最多一个 `user_input` 和一个 `output`；`output` 是终点节点，不能出边。
 - Graph 使用 `execution_edges` 表达执行顺序；画布连线不表达字段绑定。一次 Run 的线性节点共享 Agent 会话和 workspace，真正并行时由后端 fork/merge；不要为了数据引用添加已有传递路径覆盖的冗余直连线。
-- 启动运行时，`user_input` 的文本或附件至少一项非空即可提交；桌面与手机必须都先通过 uploads API 上传真实文件，再发送 upload 引用，不能只保存浏览器文件名。
+- 启动运行时，`user_input` 的文本或附件至少一项非空即可提交；桌面与手机必须都先通过 uploads API 上传真实文件，再发送 upload 引用，不能只保存浏览器文件名。`PillInputBar` 在选中文件后立即上传：图片显示缩略图（上传中灰色蒙层+转圈），非图片显示文件名；仍有附件在传或失败时不能提交。
 - 素材节点字段必须遵守 `types.ts`：文本 `content`，URL `urls[]`，文件 `uploads[]`，画板 `upload`。
 - 所有应用固定使用 Codex；Graph 不保存运行时选择字段或提问开关。`generate` / `condition` / `output` 节点只保存 prompt、model、reasoning_effort、output_contract 等节点级字段。
 - App 级 Tools 排除项写入 `graph.tools.disabled_tool_ids`。Preview、App View 和 Mobile Run 可展示/调整 App 级 Tools；不要把 Tools 重新做成 generate 节点配置。
@@ -57,7 +57,7 @@
 - HTML 输出只通过 `HtmlOutputFrame` iframe 隔离渲染；滚动应由外层 Preview/App View/Mobile 容器承载。
 - Skill 的 `dependency_status` / `dependency_error` 来自后端 Settings 契约；`pending` 或 `failed` 时 UI 只能继续禁用、预览或删除，不能发起启用或设为规划可用。
 - 视觉改动保持现有 Tailwind、黑白灰和少量强调色体系；图标优先使用现有组件或 `lucide-react`。
-- 桌面 `/wiki` 管理当前用户的长期 Wiki；Mobile 只遵守授权与自动使用规则，不提供 Wiki 管理。第三方 App 的 Wiki 授权必须按后端返回的 graph digest 确认，也必须保留“不使用 Wiki 运行”。
+- 桌面 `/wiki` 管理当前用户的长期 Wiki；Mobile 只遵守授权与自动使用规则，不提供 Wiki 管理。原始文件上传只接受可转换文档和图片，压缩包等无法解析的格式由前后端同时拒绝。第三方 App 的 Wiki 授权必须按后端返回的 graph digest 确认，也必须保留“不使用 Wiki 运行”。
 
 ## Commands
 
