@@ -286,6 +286,9 @@ function WorkspaceWorkflow({ workspace, proposals, onRefresh }: { workspace: Wor
   const [apps, setApps] = useState<App[]>([]);
   const [runAppId, setRunAppId] = useState('');
   const [runInput, setRunInput] = useState('');
+  const [runFiles, setRunFiles] = useState<UploadRef[]>([]);
+  const [uploadingRunFiles, setUploadingRunFiles] = useState(false);
+  const [runFileError, setRunFileError] = useState('');
   const [activeRunApp, setActiveRunApp] = useState<App | null>(null);
   useEffect(() => {
     void api.listMyApps().then((items) => {
@@ -321,13 +324,41 @@ function WorkspaceWorkflow({ workspace, proposals, onRefresh }: { workspace: Wor
     try {
       const app = await api.getApp(runAppId);
       const inputNode = app.graph.nodes.find((node) => node.type === 'user_input');
-      const inputs = inputNode ? { [inputNode.id]: runInput } : {};
+      if (!inputNode && runFiles.length > 0) {
+        setRunFileError('所选应用没有用户输入节点，无法接收文件。');
+        return;
+      }
+      const inputs = inputNode ? {
+        [inputNode.id]: runFiles.length > 0
+          ? { value: runInput, attachments: runFiles.map((file) => ({ id: file.id, name: file.name })) }
+          : runInput,
+      } : {};
       const created = await api.createWorkspaceWorkflowRun(workspace.id, { app_id: app.id, inputs, wiki_mode: 'auto' });
       const run = await api.getRun(created.run_id);
       useRunStore.getState().resume(app, run);
       setActiveRunApp(app);
+      setRunInput('');
+      setRunFiles([]);
+      setRunFileError('');
     } finally {
       setBusy(false);
+    }
+  };
+  const uploadRunFiles = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const selectedFiles = Array.from(event.target.files ?? []);
+    event.target.value = '';
+    if (!selectedFiles.length) return;
+    setUploadingRunFiles(true);
+    setRunFileError('');
+    try {
+      for (const file of selectedFiles) {
+        const uploaded = await api.uploadFile(file);
+        setRunFiles((current) => [...current, uploaded]);
+      }
+    } catch (error) {
+      setRunFileError(error instanceof Error ? error.message : '文件上传失败');
+    } finally {
+      setUploadingRunFiles(false);
     }
   };
   return (
@@ -340,11 +371,21 @@ function WorkspaceWorkflow({ workspace, proposals, onRefresh }: { workspace: Wor
             {apps.map((app) => <option key={app.id} value={app.id}>{app.name}</option>)}
           </select>
           <input value={runInput} onChange={(event) => setRunInput(event.target.value)} placeholder="应用输入（如需要）" className="h-10 min-w-0 rounded-xl border border-black/10 bg-white px-3 text-sm outline-none focus:border-black/25" />
-          <button type="button" disabled={!runAppId || busy} onClick={() => void startFormalRun()} className="inline-flex h-10 items-center justify-center gap-1.5 rounded-full bg-black px-4 text-sm font-medium text-white disabled:opacity-40"><Play className="h-4 w-4" />运行</button>
+          <button type="button" disabled={!runAppId || busy || uploadingRunFiles} onClick={() => void startFormalRun()} className="inline-flex h-10 items-center justify-center gap-1.5 rounded-full bg-black px-4 text-sm font-medium text-white disabled:opacity-40"><Play className="h-4 w-4" />运行</button>
         </div>
         <p className="mt-2 text-[11px] leading-5 text-black/40">运行前先同步 Wiki，再进入正式 Run / Step / SSE / Artifact 链路。</p>
       </div>
-      {proposals.length ? <div className="space-y-3">{proposals.map((proposal) => <button type="button" key={proposal.id} onClick={() => setSelected(proposal)} className="flex w-full items-center gap-3 rounded-2xl border border-black/5 p-4 text-left hover:border-black/15"><span className={`grid h-9 w-9 place-items-center rounded-xl ${proposal.status === 'pending' ? 'bg-amber-50 text-amber-600' : 'bg-emerald-50 text-emerald-600'}`}><GitBranch className="h-4 w-4" /></span><span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium">{proposal.name}</span><span className="mt-0.5 block text-xs text-black/40">{proposal.kind === 'create' ? '新建应用' : '修改应用'} · {proposal.status}</span></span><ChevronRight className="h-4 w-4 text-black/25" /></button>)}</div> : <div className="rounded-2xl border border-dashed border-black/15 px-4 py-12 text-center text-xs text-black/40">还没有工作流提案。在 Codex 会话中描述你想创建或修改的应用。</div>}
+      {proposals.length ? <div className="mb-3 space-y-3">{proposals.map((proposal) => <button type="button" key={proposal.id} onClick={() => setSelected(proposal)} className="flex w-full items-center gap-3 rounded-2xl border border-black/5 p-4 text-left hover:border-black/15"><span className={`grid h-9 w-9 place-items-center rounded-xl ${proposal.status === 'pending' ? 'bg-amber-50 text-amber-600' : 'bg-emerald-50 text-emerald-600'}`}><GitBranch className="h-4 w-4" /></span><span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium">{proposal.name}</span><span className="mt-0.5 block text-xs text-black/40">{proposal.kind === 'create' ? '新建应用' : '修改应用'} · {proposal.status}</span></span><ChevronRight className="h-4 w-4 text-black/25" /></button>)}</div> : null}
+      <div className="rounded-2xl border border-dashed border-black/15 p-4">
+        <label className={`flex min-h-28 flex-col items-center justify-center rounded-xl text-center transition hover:bg-black/[0.02] ${uploadingRunFiles ? 'pointer-events-none opacity-55' : 'cursor-pointer'}`}>
+          <span className="grid h-10 w-10 place-items-center rounded-full bg-black/[0.04] text-black/45"><Upload className="h-4 w-4" /></span>
+          <span className="mt-2 text-sm font-medium text-black/65">{uploadingRunFiles ? '正在上传…' : '上传工作流输入文件'}</span>
+          <span className="mt-1 text-xs text-black/35">文件会随本次正式 Run 提交给用户输入节点</span>
+          <input type="file" multiple className="hidden" disabled={uploadingRunFiles} onChange={(event) => void uploadRunFiles(event)} />
+        </label>
+        {runFiles.length > 0 ? <div className="mt-3 flex flex-wrap gap-2 border-t border-black/5 pt-3">{runFiles.map((file) => <button type="button" key={file.id} onClick={() => setRunFiles((current) => current.filter((item) => item.id !== file.id))} className="inline-flex max-w-full items-center gap-1.5 rounded-full bg-black/[0.05] px-3 py-1.5 text-xs text-black/60"><File className="h-3.5 w-3.5 shrink-0" /><span className="truncate">{file.name}</span><X className="h-3 w-3 shrink-0" /></button>)}</div> : null}
+        {runFileError ? <p className="mt-3 text-xs text-red-600">{runFileError}</p> : null}
+      </div>
       <AppDialog open={selected !== null} onClose={() => !busy && setSelected(null)} title={selected?.name ?? '工作流提案'} description={selected?.description} widthClassName="max-w-4xl" footer={selected?.status === 'pending' ? <><button type="button" onClick={() => { if (selected) void api.rejectWorkspaceWorkflowProposal(workspace.id, selected.id).then(() => { setSelected(null); onRefresh(); }); }} className="rounded-full border border-black/10 px-4 py-2 text-sm">拒绝</button><button type="button" disabled={busy} onClick={() => void confirm()} className="inline-flex items-center gap-1.5 rounded-full bg-black px-4 py-2 text-sm font-medium text-white disabled:opacity-40"><Check className="h-4 w-4" />确认应用</button></> : undefined}>
         {selected ? <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_220px]"><div className="rounded-2xl bg-[#F4F5F7] p-4"><div className="text-xs font-semibold text-black/55">Graph 预览</div><div className="mt-3 h-[360px] overflow-hidden rounded-xl border border-black/10 bg-white"><ReactFlow nodes={graphNodes} edges={graphEdges} fitView nodesDraggable={false} nodesConnectable={false} elementsSelectable={false} zoomOnScroll={false} proOptions={{ hideAttribution: true }}><Background color="#e5e7eb" gap={20} /><Controls showInteractive={false} /></ReactFlow></div></div><div className="rounded-2xl border border-black/5 bg-white p-4"><div className="text-xs font-semibold text-black/55">Lint</div><div className={`mt-2 text-sm ${selected.lint.ok ? 'text-emerald-600' : 'text-red-600'}`}>{selected.lint.ok ? '通过' : '需要修正'}</div>{selected.lint.issues.map((issue, index) => <div key={index} className="mt-2 text-xs leading-5 text-black/50">{issue.detail}</div>)}</div></div> : null}
       </AppDialog>
