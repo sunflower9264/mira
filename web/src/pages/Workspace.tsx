@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, Bot, Check, ChevronRight, Cloud, Download, File, Folder, GitBranch, MessageSquare, MoreHorizontal, Paperclip, Play, RefreshCw, Send, Square, Upload, X } from 'lucide-react';
+import { ArrowLeft, Bot, Check, ChevronRight, Download, File, Folder, GitBranch, MessageSquare, MoreHorizontal, Paperclip, Play, RefreshCw, Send, Square, Upload, X } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Background, Controls, ReactFlow } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
@@ -421,8 +421,6 @@ function WorkspaceGit({ workspace }: { workspace: Workspace }) {
   const [branch, setBranch] = useState('');
   const [token, setToken] = useState('');
   const [busy, setBusy] = useState(false);
-  const [pushOpen, setPushOpen] = useState(false);
-  const [lastOperation, setLastOperation] = useState<{ label: string; durationMs: number } | null>(null);
   useEffect(() => {
     void api.getWorkspaceGitConfig(workspace.id).then((next) => {
       setConfig(next);
@@ -431,14 +429,6 @@ function WorkspaceGit({ workspace }: { workspace: Workspace }) {
     }).catch(() => setConfig(null));
   }, [workspace.id]);
   if (!config) return <div className="py-12 text-center text-sm text-black/40">加载 Git 状态…</div>;
-  const pull = async () => {
-    setBusy(true);
-    try { const result = await api.pullWorkspaceGit(workspace.id); setLastOperation({ label: 'Pull 完成', durationMs: result.duration_ms }); } finally { setBusy(false); }
-  };
-  const push = async () => {
-    setBusy(true);
-    try { const result = await api.pushWorkspaceGit(workspace.id); setLastOperation({ label: 'Push 完成', durationMs: result.duration_ms }); setPushOpen(false); } finally { setBusy(false); }
-  };
   const save = async () => {
     setBusy(true);
     try {
@@ -447,7 +437,7 @@ function WorkspaceGit({ workspace }: { workspace: Workspace }) {
       setToken('');
     } finally { setBusy(false); }
   };
-  return <div><div className="mb-4"><h2 className="text-base font-semibold">Git 同步</h2><p className="mt-0.5 text-xs text-black/40">仅支持管理员白名单内的私有 HTTPS 仓库；令牌不会显示或进入 Codex 容器。</p></div><div className="space-y-3 rounded-2xl border border-black/5 bg-[#F4F5F7] p-4"><input value={repositoryUrl} onChange={(event) => setRepositoryUrl(event.target.value)} placeholder="https://git.example.com/team/project.git" className="h-10 w-full rounded-xl border border-black/10 bg-white px-3 text-sm outline-none focus:border-black/25" /><div className="grid gap-2 sm:grid-cols-2"><input value={branch} onChange={(event) => setBranch(event.target.value)} placeholder="默认分支（main）" className="h-10 rounded-xl border border-black/10 bg-white px-3 text-sm outline-none focus:border-black/25" /><input type="password" value={token} onChange={(event) => setToken(event.target.value)} autoComplete="off" placeholder={config.token_configured ? '已配置令牌；留空不修改' : '访问令牌（可选）'} className="h-10 rounded-xl border border-black/10 bg-white px-3 text-sm outline-none focus:border-black/25" /></div><div className="flex items-center justify-between gap-3"><span className="text-[11px] text-black/40">允许的主机：{config.allowed_hosts.join('、') || '管理员尚未配置'}</span><button type="button" disabled={busy || !repositoryUrl.trim()} onClick={() => void save()} className="rounded-full bg-black px-3 py-2 text-xs font-medium text-white disabled:opacity-40">保存配置</button></div></div><div className="mt-4 flex flex-wrap items-center gap-2"><button type="button" disabled={busy || !config.repository_url} onClick={() => void pull()} className="inline-flex items-center gap-1.5 rounded-full border border-black/10 px-4 py-2 text-sm hover:bg-black/5 disabled:opacity-40"><Download className="h-4 w-4" />ff-only Pull</button><button type="button" disabled={busy || !config.repository_url} onClick={() => setPushOpen(true)} className="inline-flex items-center gap-1.5 rounded-full bg-black px-4 py-2 text-sm text-white hover:bg-black/85 disabled:opacity-40"><Cloud className="h-4 w-4" />Push</button>{lastOperation ? <span className="text-xs text-emerald-600">{lastOperation.label} · {(lastOperation.durationMs / 1000).toFixed(1)}s</span> : null}</div><ConfirmDialog open={pushOpen} onClose={() => !busy && setPushOpen(false)} onConfirm={push} title="确认 Push？" description="这会把工作空间当前提交推送到已配置的远程仓库。Mira 不会把访问令牌交给 Codex。" confirmLabel="确认 Push" busy={busy} /></div>;
+  return <div><div className="mb-4"><h2 className="text-base font-semibold">Git 配置</h2><p className="mt-0.5 text-xs text-black/40">仅支持管理员白名单内的私有 HTTPS 仓库；令牌不会显示或进入 Codex 容器。</p></div><div className="space-y-3 rounded-2xl border border-black/5 bg-[#F4F5F7] p-4"><input value={repositoryUrl} onChange={(event) => setRepositoryUrl(event.target.value)} placeholder="https://git.example.com/team/project.git" className="h-10 w-full rounded-xl border border-black/10 bg-white px-3 text-sm outline-none focus:border-black/25" /><div className="grid gap-2 sm:grid-cols-2"><input value={branch} onChange={(event) => setBranch(event.target.value)} placeholder="默认分支（main）" className="h-10 rounded-xl border border-black/10 bg-white px-3 text-sm outline-none focus:border-black/25" /><input type="password" value={token} onChange={(event) => setToken(event.target.value)} autoComplete="off" placeholder={config.token_configured ? '已配置令牌；留空不修改' : '访问令牌（可选）'} className="h-10 rounded-xl border border-black/10 bg-white px-3 text-sm outline-none focus:border-black/25" /></div><div className="flex items-center justify-between gap-3"><span className="text-[11px] text-black/40">允许的主机：{config.allowed_hosts.join('、') || '管理员尚未配置'}</span><button type="button" disabled={busy || !repositoryUrl.trim()} onClick={() => void save()} className="rounded-full bg-black px-3 py-2 text-xs font-medium text-white disabled:opacity-40">保存配置</button></div></div></div>;
 }
 
 function NewSessionDialog({ open, onClose, onCreate }: { open: boolean; onClose(): void; onCreate(title: string): Promise<void> }) { const [title, setTitle] = useState(''); return <AppDialog open={open} onClose={onClose} title="新建会话" footer={<><button type="button" onClick={onClose} className="rounded-full border border-black/10 px-4 py-2 text-sm">取消</button><button type="button" disabled={!title.trim()} onClick={() => void onCreate(title.trim())} className="rounded-full bg-black px-4 py-2 text-sm text-white disabled:opacity-40">创建</button></>}><input value={title} onChange={(event) => setTitle(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && title.trim()) void onCreate(title.trim()); }} autoFocus placeholder="例如：重构登录页" className="h-11 w-full rounded-xl border border-black/10 px-3 text-sm outline-none focus:border-black/30" /></AppDialog>; }
