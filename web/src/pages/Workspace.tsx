@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, Bot, Check, ChevronRight, Cloud, Download, File, Folder, GitBranch, MessageSquare, MoreHorizontal, Paperclip, Play, RefreshCw, Send, Settings2, Square, Upload, X } from 'lucide-react';
+import { ArrowLeft, Bot, Check, ChevronRight, Cloud, Download, File, Folder, GitBranch, MessageSquare, MoreHorizontal, Paperclip, Play, RefreshCw, Send, Square, Upload, X } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Background, Controls, ReactFlow } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { TopNav } from '../components/common/TopNav';
 import { ConfirmDialog } from '../components/common/ConfirmDialog';
 import { AppDialog } from '../components/common/AppDialog';
-import { MobileSheet } from '../components/mobile/MobileSheet';
 import { useWorkspaceStore } from '../stores/useWorkspaceStore';
+import { showCaughtError } from '../stores/useErrorDialogStore';
 import * as api from '../lib/api';
 import type { Workspace, WorkspaceEvent, WorkspaceFile, WorkspaceSession, WorkspaceWorkflowProposal } from '../types';
 import type { App, DecisionAnswer, RunWaitingRequest, UploadRef } from '../types';
@@ -57,7 +57,7 @@ function WorkspaceShell({ workspace, mobile = false, onBack }: { workspace: Work
   const [proposals, setProposals] = useState<WorkspaceWorkflowProposal[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [newSessionOpen, setNewSessionOpen] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [syncingWiki, setSyncingWiki] = useState(false);
   const [filePreview, setFilePreview] = useState<WorkspaceFile | null>(null);
   const [deleteSession, setDeleteSession] = useState<WorkspaceSession | null>(null);
   const [renameSessionOpen, setRenameSessionOpen] = useState(false);
@@ -115,6 +115,29 @@ function WorkspaceShell({ workspace, mobile = false, onBack }: { workspace: Work
     setSessions((items) => items.map((item) => item.id === updated.id ? updated : item));
     setRenameSessionOpen(false);
   };
+  const syncWiki = async () => {
+    if (syncingWiki) return;
+    setSyncingWiki(true);
+    try {
+      const retry = workspace.wiki_sync_status === 'failed' || workspace.wiki_sync_status === 'conflict';
+      const result = await (retry ? api.retryWorkspaceWiki(workspace.id) : api.syncWorkspaceWiki(workspace.id));
+      useWorkspaceStore.setState((state) => ({
+        workspaces: state.workspaces.map((item) => item.id === workspace.id ? {
+          ...item,
+          wiki_base_revision_id: result.base_revision_id,
+          wiki_sync_status: result.status,
+          wiki_sync_error: result.error,
+        } : item),
+      }));
+      if (result.status !== 'ready') {
+        showCaughtError(new Error(result.error || 'Wiki 同步未完成'), 'Wiki 同步未完成', '同步失败');
+      }
+    } catch (error) {
+      showCaughtError(error, 'Wiki 同步失败', '同步失败');
+    } finally {
+      setSyncingWiki(false);
+    }
+  };
 
   return (
     <div className="min-h-full bg-[#F4F5F7] text-[#0B0B0F]">
@@ -123,7 +146,7 @@ function WorkspaceShell({ workspace, mobile = false, onBack }: { workspace: Work
         <div className="mb-5 flex items-center gap-3">
           <button type="button" onClick={onBack} className="grid h-9 w-9 place-items-center rounded-full border border-black/10 bg-white text-black/55 hover:text-black" aria-label="返回"><ArrowLeft className="h-4 w-4" /></button>
           <div className="min-w-0 flex-1"><h1 className="truncate text-2xl font-semibold tracking-tight">{workspace.name}</h1>{workspace.description ? <p className="mt-0.5 truncate text-xs text-black/45">{workspace.description}</p> : null}</div>
-          <button type="button" onClick={() => setSettingsOpen(true)} className="grid h-9 w-9 place-items-center rounded-full border border-black/10 bg-white text-black/45 hover:text-black" aria-label="工作空间设置"><Settings2 className="h-4 w-4" /></button>
+          <button type="button" onClick={() => void syncWiki()} disabled={syncingWiki} aria-busy={syncingWiki} className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full border border-black/10 bg-white px-3 text-xs font-medium text-black/55 hover:text-black disabled:cursor-wait disabled:opacity-55"><RefreshCw className={`h-3.5 w-3.5 ${syncingWiki ? 'animate-spin' : ''}`} />{syncingWiki ? '同步中…' : '同步 Wiki'}</button>
         </div>
         <div className={`${mobile ? 'flex flex-col gap-4' : 'grid grid-cols-[220px_minmax(0,1fr)] gap-5'}`}>
           <aside className="rounded-[22px] border border-black/5 bg-white p-3 shadow-card">
@@ -145,7 +168,6 @@ function WorkspaceShell({ workspace, mobile = false, onBack }: { workspace: Work
       <PromptDialog open={renameSessionOpen} onClose={() => setRenameSessionOpen(false)} onConfirm={renameSession} title="重命名会话" inputLabel="会话名称" value={sessionTitle} onChange={setSessionTitle} disabled={!sessionTitle.trim() || sessionTitle.trim() === session?.title} />
       <FilePreviewDialog workspace={workspace} file={filePreview} onClose={() => setFilePreview(null)} />
       <ConfirmDialog open={deleteSession !== null} onClose={() => setDeleteSession(null)} onConfirm={async () => { if (deleteSession) { await api.deleteWorkspaceSession(deleteSession.id); setSessions((items) => items.filter((item) => item.id !== deleteSession.id)); if (session?.id === deleteSession.id) setSession(null); setDeleteSession(null); } }} title="删除会话？" description="会话记录和 Codex thread 将被永久删除。" confirmLabel="删除" tone="danger" />
-      {mobile ? <MobileSheet open={settingsOpen} onOpenChange={setSettingsOpen} title="工作空间设置" description="查看运行状态并同步工作空间 Wiki。"><WorkspaceSettings workspace={workspace} /></MobileSheet> : <AppDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} title="工作空间设置"><WorkspaceSettings workspace={workspace} /></AppDialog>}
     </div>
   );
 }
@@ -427,8 +449,6 @@ function WorkspaceGit({ workspace }: { workspace: Workspace }) {
   };
   return <div><div className="mb-4"><h2 className="text-base font-semibold">Git 同步</h2><p className="mt-0.5 text-xs text-black/40">仅支持管理员白名单内的私有 HTTPS 仓库；令牌不会显示或进入 Codex 容器。</p></div><div className="space-y-3 rounded-2xl border border-black/5 bg-[#F4F5F7] p-4"><input value={repositoryUrl} onChange={(event) => setRepositoryUrl(event.target.value)} placeholder="https://git.example.com/team/project.git" className="h-10 w-full rounded-xl border border-black/10 bg-white px-3 text-sm outline-none focus:border-black/25" /><div className="grid gap-2 sm:grid-cols-2"><input value={branch} onChange={(event) => setBranch(event.target.value)} placeholder="默认分支（main）" className="h-10 rounded-xl border border-black/10 bg-white px-3 text-sm outline-none focus:border-black/25" /><input type="password" value={token} onChange={(event) => setToken(event.target.value)} autoComplete="off" placeholder={config.token_configured ? '已配置令牌；留空不修改' : '访问令牌（可选）'} className="h-10 rounded-xl border border-black/10 bg-white px-3 text-sm outline-none focus:border-black/25" /></div><div className="flex items-center justify-between gap-3"><span className="text-[11px] text-black/40">允许的主机：{config.allowed_hosts.join('、') || '管理员尚未配置'}</span><button type="button" disabled={busy || !repositoryUrl.trim()} onClick={() => void save()} className="rounded-full bg-black px-3 py-2 text-xs font-medium text-white disabled:opacity-40">保存配置</button></div></div><div className="mt-4 flex flex-wrap items-center gap-2"><button type="button" disabled={busy || !config.repository_url} onClick={() => void pull()} className="inline-flex items-center gap-1.5 rounded-full border border-black/10 px-4 py-2 text-sm hover:bg-black/5 disabled:opacity-40"><Download className="h-4 w-4" />ff-only Pull</button><button type="button" disabled={busy || !config.repository_url} onClick={() => setPushOpen(true)} className="inline-flex items-center gap-1.5 rounded-full bg-black px-4 py-2 text-sm text-white hover:bg-black/85 disabled:opacity-40"><Cloud className="h-4 w-4" />Push</button>{lastOperation ? <span className="text-xs text-emerald-600">{lastOperation.label} · {(lastOperation.durationMs / 1000).toFixed(1)}s</span> : null}</div><ConfirmDialog open={pushOpen} onClose={() => !busy && setPushOpen(false)} onConfirm={push} title="确认 Push？" description="这会把工作空间当前提交推送到已配置的远程仓库。Mira 不会把访问令牌交给 Codex。" confirmLabel="确认 Push" busy={busy} /></div>;
 }
-
-function WorkspaceSettings({ workspace }: { workspace: Workspace }) { const retry = workspace.wiki_sync_status === 'failed' || workspace.wiki_sync_status === 'conflict'; return <div className="space-y-3 text-sm"><div className="flex items-center justify-between rounded-2xl bg-[#F4F5F7] px-4 py-3"><span className="text-black/55">Runtime</span><span className="font-medium">{workspace.runtime_status}</span></div><div className="rounded-2xl bg-[#F4F5F7] px-4 py-3"><div className="flex items-center justify-between"><span className="text-black/55">Wiki 同步</span><span className="font-medium">{workspace.wiki_sync_status}</span></div>{workspace.wiki_sync_error ? <p className="mt-2 text-xs leading-5 text-red-600">{workspace.wiki_sync_error}</p> : null}</div><button type="button" onClick={() => void (retry ? api.retryWorkspaceWiki(workspace.id) : api.syncWorkspaceWiki(workspace.id))} className="inline-flex items-center gap-1.5 rounded-full border border-black/10 px-4 py-2 text-sm hover:bg-black/5"><RefreshCw className="h-4 w-4" />{retry ? '重试 Wiki 合并' : '同步 Wiki'}</button></div>; }
 
 function NewSessionDialog({ open, onClose, onCreate }: { open: boolean; onClose(): void; onCreate(title: string): Promise<void> }) { const [title, setTitle] = useState(''); return <AppDialog open={open} onClose={onClose} title="新建会话" footer={<><button type="button" onClick={onClose} className="rounded-full border border-black/10 px-4 py-2 text-sm">取消</button><button type="button" disabled={!title.trim()} onClick={() => void onCreate(title.trim())} className="rounded-full bg-black px-4 py-2 text-sm text-white disabled:opacity-40">创建</button></>}><input value={title} onChange={(event) => setTitle(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && title.trim()) void onCreate(title.trim()); }} autoFocus placeholder="例如：重构登录页" className="h-11 w-full rounded-xl border border-black/10 px-3 text-sm outline-none focus:border-black/30" /></AppDialog>; }
 
