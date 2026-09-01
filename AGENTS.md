@@ -74,6 +74,7 @@ Mira 是参考 Google Opal 产品思路构建的可视化 AI App 平台，使用
 
 - 动手前明确目标、假设和验证方式；只改与任务直接相关的代码，不顺手重构、改名、格式化或清理既有死代码。
 - 优先最简单的现有结构；不添加 speculative features、预留扩展点或一次性逻辑框架。
+- 前端界面禁止添加解释内部实现、重复控件含义或没有操作价值的辅助提示；仅保留完成任务所必需的状态、错误、安全确认、空状态和无障碍文本。
 - Wire shape 变化必须同步前端类型/API/WS 与后端 schema/router/service/test。ORM 变化必须新增 Alembic migration。
 - 修改节点类型、Run/SSE、Settings、Tools、runtime 边界或启动方式时，同步相关 README、ADR 和最近的 `AGENTS.md`。
 - 修改 seed 后必须同步开发数据库和部署数据库，或在交付说明中明确未同步原因。Prompt Template seed 的变量必须与 `backend/app/services/prompts.py` 调用一致。
