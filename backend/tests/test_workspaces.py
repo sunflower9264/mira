@@ -164,6 +164,17 @@ def test_workspace_files_hide_playwright_cli_runtime_directory(auth_client):
     ).status_code == 400
 
 
+def test_workspace_git_allowlist_defaults(auth_client):
+    settings = auth_client.get("/api/settings")
+    assert settings.status_code == 200
+    assert settings.json()["workspace_git_allowed_hosts"] == [
+        "github.com",
+        "gitlab.com",
+        "bitbucket.org",
+        "gitee.com",
+    ]
+
+
 def test_workspace_git_allowlist_and_token_redaction(auth_client):
     workspace_id = _create_workspace(auth_client, "Git")["id"]
     configured = auth_client.put(

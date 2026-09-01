@@ -7,6 +7,9 @@ from app.db import Base
 from app.utils import now_utc
 
 
+DEFAULT_WORKSPACE_GIT_ALLOWED_HOSTS_JSON = '["github.com","gitlab.com","bitbucket.org","gitee.com"]'
+
+
 class SettingsRow(Base):
     __tablename__ = "settings"
 
@@ -14,5 +17,8 @@ class SettingsRow(Base):
     supported_models_json: Mapped[str] = mapped_column(Text)
     skills_json: Mapped[str] = mapped_column(Text)
     mcp_servers_json: Mapped[str] = mapped_column(Text)
-    workspace_git_allowed_hosts_json: Mapped[str] = mapped_column(Text, default="[]")
+    workspace_git_allowed_hosts_json: Mapped[str] = mapped_column(
+        Text,
+        default=DEFAULT_WORKSPACE_GIT_ALLOWED_HOSTS_JSON,
+    )
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)

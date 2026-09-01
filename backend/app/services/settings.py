@@ -4,7 +4,8 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import SettingsRow, Skill
+from app.models import Skill
+from app.models.settings import DEFAULT_WORKSPACE_GIT_ALLOWED_HOSTS_JSON, SettingsRow
 from app.schemas import McpServerConfig, MiraSettings
 from app.utils import dumps, loads, now_utc
 
@@ -28,7 +29,7 @@ async def get_or_create_settings_row(db: AsyncSession) -> SettingsRow:
         supported_models_json=dumps([]),
         skills_json=dumps([]),
         mcp_servers_json=dumps([]),
-        workspace_git_allowed_hosts_json=dumps([]),
+        workspace_git_allowed_hosts_json=DEFAULT_WORKSPACE_GIT_ALLOWED_HOSTS_JSON,
         updated_at=now_utc(),
     )
     db.add(row)

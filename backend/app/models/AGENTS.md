@@ -10,7 +10,7 @@
 - `nlcompile_session.py`：NL compile 计划、历史、waiting request 和 apply 状态。
 - `prompt_assistant_generation.py`：Prompt Assistant 生成、历史、waiting request 和结果状态。
 - `codex_config.py`：唯一 Codex config/auth 密文及用户修改状态。
-- `settings.py`：全局 supported models、Skill/MCP 配置 JSON。
+- `settings.py`：全局 supported models、Skill/MCP 配置和 Workspace Git 主机白名单 JSON。
 - `skill.py`：Skill 归档、根目录、启用/规划开关和 Python 依赖层状态。
 - `prompt_template.py`：Prompt Template 内容、变量和更新时间。
 - `wiki.py`：用户单例 Wiki、原始来源、不可变 revision、后台 operation、Run Wiki snapshot 与第三方授权。
@@ -27,7 +27,7 @@
 
 ## 结构变更规则
 
-- 每个 ORM 结构变化都新增线性 Alembic migration；当前 head 为 `0026_user_wiki`。
+- 每个 ORM 结构变化都新增线性 Alembic migration；当前 head 为 `0028_default_workspace_git_hosts`。
 - Model 不实现权限、业务流程、runtime 调用、JSON 校验或响应序列化。
 - 新字段同步 migration、Pydantic schema、serializer/service、测试、必要的 seed/fixture 和前端类型。
 - 外键删除语义、索引和 nullable/default 必须与 migration 一致，尤其注意 SQLite batch alter。
