@@ -161,6 +161,44 @@ def test_workflow_lint_does_not_warn_for_prompt_that_forbids_hidden_channels(aut
     assert "prompt_hidden_data_channel" not in codes
 
 
+def test_workflow_lint_allows_official_workspace_input_paths(auth_client):
+    app_id = _create_app(auth_client)
+    graph = {
+        "nodes": [
+            _generate_node(
+                "n_gen",
+                prompt="读取 /workspace/.mira/run-context/ 中的输入，并读取 /workspace/inputs/ 中的附件",
+            ),
+            _output_node("n_out", "n_gen"),
+        ],
+        "execution_edges": [{"id": "e1", "source": "n_gen", "target": "n_out"}],
+    }
+
+    body = _lint(auth_client, app_id, graph)
+    codes = {issue["code"] for issue in body["issues"]}
+
+    assert "prompt_hidden_data_channel" not in codes
+
+
+def test_workflow_lint_official_input_path_does_not_hide_handoff_path(auth_client):
+    app_id = _create_app(auth_client)
+    graph = {
+        "nodes": [
+            _generate_node(
+                "n_gen",
+                prompt="读取 /workspace/.mira/run-context/ 中的输入，再读取 /workspace/handoff.json",
+            ),
+            _output_node("n_out", "n_gen"),
+        ],
+        "execution_edges": [{"id": "e1", "source": "n_gen", "target": "n_out"}],
+    }
+
+    body = _lint(auth_client, app_id, graph)
+    warning_codes = {issue["code"] for issue in body["issues"] if issue["severity"] == "warning"}
+
+    assert "prompt_hidden_data_channel" in warning_codes
+
+
 def test_workflow_lint_requires_output_for_non_empty_graph(auth_client):
     app_id = _create_app(auth_client)
     graph = {

@@ -385,6 +385,10 @@ _HIDDEN_CHANNEL_ACTION_RE = re.compile(
     r".{0,40}(?:/workspace(?:/|\b)|\bhandoff\b|\bsidecar\b|\bmanifest\b)",
     re.IGNORECASE,
 )
+_OFFICIAL_WORKSPACE_INPUT_PATH_RE = re.compile(
+    r"/workspace/(?:\.mira/run-context|inputs)(?:/|\b)",
+    re.IGNORECASE,
+)
 _HIDDEN_CHANNEL_NEGATIONS = ("不得", "禁止", "不要", "不可", "不能", "严禁", "avoid", "do not", "must not", "never")
 
 
@@ -393,7 +397,8 @@ def _prompt_uses_hidden_data_channel(prompt: str) -> bool:
         lowered = line.lower()
         if any(negation in lowered for negation in _HIDDEN_CHANNEL_NEGATIONS):
             continue
-        if _HIDDEN_CHANNEL_ACTION_RE.search(line):
+        candidate = _OFFICIAL_WORKSPACE_INPUT_PATH_RE.sub("", line)
+        if _HIDDEN_CHANNEL_ACTION_RE.search(candidate):
             return True
     return False
 
