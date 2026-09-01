@@ -314,7 +314,7 @@ function WorkspaceWorkflow({ workspace, proposals, onRefresh }: { workspace: Wor
   useEffect(() => {
     void api.listMyApps().then((items) => {
       setApps(items);
-      setRunAppId((current) => current || items[0]?.id || '');
+      setRunAppId((current) => items.some((item) => item.id === current) ? current : '');
     });
   }, []);
   const confirm = async () => {
@@ -389,6 +389,7 @@ function WorkspaceWorkflow({ workspace, proposals, onRefresh }: { workspace: Wor
         <div className="text-xs font-semibold text-black/55">在此工作空间运行应用</div>
         <div className="mt-3 grid grid-cols-[minmax(0,1fr)] gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
           <select value={runAppId} onChange={(event) => setRunAppId(event.target.value)} className="h-10 min-w-0 rounded-xl border border-black/10 bg-white px-3 text-sm outline-none focus:border-black/25">
+            <option value="">不选择工作流</option>
             {apps.map((app) => <option key={app.id} value={app.id}>{app.name}</option>)}
           </select>
           <input value={runInput} onChange={(event) => setRunInput(event.target.value)} placeholder="应用输入（如需要）" className="h-10 min-w-0 rounded-xl border border-black/10 bg-white px-3 text-sm outline-none focus:border-black/25" />
