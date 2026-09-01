@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Clock3, FolderKanban, GitBranch, MoreHorizontal, Plus, Server, Sparkles } from 'lucide-react';
+import { Clock3, FolderKanban, GitBranch, MoreHorizontal, Plus, Sparkles } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { AppDialog } from '../common/AppDialog';
 import { ConfirmDialog } from '../common/ConfirmDialog';
@@ -32,14 +32,9 @@ export function WorkspaceLibrary({ mobile = false }: { mobile?: boolean }) {
     <>
       <section>
         <div className="flex items-center justify-between gap-3">
-          <div>
-            <h2 className={mobile ? 'text-lg font-semibold tracking-tight' : 'text-xl font-semibold tracking-tight'}>
-              工作空间
-            </h2>
-            <p className="mt-1 text-xs leading-5 text-black/45">
-              持久项目、Codex 会话、Wiki 与可视化工作流都在这里协作。
-            </p>
-          </div>
+          <h2 className={mobile ? 'text-lg font-semibold tracking-tight' : 'text-xl font-semibold tracking-tight'}>
+            工作空间
+          </h2>
           <button
             type="button"
             onClick={() => setCreateOpen(true)}
@@ -64,9 +59,6 @@ export function WorkspaceLibrary({ mobile = false }: { mobile?: boolean }) {
           >
             <Sparkles className="h-7 w-7 text-black/25" />
             <span className="mt-3 text-sm font-medium text-black/70">创建第一个工作空间</span>
-            <span className="mt-1 max-w-sm text-xs leading-5 text-black/45">
-              从空目录、文件或私有 Git 项目开始，Codex 会在同一个持久目录中继续工作。
-            </span>
           </button>
         ) : (
           <div className={`mt-4 grid gap-4 ${mobile ? 'grid-cols-1' : 'sm:grid-cols-2 lg:grid-cols-3'}`}>
@@ -119,7 +111,6 @@ export function WorkspaceLibrary({ mobile = false }: { mobile?: boolean }) {
           }
         }}
         title="重命名工作空间"
-        description="名称只用于识别，不会更改项目目录或 Codex 会话。"
         inputLabel="工作空间名称"
         value={nextName}
         onChange={setNextName}
@@ -165,7 +156,7 @@ function WorkspaceCard({
   const [menuOpen, setMenuOpen] = useState(false);
   const runtime = runtimeCopy(workspace.runtime_status);
   return (
-    <article className="relative min-h-44 overflow-hidden rounded-[22px] border border-black/5 bg-white p-5 shadow-card transition hover:-translate-y-0.5 hover:shadow-[0_10px_30px_rgba(0,0,0,0.08)]">
+    <article className="relative flex min-h-44 flex-col overflow-hidden rounded-[22px] border border-black/5 bg-white p-5 shadow-card transition hover:-translate-y-0.5 hover:shadow-[0_10px_30px_rgba(0,0,0,0.08)]">
       <button type="button" onClick={onOpen} className="absolute inset-0 z-0" aria-label={`打开 ${workspace.name}`} />
       <div className="relative z-10 flex items-start justify-between gap-3 pointer-events-none">
         <div className="grid h-10 w-10 place-items-center rounded-2xl bg-black text-white shadow-sm">
@@ -188,17 +179,14 @@ function WorkspaceCard({
           ) : null}
         </div>
       </div>
-      <div className="pointer-events-none relative z-0 mt-4">
+      <div className="pointer-events-none relative z-0 mt-4 flex flex-1 flex-col">
         <h3 className="truncate text-base font-semibold tracking-tight">{workspace.name}</h3>
-        <p className="mt-1 line-clamp-2 min-h-10 text-xs leading-5 text-black/45">
-          {workspace.description || '持久 Codex 项目工作空间'}
-        </p>
-        <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2 text-[11px] text-black/45">
+        {workspace.description ? <p className="mt-1 line-clamp-2 text-xs leading-5 text-black/45">{workspace.description}</p> : null}
+        <div className="mt-auto flex flex-wrap items-center gap-x-3 gap-y-2 pt-4 text-[11px] text-black/45">
           <span className="inline-flex items-center gap-1.5">
             <span className={`h-1.5 w-1.5 rounded-full ${runtime.dot}`} />
             {runtime.label}
           </span>
-          <span className="inline-flex items-center gap-1"><Server className="h-3 w-3" /> 常驻 runtime</span>
           <span className="inline-flex items-center gap-1"><Clock3 className="h-3 w-3" /> {formatRelative(workspace.updated_at)}</span>
         </div>
       </div>
@@ -240,7 +228,6 @@ function CreateWorkspaceDialog({
       open={open}
       onClose={onClose}
       title="新建工作空间"
-      description="每个工作空间拥有独立的持久项目目录、Codex runtime 和多条会话。"
       widthClassName="max-w-lg"
       dismissible={!busy}
       footer={
