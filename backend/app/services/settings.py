@@ -28,6 +28,7 @@ async def get_or_create_settings_row(db: AsyncSession) -> SettingsRow:
         supported_models_json=dumps([]),
         skills_json=dumps([]),
         mcp_servers_json=dumps([]),
+        workspace_git_allowed_hosts_json=dumps([]),
         updated_at=now_utc(),
     )
     db.add(row)
@@ -63,7 +64,28 @@ async def settings_out(db: AsyncSession, reveal_keys: bool = False) -> MiraSetti
         skills=[skill_to_config(skill) for skill in skills],
         mcp_servers=mcp_servers if reveal_keys else _redact_mcp_headers(mcp_servers),
         tools=tool_inventory(skills, mcp_servers),
+        workspace_git_allowed_hosts=loads(row.workspace_git_allowed_hosts_json, []),
     )
+
+
+def normalize_workspace_git_allowed_hosts(values: list[str] | None) -> list[str]:
+    hosts: list[str] = []
+    for value in values or []:
+        host = str(value).strip().lower().rstrip(".")
+        if not host or "/" in host or ":" in host or host in hosts:
+            if host:
+                raise HTTPException(status_code=400, detail=f"Git host 无效：{value}")
+            continue
+        hosts.append(host)
+    return hosts
+
+
+async def save_workspace_git_allowed_hosts(db: AsyncSession, values: list[str]) -> MiraSettings:
+    row = await get_or_create_settings_row(db)
+    row.workspace_git_allowed_hosts_json = dumps(normalize_workspace_git_allowed_hosts(values))
+    row.updated_at = now_utc()
+    await db.commit()
+    return await settings_out(db, reveal_keys=True)
 
 
 def _redact_mcp_headers(mcp_servers: list[dict]) -> list[dict]:

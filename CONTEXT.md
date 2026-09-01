@@ -12,6 +12,7 @@ Mira 把一次 Application Run 视为一个逻辑 RunAgent，而不是一组彼�
 - 文件视图：workspace 内未声明文件可以参与本次运行推理，但只有 artifact contract 声明且完整性通过的产物可以进入 Run Files、Trace artifacts 和下载 API。
 - Checkpoint rerun：从 cut 节点前 checkpoint 创建新 Run。cut 前 workspace、Codex thread lineage 和 step 状态冻结；当前 App graph 只执行 cut 及下游。cut 前 input override 不生效。
 - Wiki：每个用户拥有一个独立长期 Wiki。新 Run 冻结当前 Wiki revision 与 raw manifest，并在所有 branch/plan/repair/join turn 中只读挂载到 `/mnt/wiki`；Wiki 不进入 workspace/checkpoint，Run 输出和 artifact 绝不自动写回。checkpoint rerun 继承来源 Run 的同一 Wiki 快照。
+- Workspace：每个 owner-only Workspace 拥有持久项目目录、多个 Codex thread 和一个常驻 Docker App Server；Workspace 内 turn 串行。每轮先同步 Wiki working copy，成功后才通过 revision/三方合并发布；Workflow graph 只能经带 base SHA 的 `WorkflowProposal`、lint、只读预览和人工确认修改。Workspace 内运行 App 仍创建正式 Run。
 
 ## 代码入口
 
@@ -25,3 +26,5 @@ Mira 把一次 Application Run 视为一个逻辑 RunAgent，而不是一组彼�
 
 详细决策与取舍见 `docs/adr/0001-run-agent-session-tree.md`。
 Wiki 决策见 `docs/adr/0002-user-llm-wiki.md`。
+持久 Workspace runtime 决策见 `docs/adr/0003-persistent-codex-workspace-runtime.md`。
+Workspace Wiki 与工作流桥接决策见 `docs/adr/0004-workspace-wiki-workflow-bridge.md`。

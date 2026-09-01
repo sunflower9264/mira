@@ -9,8 +9,10 @@ import { ConfirmDialog } from '../components/common/ConfirmDialog';
 import { PromptDialog } from '../components/common/PromptDialog';
 import { showCaughtError, showErrorDialog } from '../stores/useErrorDialogStore';
 import type { App } from '../types';
+import { WorkspaceLibrary } from '../components/workspace/WorkspaceLibrary';
 
 type LibraryTab = 'mine' | 'recent';
+type HomeTab = 'apps' | 'workspaces';
 
 export function Home() {
   const navigate = useNavigate();
@@ -21,6 +23,7 @@ export function Home() {
   const [dialogBusy, setDialogBusy] = useState(false);
   const [templateImportingId, setTemplateImportingId] = useState<string | null>(null);
   const [libraryTab, setLibraryTab] = useState<LibraryTab>('mine');
+  const [homeTab, setHomeTab] = useState<HomeTab>('apps');
 
   useEffect(() => {
     void load();
@@ -129,12 +132,15 @@ export function Home() {
       <TopNav />
       <main className="max-w-6xl mx-auto px-6 pt-16 pb-24">
         <h1 className="text-center text-3xl font-medium leading-tight">
-          用自然语言创建和编辑
-          <br />
-          迷你 AI 应用
+          {homeTab === 'apps' ? <>用自然语言创建和编辑<br />迷你 AI 应用</> : <>让 Codex 在持久项目中<br />继续完成复杂工作</>}
         </h1>
 
-        <section className="mt-8">
+        <div role="tablist" aria-label="首页功能" className="mx-auto mt-7 flex w-fit rounded-full border border-black/5 bg-white p-1 text-sm shadow-pill">
+          <button type="button" role="tab" aria-selected={homeTab === 'apps'} onClick={() => setHomeTab('apps')} className={`h-9 rounded-full px-5 transition ${homeTab === 'apps' ? 'bg-black font-medium text-white' : 'text-black/50 hover:bg-black/[0.04] hover:text-black'}`}>应用</button>
+          <button type="button" role="tab" aria-selected={homeTab === 'workspaces'} onClick={() => setHomeTab('workspaces')} className={`h-9 rounded-full px-5 transition ${homeTab === 'workspaces' ? 'bg-black font-medium text-white' : 'text-black/50 hover:bg-black/[0.04] hover:text-black'}`}>工作空间</button>
+        </div>
+
+        {homeTab === 'apps' ? <section className="mt-8">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div
               role="tablist"
@@ -217,9 +223,9 @@ export function Home() {
               </>
             )}
           </div>
-        </section>
+        </section> : <div className="mt-8"><WorkspaceLibrary /></div>}
 
-        {libraryTab === 'mine' && (
+        {homeTab === 'apps' && libraryTab === 'mine' && (
           <MarketSection
             items={catalogItems}
             importingId={templateImportingId}

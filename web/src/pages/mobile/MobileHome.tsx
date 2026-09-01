@@ -6,8 +6,9 @@ import { useAuthStore } from '../../stores/useAuthStore';
 import { showCaughtError, showErrorDialog } from '../../stores/useErrorDialogStore';
 import type { App } from '../../types';
 import { useAppCoverUrl } from '../../hooks/useAppCoverUrl';
+import { WorkspaceLibrary } from '../../components/workspace/WorkspaceLibrary';
 
-type Tab = 'mine' | 'recent' | 'market';
+type Tab = 'mine' | 'recent' | 'market' | 'workspaces';
 type MobileListItem = {
   app: App;
   kind: 'mine' | 'recent' | 'template' | 'market';
@@ -40,7 +41,7 @@ export function MobileHome() {
   const source = useMemo<MobileListItem[]>(() => {
     if (tab === 'mine') return myApps.map((app) => ({ app, kind: 'mine' as const }));
     if (tab === 'recent') return recentRuns.map((app) => ({ app, kind: 'recent' as const }));
-    return catalogItems;
+    return tab === 'market' ? catalogItems : [];
   }, [catalogItems, myApps, recentRuns, tab]);
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -105,18 +106,22 @@ export function MobileHome() {
           <input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="搜索应用"
+            placeholder={tab === 'workspaces' ? '工作空间在下方管理' : '搜索应用'}
+            disabled={tab === 'workspaces'}
             className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-black/35"
           />
         </div>
-        <div className="mt-3 grid grid-cols-3 rounded-full bg-black/[0.05] p-1 text-sm">
+        <div className="mt-3 grid grid-cols-4 rounded-full bg-black/[0.05] p-1 text-xs">
           <TabButton active={tab === 'mine'} onClick={() => setTab('mine')}>我的应用</TabButton>
           <TabButton active={tab === 'recent'} onClick={() => setTab('recent')}>最近运行</TabButton>
           <TabButton active={tab === 'market'} onClick={() => setTab('market')}>应用市场</TabButton>
+          <TabButton active={tab === 'workspaces'} onClick={() => setTab('workspaces')}>工作空间</TabButton>
         </div>
       </header>
 
       <main className="px-4 pb-[calc(env(safe-area-inset-bottom)+28px)] pt-4">
+        {tab === 'workspaces' ? <WorkspaceLibrary mobile /> : null}
+        {tab !== 'workspaces' ? <>
         {loading && source.length === 0 ? (
           <div className="space-y-3">
             {[0, 1, 2].map((item) => (
@@ -155,6 +160,7 @@ export function MobileHome() {
             />
           ))}
         </div>
+        </> : null}
       </main>
     </div>
   );

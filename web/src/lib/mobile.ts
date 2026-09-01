@@ -49,6 +49,8 @@ export function mobilePathFor(pathname: string): string | null {
   if (pathname.startsWith('/m')) return null;
   if (pathname === '/') return '/m';
   if (pathname === '/login') return '/m/login';
+  const workspaceMatch = matchPath('/workspaces/:id', pathname);
+  if (workspaceMatch?.params.id) return `/m/workspaces/${workspaceMatch.params.id}`;
   const appMatch =
     matchPath('/apps/:id/editor', pathname) ??
     matchPath('/apps/:id/view', pathname) ??
@@ -61,6 +63,8 @@ export function desktopPathFor(pathname: string): string | null {
   if (!pathname.startsWith('/m')) return null;
   if (pathname === '/m') return '/';
   if (pathname === '/m/login') return '/login';
+  const workspaceMatch = matchPath('/m/workspaces/:id', pathname);
+  if (workspaceMatch?.params.id) return `/workspaces/${workspaceMatch.params.id}`;
   const appMatch = matchPath('/m/apps/:id/run', pathname);
   if (appMatch?.params.id) return `/apps/${appMatch.params.id}/view`;
   return null;

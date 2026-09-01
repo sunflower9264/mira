@@ -39,6 +39,7 @@ Mira 是参考 Google Opal 产品思路构建的可视化 AI App 平台，使用
 - 一次 Application Run 对应一个逻辑 RunAgent。线性节点复用同一 Codex thread 和 branch workspace；`user_input` / `asset` 写入 `.mira/run-context/`，附件复制到 `inputs/`。只有真实 fan-out 才通过 checkpoint、`thread/fork` 和独立物化的可写 workspace 分支；checkpoint 使用 manifest 与不可变内容对象，同一 Run 内相同文件内容只保存一次，不依赖宿主 reflink。fan-in 由协调 Agent 合并，后端验证 receipt 后才清理源分支。不得恢复 `/mnt/results`、每节点 workspace/thread 或手工 sidecar 通道。
 - Run 创建时冻结 `graph_json`；执行、waiting resume、恢复、历史回放和序列化使用 Run 快照。checkpoint rerun 创建新 Run，冻结 cut 前 workspace、thread lineage 和 step；旧 Run 只读。
 - 每个用户有一个长期 Wiki。普通 Run 冻结当前 Wiki revision 并只读挂载到 `/mnt/wiki`；Wiki 不进入 branch workspace/checkpoint，输出与 Artifact 不自动写回。第三方 App 授权绑定用户、App 与 graph SHA-256。
+- 每个 Workspace 是 owner-only 的持久项目目录，拥有多个 Codex thread 和一个常驻 Docker runtime；同一 Workspace 的 turn 必须串行。Workspace Wiki 使用 working copy 和三方合并发布，Workflow graph 只能经带 base SHA 的 Proposal、lint、只读预览和人工确认修改；Workspace 内执行 App 仍使用正式 Run 链路。
 - Run 按直接前置依赖调度，ready 节点可并发。Run 只有唯一 output Step 为 `success`、其他 Step 为 `success` / `skipped` / `checkpoint_reused`，并且所有正式 Artifact 复验通过时才能成功。
 - `failure_kind` 只使用 `runtime`、`contract`、`routing`、`integrity`、`internal`。业务验收不通过应作为正常业务输出，不伪装成执行异常。
 - Run 事件持久化到数据库；SSE 的进程内 hub 只负责广播、取消和等待信号。后端启动把未完成运行标为 `interrupted`，并清理没有数据库记录的普通 Run workspace。
@@ -54,6 +55,7 @@ Mira 是参考 Google Opal 产品思路构建的可视化 AI App 平台，使用
 ## Runtime、Skills 与浏览器
 
 - Settings、Skills、MCP、Codex config、supported models、Instructions 和 Prompt Templates 是全局数据，写操作必须 admin-only；Apps、Versions、Runs、Steps、Uploads 和 runtime workspace 按当前登录用户隔离。
+- Workspace Git host 白名单是 admin-only 全局设置；每个 Workspace 的私有 HTTPS token 加密保存且不得挂载进 Agent 容器、写入命令参数或日志。Pull 必须 ff-only，Push 必须先经用户确认。
 - MCP/Skills 在普通运行中按 App 允许列表注入；只有 `planning_enabled=true` 的 Tool 可进入 NL compile、Prompt Assistant 和运行期 Plan 的 read-only 阶段。
 - Skill 可在 `SKILL.md` 同目录声明 `requirements.lock` 或 `requirements.txt`，前者优先。纯 Python wheel 依赖由隔离 builder 构建和缓存，在运行时只读挂载为 Skill 根目录 `.deps/`；Skill 必须自行加入 `sys.path`。系统包、二进制和动态库进入 runtime 镜像。依赖为 `pending` 或 `failed` 时不能启用 Skill。
 - `/opt/mira/capture_screenshots.py` 只接受当前 workspace 内的 `--project-dir`，只复用已有 `node_modules`，缺失时失败且不安装依赖；按项目声明执行 `db:init`、`db:seed`，逐路由先做 HTTP `<400` 检查。只有截图数达标且全部成功时才生成只含 PNG、manifest 和日志的 ZIP。

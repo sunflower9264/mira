@@ -45,6 +45,7 @@ interface SettingsDialogProps {
 function cloneSettings(settings: MiraSettings): MiraSettings {
   return {
     supported_models: [...settings.supported_models],
+    workspace_git_allowed_hosts: [...(settings.workspace_git_allowed_hosts ?? [])],
     skills: settings.skills.map((skill) => ({ ...skill })),
     mcp_servers: settings.mcp_servers.map((server) => ({
       ...server,
@@ -143,6 +144,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   const loadSettings = useSettingsStore((s) => s.load);
   const updateSkillEnabled = useSettingsStore((s) => s.updateSkillEnabled);
   const updateSkillPlanningEnabled = useSettingsStore((s) => s.updateSkillPlanningEnabled);
+  const updateWorkspaceGitAllowedHosts = useSettingsStore((s) => s.updateWorkspaceGitAllowedHosts);
   const deleteSkillAction = useSettingsStore((s) => s.deleteSkill);
   const addMcpServerAction = useSettingsStore((s) => s.addMcpServer);
   const updateMcpServerAction = useSettingsStore((s) => s.updateMcpServer);
@@ -166,6 +168,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   const [isLoadingConfig, setIsLoadingConfig] = useState(false);
   const [isSavingConfig, setIsSavingConfig] = useState(false);
   const [codexAuthDraft, setCodexAuthDraft] = useState('');
+  const [workspaceGitHostsDraft, setWorkspaceGitHostsDraft] = useState('');
   const [instruction, setInstruction] = useState<InstructionFile | null>(null);
   const [instructionDraft, setInstructionDraft] = useState('');
   const [isLoadingInstructions, setIsLoadingInstructions] = useState(false);
@@ -214,6 +217,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     void loadSettings()
       .then((settings) => {
         setDraft(cloneSettings(settings));
+        setWorkspaceGitHostsDraft((settings.workspace_git_allowed_hosts ?? []).join('\n'));
         setInstruction(null);
         setInstructionDraft('');
         setPrompts([]);
@@ -771,6 +775,12 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               placeholder={isLoadingConfig ? '加载 auth.json...' : '{\n  "OPENAI_API_KEY": "sk-..."\n}'}
             />
           </label>
+          <section className="mt-4 rounded-2xl border border-black/10 bg-black/[0.02] p-4">
+            <div className="text-sm font-semibold text-black">Workspace Git 主机白名单</div>
+            <p className="mt-1 text-xs leading-5 text-black/45">每行一个 HTTPS 主机名。仅管理员可修改，Workspace 连接仓库时会使用这份白名单。</p>
+            <textarea value={workspaceGitHostsDraft} onChange={(event) => setWorkspaceGitHostsDraft(event.target.value)} className="mt-3 min-h-20 w-full rounded-xl border border-black/10 bg-white px-3 py-2 font-mono text-xs outline-none focus:border-black/30" placeholder="git.example.com" />
+            <button type="button" disabled={saving} onClick={() => void updateWorkspaceGitAllowedHosts(workspaceGitHostsDraft.split(/\r?\n/).map((item) => item.trim()).filter(Boolean)).then((saved) => { setDraft(cloneSettings(saved)); })} className="mt-3 rounded-full bg-black px-3 py-2 text-xs font-medium text-white disabled:opacity-40">保存主机白名单</button>
+          </section>
         </section>
       </div>
     );

@@ -25,6 +25,7 @@ from app.services.skills import reconcile_skill_dependencies
 from app.services.workspace_gc import cleanup_orphan_run_homes, cleanup_orphan_run_workspaces
 from app.services.wiki import recover_wiki_operations
 from app.services.workspace_gc import cleanup_orphan_run_wiki_snapshots
+from app.services.workspace_runtime import mark_active_workspace_turns_interrupted, reconcile_workspace_runtimes
 
 
 @asynccontextmanager
@@ -47,6 +48,8 @@ async def lifespan(app: FastAPI):
         await mark_active_nlcompile_sessions_interrupted(db)
         await mark_active_prompt_assistant_sessions_interrupted(db)
         await recover_wiki_operations(db)
+        await mark_active_workspace_turns_interrupted(db)
+        await reconcile_workspace_runtimes(db)
     disk_task = asyncio.create_task(disk_monitor_loop())
     try:
         yield

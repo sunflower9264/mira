@@ -126,6 +126,11 @@ class MiraSettings(BaseModel):
     skills: list[SkillConfig] = Field(default_factory=list)
     mcp_servers: list[McpServerConfig] = Field(default_factory=list)
     tools: list[ToolConfig] = Field(default_factory=list)
+    workspace_git_allowed_hosts: list[str] = Field(default_factory=list)
+
+
+class WorkspaceGitAllowedHostsIn(BaseModel):
+    hosts: list[str] = Field(default_factory=list, max_length=100)
 
 
 class RuntimeMcpServerConfig(BaseModel):

@@ -19,6 +19,7 @@ dependencies = [
   "sqlalchemy>=2.0.32",
   "tomli-w>=1.0.0",
   "uvicorn[standard]>=0.30.0",
+  "websockets>=15.0",
 ]
 
 [dependency-groups]

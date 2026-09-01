@@ -591,7 +591,13 @@ async def wiki_access_status(db: AsyncSession, user_id: str, app_id: str) -> Wik
     if wiki is not None:
         revision = await _current_revision(db, wiki)
         raw_manifest = loads(revision.raw_manifest_json, []) if revision is not None else []
-        has_wiki = bool(isinstance(raw_manifest, list) and raw_manifest)
+        has_wiki = bool(
+            revision is not None
+            and (
+                revision.parent_revision_id is not None
+                or (isinstance(raw_manifest, list) and raw_manifest)
+            )
+        )
     owner_app = app.owner_id == user_id
     grant = None
     if has_wiki and not owner_app:

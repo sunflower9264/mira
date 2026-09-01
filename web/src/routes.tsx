@@ -9,6 +9,8 @@ const Editor = lazy(() => import('./pages/Editor').then((m) => ({ default: m.Edi
 const AppView = lazy(() => import('./pages/AppView').then((m) => ({ default: m.AppView })));
 const Login = lazy(() => import('./pages/Login').then((m) => ({ default: m.Login })));
 const Wiki = lazy(() => import('./pages/Wiki').then((m) => ({ default: m.Wiki })));
+const Workspace = lazy(() => import('./pages/Workspace').then((m) => ({ default: m.Workspace })));
+const MobileWorkspace = lazy(() => import('./pages/Workspace').then((m) => ({ default: m.MobileWorkspace })));
 const MobileHome = lazy(() => import('./pages/mobile/MobileHome').then((m) => ({ default: m.MobileHome })));
 const MobileAuth = lazy(() => import('./pages/mobile/MobileAuth').then((m) => ({ default: m.MobileAuth })));
 const MobileRun = lazy(() => import('./pages/mobile/MobileRun').then((m) => ({ default: m.MobileRun })));
@@ -98,11 +100,13 @@ export const router = createBrowserRouter([
   { path: '/', element: <DeviceRouteGate><RequireAuth>{withSuspense(<Home />)}</RequireAuth></DeviceRouteGate> },
   { path: '/login', element: <DeviceRouteGate>{withSuspense(<Login />)}</DeviceRouteGate> },
   { path: '/wiki', element: <RequireAuth>{withSuspense(<Wiki />)}</RequireAuth> },
+  { path: '/workspaces/:id', element: <DeviceRouteGate><RequireAuth>{withSuspense(<Workspace />)}</RequireAuth></DeviceRouteGate> },
   { path: '/apps/:id/editor', element: <DeviceRouteGate><RequireAuth>{withSuspense(<Editor />)}</RequireAuth></DeviceRouteGate> },
   { path: '/apps/:id/view', element: <DeviceRouteGate><RequireAuth>{withSuspense(<AppView />)}</RequireAuth></DeviceRouteGate> },
   { path: '/market/apps/:id', element: <DeviceRouteGate><RequireAuth>{withSuspense(<AppView readOnly />)}</RequireAuth></DeviceRouteGate> },
   { path: '/m', element: <DeviceRouteGate><RequireAuth loginPath="/m/login">{withSuspense(<MobileHome />)}</RequireAuth></DeviceRouteGate> },
   { path: '/m/login', element: <DeviceRouteGate>{withSuspense(<MobileAuth />)}</DeviceRouteGate> },
   { path: '/m/apps/:id/run', element: <DeviceRouteGate><RequireAuth loginPath="/m/login">{withSuspense(<MobileRun />)}</RequireAuth></DeviceRouteGate> },
+  { path: '/m/workspaces/:id', element: <DeviceRouteGate><RequireAuth loginPath="/m/login">{withSuspense(<MobileWorkspace />)}</RequireAuth></DeviceRouteGate> },
   { path: '*', element: <Navigate to="/" replace /> },
 ]);

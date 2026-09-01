@@ -6,10 +6,11 @@ interface MobileSheetProps {
   open: boolean;
   onOpenChange(open: boolean): void;
   title: ReactNode;
+  description: ReactNode;
   children: ReactNode;
 }
 
-export function MobileSheet({ open, onOpenChange, title, children }: MobileSheetProps) {
+export function MobileSheet({ open, onOpenChange, title, description, children }: MobileSheetProps) {
   return (
     <Drawer.Root open={open} onOpenChange={onOpenChange}>
       <Drawer.Portal>
@@ -20,6 +21,7 @@ export function MobileSheet({ open, onOpenChange, title, children }: MobileSheet
             <Drawer.Title className="min-w-0 truncate text-base font-semibold text-black">
               {title}
             </Drawer.Title>
+            <Drawer.Description className="sr-only">{description}</Drawer.Description>
             <Drawer.Close asChild>
               <button
                 type="button"

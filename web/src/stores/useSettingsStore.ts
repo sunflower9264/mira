@@ -23,6 +23,7 @@ interface SettingsStoreState {
   loadCodexSetupState(force?: boolean): Promise<CodexSetupState>;
   updateSkillEnabled(skillId: string, enabled: boolean): Promise<MiraSettings>;
   updateSkillPlanningEnabled(skillId: string, planningEnabled: boolean): Promise<MiraSettings>;
+  updateWorkspaceGitAllowedHosts(hosts: string[]): Promise<MiraSettings>;
   deleteSkill(skillId: string): Promise<void>;
   addMcpServer(server: McpServerConfig): Promise<MiraSettings>;
   updateMcpServer(serverId: string, server: McpServerConfig): Promise<MiraSettings>;
@@ -98,6 +99,17 @@ export const useSettingsStore = create<SettingsStoreState>((set, get) => ({
     set({ saving: true, error: null });
     try {
       const saved = await api.updateSkillPlanningEnabled(skillId, planningEnabled);
+      set({ settings: saved, saving: false });
+      return saved;
+    } catch (e) {
+      set({ error: (e as Error).message, saving: false });
+      throw e;
+    }
+  },
+  async updateWorkspaceGitAllowedHosts(hosts) {
+    set({ saving: true, error: null });
+    try {
+      const saved = await api.updateWorkspaceGitAllowedHosts(hosts);
       set({ settings: saved, saving: false });
       return saved;
     } catch (e) {

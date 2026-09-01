@@ -748,7 +748,7 @@ function MobileRunHistorySheet({
   };
 
   return (
-    <MobileSheet open={open} onOpenChange={onOpenChange} title="历史记录">
+    <MobileSheet open={open} onOpenChange={onOpenChange} title="历史记录" description="查看并选择应用的历史运行记录。">
       {loading && !runs ? <div className="py-8 text-center text-sm text-black/45">加载中...</div> : null}
       {runs?.length === 0 ? (
         <div className="py-10 text-center text-sm text-black/45">暂无运行记录</div>
@@ -837,7 +837,7 @@ function MobileRunSettingsSheet({
   };
 
   return (
-    <MobileSheet open={open} onOpenChange={onOpenChange} title="运行设置">
+    <MobileSheet open={open} onOpenChange={onOpenChange} title="运行设置" description="调整应用运行使用的模型和工具。">
       <div className="space-y-5">
         <div>
           <span className="text-[11px] font-medium uppercase tracking-[0.16em] text-black/45">模型</span>

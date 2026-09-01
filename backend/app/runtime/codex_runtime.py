@@ -373,8 +373,9 @@ def _prepare_scoped_home(
     runtime_tools: RuntimeToolConfig | None,
     *,
     session_scope: str | None = None,
+    target_home: Path | None = None,
 ) -> tuple[Path, tuple[DockerBindMount, ...]]:
-    home = scoped_codex_home(cwd, session_scope=session_scope)
+    home = target_home or scoped_codex_home(cwd, session_scope=session_scope)
     home.mkdir(parents=True, exist_ok=True)
     for filename in ("config.toml", "auth.json"):
         source = shared_home / filename

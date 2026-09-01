@@ -49,8 +49,10 @@
 ## UI And Product Rules
 
 - 桌面 Home 的“我的应用”和“最近使用”是同组 tab；应用市场只在“我的应用”tab 下展示。模板点击先导入为当前用户草稿。
+- Home 顶层增加“工作空间”tab；Workspace 桌面和手机入口都必须支持 CRUD、Session、Codex turn、文件、Git、Wiki 同步和 WorkflowProposal。视觉继续复用 Mira 的字体、黑白灰、圆角、阴影和桌面 `px-6` / 手机 `px-4` 间距。
 - App View 遇到 `can_edit=false` 或 `/market/apps/:id` 路由必须保持只读，不显示编辑、发布、版本管理等 owner-only 入口。
 - Mobile 路由通过 viewport media query 切换到 `/m`，不要改成 UA 判断。手机端只承载登录、应用列表、最近运行、市场、运行、历史、结果和 owner 运行设置，不加节点编辑器或 Settings。
+- Mobile Workspace 可以显示只读 WorkflowProposal React Flow 预览并确认，但不开放通用节点编辑器；Workspace 内正式 Run 继续复用现有 Decision、取消、HTML 输出和 Artifact UI。
 - Mobile Run 不使用 `useEditorStore`；owner 运行设置可写回节点 model 和 `graph.tools.disabled_tool_ids`，不编辑节点 prompt、结构或 reasoning_effort。
 - `decision_request` UI 统一使用后端返回的 context/groups/options。面板先显示 `context.title` 和 `context.summary`；每组必须选择选项，补充文字和附件始终可用；多问题只在最后一题提交；提交后显示“已选择 / 已补充”摘要并保留停止入口。
 - 自然语言编辑首次提交允许附件；必须先通过 uploads API 获得 upload id，再随 `POST /api/nlcompile` 发送引用，不能只把文件名拼进 instruction。

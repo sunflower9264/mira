@@ -40,6 +40,17 @@ import type {
   WikiOperation,
   WikiRevision,
   WikiSource,
+  Workspace,
+  WorkspaceCreateInput,
+  WorkspaceEvent,
+  WorkspaceFile,
+  WorkspaceFilePreview,
+  WorkspaceGitConfig,
+  WorkspaceGitOperationResult,
+  WorkspaceSession,
+  WorkspaceTurn,
+  WorkspaceWikiSyncResult,
+  WorkspaceWorkflowProposal,
 } from '../types';
 import { clearToken, clearUser, getToken } from './auth';
 
@@ -178,6 +189,248 @@ export async function login(input: { username: string; password: string }): Prom
  */
 export async function me(): Promise<{ username: string; is_admin: boolean }> {
   return request<{ username: string; is_admin: boolean }>('/api/auth/me');
+}
+
+// --- Persistent workspaces ------------------------------------------------
+
+export async function listWorkspaces(): Promise<Workspace[]> {
+  return request<Workspace[]>('/api/workspaces');
+}
+
+export async function createWorkspace(input: WorkspaceCreateInput): Promise<Workspace> {
+  return request<Workspace>('/api/workspaces', { method: 'POST', body: input });
+}
+
+export async function getWorkspace(id: string): Promise<Workspace> {
+  return request<Workspace>(`/api/workspaces/${id}`);
+}
+
+export async function updateWorkspace(
+  id: string,
+  input: { name?: string; description?: string },
+): Promise<Workspace> {
+  return request<Workspace>(`/api/workspaces/${id}`, { method: 'PATCH', body: input });
+}
+
+export async function deleteWorkspace(id: string): Promise<void> {
+  await request<void>(`/api/workspaces/${id}`, { method: 'DELETE' });
+}
+
+export async function listWorkspaceSessions(workspaceId: string): Promise<WorkspaceSession[]> {
+  return request<WorkspaceSession[]>(`/api/workspaces/${workspaceId}/sessions`);
+}
+
+export async function createWorkspaceSession(workspaceId: string, title?: string): Promise<WorkspaceSession> {
+  return request<WorkspaceSession>(`/api/workspaces/${workspaceId}/sessions`, {
+    method: 'POST',
+    body: title ? { title } : {},
+  });
+}
+
+export async function updateWorkspaceSession(sessionId: string, title: string): Promise<WorkspaceSession> {
+  return request<WorkspaceSession>(`/api/workspace-sessions/${sessionId}`, {
+    method: 'PATCH',
+    body: { title },
+  });
+}
+
+export async function deleteWorkspaceSession(sessionId: string): Promise<void> {
+  await request<void>(`/api/workspace-sessions/${sessionId}`, { method: 'DELETE' });
+}
+
+export async function listWorkspaceEvents(sessionId: string, afterId?: number): Promise<WorkspaceEvent[]> {
+  return request<WorkspaceEvent[]>(`/api/workspace-sessions/${sessionId}/events`, {
+    query: { after_id: afterId },
+  });
+}
+
+export async function startWorkspaceTurn(
+  sessionId: string,
+  input: {
+    text: string;
+    attachments?: { id: string; name?: string }[];
+    model?: string;
+    reasoning_effort?: string;
+  },
+): Promise<WorkspaceTurn> {
+  return request<WorkspaceTurn>(`/api/workspace-sessions/${sessionId}/turns`, {
+    method: 'POST',
+    body: input,
+  });
+}
+
+export async function interruptWorkspaceTurn(turnId: string): Promise<void> {
+  await request<void>(`/api/workspace-turns/${turnId}/interrupt`, { method: 'POST' });
+}
+
+export async function resumeWorkspaceTurn(
+  turnId: string,
+  input: { request_id: string; answers: DecisionAnswer[]; text?: string; attachments?: { id: string; name?: string }[] },
+): Promise<void> {
+  await request<void>(`/api/workspace-turns/${turnId}/resume`, {
+    method: 'POST',
+    body: input,
+  });
+}
+
+export async function runWorkspaceSessionAction(
+  sessionId: string,
+  action: 'compact' | 'archive' | 'review',
+  instructions?: string,
+): Promise<Record<string, unknown>> {
+  return request<Record<string, unknown>>(`/api/workspace-sessions/${sessionId}/actions`, {
+    method: 'POST',
+    body: { action, instructions },
+  });
+}
+
+export async function getWorkspaceProcesses(sessionId: string): Promise<Array<{ process_id: string; status: string; duration_ms?: number }>> {
+  return request<Array<{ process_id: string; status: string; duration_ms?: number }>>(`/api/workspace-sessions/${sessionId}/processes`);
+}
+
+export async function stopWorkspaceProcess(sessionId: string, processId: string): Promise<void> {
+  await request<void>(`/api/workspace-sessions/${sessionId}/processes/${processId}/stop`, { method: 'POST' });
+}
+
+export async function cleanWorkspaceProcesses(sessionId: string): Promise<void> {
+  await request<void>(`/api/workspace-sessions/${sessionId}/processes/clean`, { method: 'POST' });
+}
+
+export async function getWorkspaceGoal(sessionId: string): Promise<{ objective?: string | null; status?: string | null; token_budget?: number | null } | null> {
+  return request<{ objective?: string | null; status?: string | null; token_budget?: number | null } | null>(`/api/workspace-sessions/${sessionId}/goal`);
+}
+
+export async function saveWorkspaceGoal(
+  sessionId: string,
+  input: { objective?: string | null; status?: 'active' | 'complete' | 'blocked'; token_budget?: number | null },
+): Promise<{ objective?: string | null; status?: string | null; token_budget?: number | null }> {
+  return request<{ objective?: string | null; status?: string | null; token_budget?: number | null }>(`/api/workspace-sessions/${sessionId}/goal`, { method: 'PUT', body: input });
+}
+
+export async function clearWorkspaceGoal(sessionId: string): Promise<void> {
+  await request<void>(`/api/workspace-sessions/${sessionId}/goal`, { method: 'DELETE' });
+}
+
+export async function syncWorkspaceWiki(workspaceId: string): Promise<WorkspaceWikiSyncResult> {
+  return request<WorkspaceWikiSyncResult>(`/api/workspaces/${workspaceId}/wiki/sync`, { method: 'POST' });
+}
+
+export async function retryWorkspaceWiki(workspaceId: string): Promise<WorkspaceWikiSyncResult> {
+  return request<WorkspaceWikiSyncResult>(`/api/workspaces/${workspaceId}/wiki/retry`, { method: 'POST' });
+}
+
+export async function listWorkspaceFiles(workspaceId: string): Promise<{ files: WorkspaceFile[] }> {
+  return request<{ files: WorkspaceFile[] }>(`/api/workspaces/${workspaceId}/files`);
+}
+
+export async function previewWorkspaceFile(workspaceId: string, path: string): Promise<WorkspaceFilePreview> {
+  return request<WorkspaceFilePreview>(`/api/workspaces/${workspaceId}/files/preview`, {
+    query: { path },
+  });
+}
+
+export async function uploadWorkspaceFiles(
+  workspaceId: string,
+  files: File[],
+  targetPath?: string,
+): Promise<{ files: WorkspaceFile[] }> {
+  const form = new FormData();
+  for (const file of files) form.append('files', file, file.name);
+  if (targetPath) form.append('target_path', targetPath);
+  return request<{ files: WorkspaceFile[] }>(`/api/workspaces/${workspaceId}/files`, {
+    method: 'POST',
+    body: form,
+  });
+}
+
+export async function downloadWorkspaceFile(workspaceId: string, path: string): Promise<Blob> {
+  const headers: Record<string, string> = {};
+  const token = getToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const url = buildUrl(`/api/workspaces/${workspaceId}/files/download`, { path });
+  const response = await fetch(url, { headers, credentials: 'same-origin' });
+  if (!response.ok) {
+    const parsed = await parseError(response);
+    if (response.status === 401) handleUnauthorized();
+    throw new ApiError(parsed.message, response.status, parsed.payload);
+  }
+  return response.blob();
+}
+
+export async function getWorkspaceGitConfig(workspaceId: string): Promise<WorkspaceGitConfig> {
+  return request<WorkspaceGitConfig>(`/api/workspaces/${workspaceId}/git-config`);
+}
+
+export async function saveWorkspaceGitConfig(
+  workspaceId: string,
+  input: { repository_url: string; default_branch?: string; access_token?: string },
+): Promise<WorkspaceGitConfig> {
+  return request<WorkspaceGitConfig>(`/api/workspaces/${workspaceId}/git-config`, {
+    method: 'PUT',
+    body: input,
+  });
+}
+
+export async function pullWorkspaceGit(workspaceId: string): Promise<WorkspaceGitOperationResult> {
+  return request<WorkspaceGitOperationResult>(`/api/workspaces/${workspaceId}/git/pull`, { method: 'POST' });
+}
+
+export async function pushWorkspaceGit(workspaceId: string): Promise<WorkspaceGitOperationResult> {
+  return request<WorkspaceGitOperationResult>(`/api/workspaces/${workspaceId}/git/push`, {
+    method: 'POST',
+    body: { confirmed: true },
+  });
+}
+
+export async function listWorkspaceWorkflowProposals(workspaceId: string): Promise<WorkspaceWorkflowProposal[]> {
+  return request<WorkspaceWorkflowProposal[]>(`/api/workspaces/${workspaceId}/workflow-proposals`);
+}
+
+export async function createWorkspaceWorkflowProposal(
+  workspaceId: string,
+  input: { session_id?: string; kind: 'create' | 'update'; app_id?: string; name: string; description: string; base_graph_sha256?: string; graph: Graph },
+): Promise<WorkspaceWorkflowProposal> {
+  return request<WorkspaceWorkflowProposal>(`/api/workspaces/${workspaceId}/workflow-proposals`, {
+    method: 'POST',
+    body: input,
+  });
+}
+
+export async function getWorkspaceWorkflowProposal(
+  workspaceId: string,
+  proposalId: string,
+): Promise<WorkspaceWorkflowProposal> {
+  return request<WorkspaceWorkflowProposal>(`/api/workspaces/${workspaceId}/workflow-proposals/${proposalId}`);
+}
+
+export async function confirmWorkspaceWorkflowProposal(
+  workspaceId: string,
+  proposalId: string,
+): Promise<WorkspaceWorkflowProposal> {
+  return request<WorkspaceWorkflowProposal>(
+    `/api/workspaces/${workspaceId}/workflow-proposals/${proposalId}/confirm`,
+    { method: 'POST' },
+  );
+}
+
+export async function rejectWorkspaceWorkflowProposal(
+  workspaceId: string,
+  proposalId: string,
+): Promise<WorkspaceWorkflowProposal> {
+  return request<WorkspaceWorkflowProposal>(
+    `/api/workspaces/${workspaceId}/workflow-proposals/${proposalId}/reject`,
+    { method: 'POST' },
+  );
+}
+
+export async function createWorkspaceWorkflowRun(
+  workspaceId: string,
+  input: { app_id: string; inputs: Record<string, unknown>; wiki_mode?: 'auto' | 'without' },
+): Promise<{ run_id: string; graph: Graph }> {
+  return request<{ run_id: string; graph: Graph }>(`/api/workspaces/${workspaceId}/workflow-runs`, {
+    method: 'POST',
+    body: input,
+  });
 }
 
 // --- Apps -----------------------------------------------------------------
@@ -778,6 +1031,13 @@ export async function resumeRun(
  */
 export async function getSettings(): Promise<MiraSettings> {
   return request<MiraSettings>('/api/settings');
+}
+
+export async function updateWorkspaceGitAllowedHosts(hosts: string[]): Promise<MiraSettings> {
+  return request<MiraSettings>('/api/settings/workspace-git-hosts', {
+    method: 'PUT',
+    body: { hosts },
+  });
 }
 
 /**

@@ -14,4 +14,5 @@ class SettingsRow(Base):
     supported_models_json: Mapped[str] = mapped_column(Text)
     skills_json: Mapped[str] = mapped_column(Text)
     mcp_servers_json: Mapped[str] = mapped_column(Text)
+    workspace_git_allowed_hosts_json: Mapped[str] = mapped_column(Text, default="[]")
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)

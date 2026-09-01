@@ -9,6 +9,14 @@ from .settings import SettingsRow
 from .skill import Skill
 from .user import User
 from .wiki import RunWikiSnapshot, Wiki, WikiAccessGrant, WikiOperation, WikiRevision, WikiSource
+from .workspace import (
+    Workspace,
+    WorkspaceEvent,
+    WorkspaceGitConfig,
+    WorkspaceSession,
+    WorkspaceTurn,
+    WorkspaceWorkflowProposal,
+)
 
 __all__ = [
     "App",
@@ -33,4 +41,10 @@ __all__ = [
     "WikiRevision",
     "WikiSource",
     "RunWikiSnapshot",
+    "Workspace",
+    "WorkspaceEvent",
+    "WorkspaceGitConfig",
+    "WorkspaceSession",
+    "WorkspaceTurn",
+    "WorkspaceWorkflowProposal",
 ]

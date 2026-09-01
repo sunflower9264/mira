@@ -23,6 +23,7 @@
 - Codex config/auth 正文加密存库；shared/scoped fake HOME 是派生物，可被重写。不要读取宿主机 Codex 登录态，也不要恢复宿主机直跑 Codex。
 - Agent 容器启用 Docker init，只挂载当前 branch workspace、scoped HOME、必要输入和 Skill 依赖；不挂载宿主 HOME、仓库根、Docker socket、`.env` 或其他用户 workspace。Office artifact 深检在后端宿主机的独立受限进程中执行，不打入 Agent 镜像。
 - Run 可额外把冻结 Wiki snapshot 只读挂载到 `/mnt/wiki`。Wiki 不复制进 branch workspace/checkpoint；NL compile 与 Prompt Assistant 不挂载 Wiki。
+- Workspace runtime 是每个 owner Workspace 一个常驻 Codex App Server 容器；多个 thread 共享持久项目目录，同一 Workspace 仅允许一个活动 turn。Capability token、Git token 和其他控制面凭据不得出现在项目挂载、Agent 可读路径、argv 或日志中。
 
 ## Runtime、Skill 与浏览器
 
@@ -35,6 +36,7 @@
 ## 数据、Graph 与 Run 规则
 
 - 普通资源查询必须从当前登录用户推导 owner；Apps、Versions、Runs、Steps、Events/Logs、Uploads 和 runtime workspace 按用户隔离。Settings、Skills、MCP、Codex config、supported models、Instructions、Prompt Templates 是全局管理数据，写操作 admin-only。
+- Workspace、Session、Turn、Event、文件和 WorkflowProposal 同样按 owner 隔离；工作空间文件 API 只提供上传、树、只读预览和下载，不提供手工编辑、rename、delete 或 diff。shell 事件只保留状态和时长。
 - Workflow 节点类型只有 `user_input`、`asset`、`generate`、`condition`、`output`；最多一个输入和一个输出。可执行 graph 必须恰有一个有正式上游的终点 `output`，所有节点及 condition 已连接分支都可到达它。
 - `execution_edges` 只表达执行顺序，condition 出边用 `branch_key`；普通连线不承担字段绑定。Run 创建时保存可执行 graph 与 Tool 允许列表快照，执行、恢复、历史和 rerun-from 都以 `Run.graph_json` 为准。
 - 一次 Run 由一个逻辑 RunAgent 管理 thread lineage、branch workspace 和 checkpoint。线性节点复用 thread/workspace；真实 fan-out 才 `thread/fork` 并复制 checkpoint，fan-in 由协调 Codex 基于完整分支证据合并并校验 receipt。

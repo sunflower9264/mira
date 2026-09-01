@@ -16,6 +16,7 @@ from app.schemas import (
     PromptTemplateSaveIn,
     SkillMarkdownOut,
     SkillUpdateIn,
+    WorkspaceGitAllowedHostsIn,
 )
 from app.runtime.factory import get_runtime
 from app.services import instructions, prompts, runtime_config, skills_install
@@ -32,6 +33,7 @@ from app.services.settings import (
     delete_skill_entry,
     normalize_supported_models,
     save_supported_models,
+    save_workspace_git_allowed_hosts,
     settings_out,
     update_mcp_server,
     update_skill_enabled,
@@ -51,6 +53,15 @@ async def get_settings(
 ):
     # 任意登录用户可读全局配置（StepTab / AppLaunchView 依赖此数据）。
     return await settings_out(db, reveal_keys=user.is_admin)
+
+
+@router.put("/settings/workspace-git-hosts")
+async def put_workspace_git_hosts(
+    payload: WorkspaceGitAllowedHostsIn,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    return await save_workspace_git_allowed_hosts(db, payload.hosts)
 
 
 @router.patch("/settings/skills/{skill_id}")

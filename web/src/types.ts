@@ -460,6 +460,122 @@ export type RunEvent =
       failure_kind?: FailureKind;
     };
 
+// Persistent Codex workspaces -------------------------------------------------
+
+export type WorkspaceRuntimeStatus = 'stopped' | 'starting' | 'ready' | 'busy' | 'error';
+export type WorkspaceWikiSyncStatus = 'pending' | 'syncing' | 'ready' | 'conflict' | 'failed';
+
+export interface Workspace {
+  id: string;
+  name: string;
+  description: string;
+  runtime_status: WorkspaceRuntimeStatus;
+  runtime_started_at?: string | null;
+  runtime_last_error?: string | null;
+  wiki_base_revision_id?: string | null;
+  wiki_sync_status: WorkspaceWikiSyncStatus;
+  wiki_sync_error?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WorkspaceCreateInput {
+  name: string;
+  description?: string;
+  source?: {
+    kind: 'empty' | 'git';
+    repository_url?: string;
+    default_branch?: string;
+    access_token?: string;
+  };
+}
+
+export interface WorkspaceSession {
+  id: string;
+  workspace_id: string;
+  title: string;
+  thread_id?: string | null;
+  status: 'idle' | 'running' | 'waiting' | 'error';
+  last_turn_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WorkspaceEvent {
+  id: number;
+  workspace_id: string;
+  session_id: string;
+  turn_id?: string | null;
+  event_type: string;
+  payload: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface WorkspaceTurn {
+  id: string;
+  workspace_id: string;
+  session_id: string;
+  status: 'pending' | 'running' | 'waiting' | 'interrupted' | 'success' | 'failed' | 'cancelled';
+  model?: string | null;
+  reasoning_effort?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+  error?: string | null;
+  created_at: string;
+}
+
+export interface WorkspaceWikiSyncResult {
+  status: WorkspaceWikiSyncStatus;
+  base_revision_id?: string | null;
+  error?: string | null;
+}
+
+export interface WorkspaceFile {
+  path: string;
+  name: string;
+  kind: 'file' | 'directory';
+  size: number;
+  mime?: string | null;
+  updated_at?: string | null;
+}
+
+export interface WorkspaceFilePreview {
+  path: string;
+  mime: string;
+  content?: string | null;
+  size: number;
+  download_url: string;
+}
+
+export interface WorkspaceGitConfig {
+  repository_url?: string | null;
+  default_branch?: string | null;
+  token_configured: boolean;
+  allowed_hosts: string[];
+}
+
+export interface WorkspaceGitOperationResult {
+  status: 'success';
+  duration_ms: number;
+}
+
+export interface WorkspaceWorkflowProposal {
+  id: string;
+  workspace_id: string;
+  session_id?: string | null;
+  kind: 'create' | 'update';
+  app_id?: string | null;
+  name: string;
+  description: string;
+  base_graph_sha256?: string | null;
+  graph: Graph;
+  lint: WorkflowLintResult;
+  status: 'pending' | 'applied' | 'stale' | 'rejected';
+  created_at: string;
+  updated_at: string;
+  applied_at?: string | null;
+}
+
 // JSON Patch ops (subset used by nlcompile, RFC 6902-ish)
 export type GraphPatch =
   | { op: 'add_node'; node: WorkflowNode }
@@ -562,6 +678,7 @@ export interface ToolConfig {
 
 export interface MiraSettings {
   supported_models: string[];
+  workspace_git_allowed_hosts: string[];
   skills: SkillConfig[];
   mcp_servers: McpServerConfig[];
   tools: ToolConfig[];
