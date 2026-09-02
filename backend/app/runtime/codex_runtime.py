@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import tomllib
 from contextlib import suppress
 from pathlib import Path
@@ -76,6 +77,7 @@ _POSIX_ENV_KEYS = {
 _INITIALIZE_REQUEST_ID = 1
 _THREAD_REQUEST_ID = 2
 _TURN_REQUEST_ID = 3
+_RECONNECTING_NOTICE = re.compile(r"^Reconnecting\.\.\. \d+/\d+$")
 
 
 class CodexRuntime:
@@ -318,14 +320,19 @@ class CodexRuntime:
         total_text = final_messages[-1] if final_messages else "".join(chunks)
         total_text = path_map.container_to_host_text(total_text)
         total_text = _final_codex_text(home, active_thread_id, total_text, path_map)
+        effective_errors = (
+            [error for error in errors if not _RECONNECTING_NOTICE.fullmatch(error)]
+            if run_result.return_code == 0 and turn_status == "completed"
+            else errors
+        )
         if cancel_event.is_set() or run_result.return_code == 130 or turn_status == "interrupted":
             return AgentExecutionResult(
                 session_id=active_thread_id,
                 total_text=total_text,
                 finished_with="cancelled",
             )
-        if run_result.return_code != 0 or errors or turn_status not in {None, "completed"}:
-            detail = errors[-1] if errors else run_result.stderr.strip()
+        if run_result.return_code != 0 or effective_errors or turn_status not in {None, "completed"}:
+            detail = effective_errors[-1] if effective_errors else run_result.stderr.strip()
             if not detail:
                 detail = f"Codex App Server 执行失败（turn status: {turn_status or 'unknown'}）"
             logger.warning(

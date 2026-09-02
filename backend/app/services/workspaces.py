@@ -393,7 +393,7 @@ async def create_workspace_turn(
     prompt_text = _required_text(prompt, "消息", 1_000_000)
     display_text = prompt_text
     attachment_paths: list[str] = []
-    attachment_names: list[str] = []
+    attachment_items: list[dict[str, Any]] = []
     if attachments:
         workspace = await db.get(Workspace, workspace_id)
         if workspace is None:
@@ -408,7 +408,14 @@ async def create_workspace_turn(
             destination = destination_root / name
             shutil.copy2(resolved.path, destination)
             attachment_paths.append(destination.relative_to(_verified_project_root(workspace)).as_posix())
-            attachment_names.append(name)
+            attachment_items.append(
+                {
+                    "id": resolved.id,
+                    "name": name,
+                    "mime": resolved.mime,
+                    "size": resolved.size,
+                }
+            )
     if attachment_paths:
         prompt_text += "\n\nWorkspace 附件：\n" + "\n".join(f"- {path}" for path in attachment_paths)
     row = WorkspaceTurn(
@@ -429,7 +436,7 @@ async def create_workspace_turn(
             turn_id=turn_id,
             event_type="message_completed",
             payload_json=dumps(
-                {"role": "user", "text": display_text, "attachments": attachment_names}
+                {"role": "user", "text": display_text, "attachments": attachment_items}
             ),
             created_at=now_utc(),
         )

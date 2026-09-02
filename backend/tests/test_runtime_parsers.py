@@ -222,6 +222,9 @@ def test_codex_runtime_drives_app_server_json_rpc(tmp_path, monkeypatch) -> None
             await on_stdout_line(
                 '{"method":"item/completed","params":{"item":{"type":"agentMessage","text":"hello"}}}'
             )
+            await on_stdout_line(
+                '{"method":"error","params":{"error":{"message":"Reconnecting... 1/5"}}}'
+            )
             completed = await on_stdout_line(
                 '{"method":"turn/completed","params":{"turn":{"status":"completed"}}}'
             )

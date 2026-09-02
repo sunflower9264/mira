@@ -134,6 +134,11 @@ class _FakeWebsocket:
             )
             await self.messages.put(
                 json.dumps(
+                    {"method": "error", "params": {"error": {"message": "Reconnecting... 1/5"}}}
+                )
+            )
+            await self.messages.put(
+                json.dumps(
                     {
                         "method": "turn/completed",
                         "params": {"turn": {"id": "turn-1", "status": "completed"}},
@@ -245,7 +250,13 @@ async def test_dynamic_tool_response_returns_safe_content_without_arguments() ->
 
 async def test_workspace_turn_streams_sanitized_events_and_reuses_thread(tmp_path, monkeypatch) -> None:
     websocket = _FakeWebsocket()
-    runtime = WorkspaceCodexRuntime(connector=lambda *args, **kwargs: _FakeConnection(websocket))
+    connector_options = {}
+
+    def connector(*args, **kwargs):  # noqa: ANN002, ANN003
+        connector_options.update(kwargs)
+        return _FakeConnection(websocket)
+
+    runtime = WorkspaceCodexRuntime(connector=connector)
     spec = WorkspaceRuntimeSpec(
         workspace_id="workspace-1",
         project_path=tmp_path / "project",
@@ -293,6 +304,7 @@ async def test_workspace_turn_streams_sanitized_events_and_reuses_thread(tmp_pat
     assert result.finished_with == "done"
     assert result.session_id == "thread-1"
     assert result.total_text == "hello"
+    assert connector_options["ping_interval"] is None
     thread_request = next(message for message in websocket.sent if message.get("method") == "thread/start")
     assert thread_request["params"]["dynamicTools"][0]["name"] == "mira_workflows"
     process_events = [event for event in events if event.type == "process"]

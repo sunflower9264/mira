@@ -5,6 +5,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import secrets
 import shutil
 import time
@@ -45,6 +46,7 @@ _INITIALIZE_ID = 1
 _THREAD_ID = 2
 _TURN_ID = 3
 _CONTROL_ID = 4
+_RECONNECTING_NOTICE = re.compile(r"^Reconnecting\.\.\. \d+/\d+$")
 
 WorkspaceEventCallback = Callable[["WorkspaceRuntimeEvent"], Awaitable[None]]
 
@@ -386,6 +388,8 @@ class WorkspaceCodexRuntime:
                 additional_headers={"Authorization": f"Bearer {token}"},
                 open_timeout=5,
                 close_timeout=2,
+                # Workflow tools and user decisions may remain quiet for several minutes.
+                ping_interval=None,
                 max_size=8 * 1024 * 1024,
             ) as websocket:
                 await self._initialize(websocket)
@@ -521,8 +525,13 @@ class WorkspaceCodexRuntime:
                 total_text=total_text,
                 finished_with="cancelled",
             )
-        if errors or turn_status not in {None, "completed"}:
-            detail = errors[-1] if errors else f"Codex turn 状态异常：{turn_status or 'unknown'}"
+        effective_errors = (
+            [error for error in errors if not _RECONNECTING_NOTICE.fullmatch(error)]
+            if turn_status == "completed"
+            else errors
+        )
+        if effective_errors or turn_status not in {None, "completed"}:
+            detail = effective_errors[-1] if effective_errors else f"Codex turn 状态异常：{turn_status or 'unknown'}"
             return AgentExecutionResult(
                 session_id=active_thread_id,
                 total_text=total_text,

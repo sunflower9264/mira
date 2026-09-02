@@ -282,8 +282,17 @@ def test_workspace_turn_and_decision_resume_validate_current_request(auth_client
     session_id = auth_client.post(
         f"/api/workspaces/{workspace_id}/sessions", json={"title": "Chat"}
     ).json()["id"]
+    upload = auth_client.post(
+        "/api/uploads",
+        files={"file": ("photo.jpg", b"jpeg", "image/jpeg")},
+    )
+    assert upload.status_code == 200, upload.text
     created = auth_client.post(
-        f"/api/workspace-sessions/{session_id}/turns", json={"text": "Need a choice"}
+        f"/api/workspace-sessions/{session_id}/turns",
+        json={
+            "text": "Need a choice",
+            "attachments": [{"id": upload.json()["id"], "name": "photo.jpg"}],
+        },
     )
     assert created.status_code == 200, created.text
     turn_id = created.json()["id"]
@@ -292,7 +301,14 @@ def test_workspace_turn_and_decision_resume_validate_current_request(auth_client
     assert events[-1]["payload"] == {
         "role": "user",
         "text": "Need a choice",
-        "attachments": [],
+        "attachments": [
+            {
+                "id": upload.json()["id"],
+                "name": "photo.jpg",
+                "mime": "image/jpeg",
+                "size": 4,
+            }
+        ],
     }
 
     async def waiting_event() -> None:
