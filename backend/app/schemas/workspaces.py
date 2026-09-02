@@ -67,6 +67,13 @@ class WorkspaceSessionOut(BaseModel):
     last_turn_at: str | None = None
     created_at: str
     updated_at: str
+    match_context: str | None = None
+
+
+class WorkspaceSessionsOut(BaseModel):
+    items: list[WorkspaceSessionOut] = Field(default_factory=list)
+    has_more: bool = False
+    next_offset: int | None = None
 
 
 class WorkspaceEventOut(BaseModel):

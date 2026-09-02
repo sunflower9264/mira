@@ -48,6 +48,7 @@ import type {
   WorkspaceGitConfig,
   WorkspaceGitOperationResult,
   WorkspaceSession,
+  WorkspaceSessionsPage,
   WorkspaceTurn,
   WorkspaceWikiSyncResult,
   WorkspaceWorkflowProposal,
@@ -217,8 +218,13 @@ export async function deleteWorkspace(id: string): Promise<void> {
   await request<void>(`/api/workspaces/${id}`, { method: 'DELETE' });
 }
 
-export async function listWorkspaceSessions(workspaceId: string): Promise<WorkspaceSession[]> {
-  return request<WorkspaceSession[]>(`/api/workspaces/${workspaceId}/sessions`);
+export async function listWorkspaceSessions(workspaceId: string, options?: { offset?: number; limit?: number; query?: string }): Promise<WorkspaceSessionsPage> {
+  const params = new URLSearchParams();
+  if (options?.offset) params.set('offset', String(options.offset));
+  if (options?.limit) params.set('limit', String(options.limit));
+  if (options?.query) params.set('q', options.query);
+  const suffix = params.toString() ? `?${params.toString()}` : '';
+  return request<WorkspaceSessionsPage>(`/api/workspaces/${workspaceId}/sessions${suffix}`);
 }
 
 export async function createWorkspaceSession(workspaceId: string, title?: string): Promise<WorkspaceSession> {

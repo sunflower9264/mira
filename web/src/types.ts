@@ -499,6 +499,13 @@ export interface WorkspaceSession {
   last_turn_at?: string | null;
   created_at: string;
   updated_at: string;
+  match_context?: string | null;
+}
+
+export interface WorkspaceSessionsPage {
+  items: WorkspaceSession[];
+  has_more: boolean;
+  next_offset?: number | null;
 }
 
 export interface WorkspaceEvent {

@@ -18,6 +18,7 @@ from app.schemas import (
     WorkspacePatchIn,
     WorkspaceSessionCreateIn,
     WorkspaceSessionOut,
+    WorkspaceSessionsOut,
     WorkspaceSessionPatchIn,
     WorkspaceSessionActionIn,
     WorkspaceGoalIn,
@@ -148,11 +149,19 @@ async def delete_workspace_endpoint(
     await delete_workspace(db, workspace_id, user.id)
 
 
-@router.get("/workspaces/{workspace_id}/sessions", response_model=list[WorkspaceSessionOut])
+@router.get("/workspaces/{workspace_id}/sessions", response_model=WorkspaceSessionsOut)
 async def get_workspace_sessions(
-    workspace_id: str, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
+    workspace_id: str,
+    limit: int = Query(default=30, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    q: str | None = Query(default=None, max_length=200),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
-    return await list_workspace_sessions(db, workspace_id, user.id)
+    items, has_more, next_offset = await list_workspace_sessions(
+        db, workspace_id, user.id, limit=limit, offset=offset, query=q
+    )
+    return WorkspaceSessionsOut(items=items, has_more=has_more, next_offset=next_offset)
 
 
 @router.post("/workspaces/{workspace_id}/sessions", response_model=WorkspaceSessionOut)

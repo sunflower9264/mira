@@ -15,7 +15,7 @@ from urllib.parse import urlparse
 
 from cryptography.fernet import Fernet, InvalidToken
 from fastapi import HTTPException, UploadFile
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -220,16 +220,70 @@ async def update_workspace_runtime_state(
     await db.commit()
 
 
-async def list_workspace_sessions(db: AsyncSession, workspace_id: str, owner_id: str) -> list[WorkspaceSessionOut]:
+async def list_workspace_sessions(
+    db: AsyncSession,
+    workspace_id: str,
+    owner_id: str,
+    *,
+    limit: int = 30,
+    offset: int = 0,
+    query: str | None = None,
+) -> tuple[list[WorkspaceSessionOut], bool, int | None]:
     await get_owned_workspace_or_404(db, workspace_id, owner_id)
+    limit = max(1, min(limit, 100))
+    offset = max(0, offset)
+    normalized_query = (query or "").strip()
+    content_match = None
+    if normalized_query:
+        message_text = func.json_extract(WorkspaceEvent.payload_json, "$.text")
+        content_match = select(WorkspaceEvent.session_id).where(
+            WorkspaceEvent.session_id == WorkspaceSession.id,
+            WorkspaceEvent.event_type == "message_completed",
+            message_text.icontains(normalized_query, autoescape=True),
+        ).exists()
     rows = (
         await db.execute(
             select(WorkspaceSession)
             .where(WorkspaceSession.workspace_id == workspace_id)
+            .where(
+                or_(
+                    WorkspaceSession.title.icontains(normalized_query, autoescape=True),
+                    content_match,
+                )
+                if normalized_query
+                else True
+            )
             .order_by(WorkspaceSession.updated_at.desc(), WorkspaceSession.id.desc())
+            .offset(offset)
+            .limit(limit + 1)
         )
     ).scalars().all()
-    return [_session_out(row) for row in rows]
+    has_more = len(rows) > limit
+    visible = rows[:limit]
+    items: list[WorkspaceSessionOut] = []
+    for row in visible:
+        context = None
+        if normalized_query and normalized_query.lower() not in row.title.lower():
+            payload = await db.scalar(
+                select(WorkspaceEvent.payload_json)
+                .where(
+                    WorkspaceEvent.session_id == row.id,
+                    WorkspaceEvent.event_type == "message_completed",
+                    func.json_extract(WorkspaceEvent.payload_json, "$.text").icontains(
+                        normalized_query, autoescape=True
+                    ),
+                )
+                .order_by(WorkspaceEvent.id.desc())
+                .limit(1)
+            )
+            if isinstance(payload, str):
+                data = loads(payload, {}) or {}
+                text = str(data.get("text") or "") if isinstance(data, dict) else ""
+                lowered = text.lower()
+                index = lowered.find(normalized_query.lower())
+                context = text[max(0, index - 36): index + len(normalized_query) + 72] if index >= 0 else None
+        items.append(_session_out(row, match_context=context))
+    return items, has_more, offset + len(visible) if has_more else None
 
 
 async def create_workspace_session(
@@ -1028,7 +1082,7 @@ def _workspace_out(row: Workspace) -> WorkspaceOut:
     )
 
 
-def _session_out(row: WorkspaceSession) -> WorkspaceSessionOut:
+def _session_out(row: WorkspaceSession, *, match_context: str | None = None) -> WorkspaceSessionOut:
     return WorkspaceSessionOut(
         id=row.id,
         workspace_id=row.workspace_id,
@@ -1038,6 +1092,7 @@ def _session_out(row: WorkspaceSession) -> WorkspaceSessionOut:
         last_turn_at=iso(row.last_turn_at),
         created_at=iso(row.created_at) or "",
         updated_at=iso(row.updated_at) or "",
+        match_context=match_context,
     )
 
 

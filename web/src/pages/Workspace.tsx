@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, Bot, Check, ChevronRight, Download, File, Folder, GitBranch, MessageSquare, MoreHorizontal, Paperclip, RefreshCw, Send, Square, Upload, X } from 'lucide-react';
+import { ArrowLeft, Bot, Check, ChevronRight, Download, File, Folder, GitBranch, MessageSquare, MoreHorizontal, Paperclip, RefreshCw, Search, Send, Square, Upload, X } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Background, Controls, ReactFlow } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
@@ -61,6 +61,9 @@ function WorkspaceShell({ workspace, mobile = false, onBack }: { workspace: Work
   const [deleteSession, setDeleteSession] = useState<WorkspaceSession | null>(null);
   const [renameSessionOpen, setRenameSessionOpen] = useState(false);
   const [sessionTitle, setSessionTitle] = useState('');
+  const [sessionSearchOpen, setSessionSearchOpen] = useState(false);
+  const [sessionOffset, setSessionOffset] = useState(0);
+  const [sessionHasMore, setSessionHasMore] = useState(false);
 
   const refresh = async () => {
     setRefreshing(true);
@@ -71,8 +74,10 @@ function WorkspaceShell({ workspace, mobile = false, onBack }: { workspace: Work
         api.listWorkspaceWorkflowProposals(workspace.id),
         api.listWorkspaceWorkflowRuns(workspace.id),
       ]);
-      setSessions(nextSessions);
-      setSession((current) => nextSessions.find((item) => item.id === current?.id) ?? nextSessions[0] ?? null);
+      setSessions(nextSessions.items);
+      setSessionHasMore(nextSessions.has_more);
+      setSessionOffset(nextSessions.next_offset ?? nextSessions.items.length);
+      setSession((current) => nextSessions.items.find((item) => item.id === current?.id) ?? nextSessions.items[0] ?? null);
       setFiles(nextFiles.files);
       setProposals(nextProposals);
       setWorkflowRuns(nextWorkflowRuns);
@@ -154,8 +159,8 @@ function WorkspaceShell({ workspace, mobile = false, onBack }: { workspace: Work
         </div>
         <div className={`${mobile ? 'flex min-h-0 flex-1 flex-col gap-4' : 'grid min-h-0 flex-1 grid-cols-[220px_minmax(0,1fr)] gap-5'}`}>
           <aside className={`rounded-[22px] border border-black/5 bg-white p-3 shadow-card ${mobile ? 'max-h-40 shrink-0 overflow-y-auto' : 'min-h-0 overflow-y-auto'}`}>
-            <div className="mb-2 flex items-center justify-between px-2"><span className="text-xs font-semibold uppercase tracking-wider text-black/45">会话</span><button type="button" onClick={() => setNewSessionOpen(true)} className="grid h-7 w-7 place-items-center rounded-full hover:bg-black/5" aria-label="新建会话"><PlusIcon /></button></div>
-            <div className="space-y-1">{sessions.map((item) => <button type="button" key={item.id} onClick={() => setSession(item)} className={`flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm ${session?.id === item.id ? 'bg-black text-white' : 'text-black/65 hover:bg-black/5'}`}><MessageSquare className="h-3.5 w-3.5 shrink-0" /><span className="truncate">{item.title}</span>{item.status === 'running' ? <span className="ml-auto h-1.5 w-1.5 rounded-full bg-emerald-400" /> : null}</button>)}</div>
+            <div className="mb-2 flex items-center justify-between px-2"><span className="text-xs font-semibold uppercase tracking-wider text-black/45">会话</span><div className="flex items-center gap-1"><button type="button" onClick={() => setSessionSearchOpen(true)} className="grid h-7 w-7 place-items-center rounded-full hover:bg-black/5" aria-label="搜索会话"><Search className="h-3.5 w-3.5" /></button><button type="button" onClick={() => setNewSessionOpen(true)} className="grid h-7 w-7 place-items-center rounded-full hover:bg-black/5" aria-label="新建会话"><PlusIcon /></button></div></div>
+            <div className="space-y-1">{sessions.map((item) => <button type="button" key={item.id} onClick={() => setSession(item)} className={`flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm ${session?.id === item.id ? 'bg-black text-white' : 'text-black/65 hover:bg-black/5'}`}><MessageSquare className="h-3.5 w-3.5 shrink-0" /><span className="min-w-0 flex-1 truncate">{item.title}</span>{item.status === 'running' ? <span className="ml-auto h-1.5 w-1.5 rounded-full bg-emerald-400" /> : null}</button>)}{sessionHasMore ? <button type="button" onClick={async () => { const page = await api.listWorkspaceSessions(workspace.id, { offset: sessionOffset }); setSessions((current) => [...current, ...page.items]); setSessionHasMore(page.has_more); setSessionOffset(page.next_offset ?? sessionOffset + page.items.length); }} className="w-full rounded-xl px-3 py-2 text-xs text-black/40 hover:bg-black/5">加载更多</button> : null}</div>
           </aside>
           <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-[22px] border border-black/5 bg-white shadow-card">
             <div className="flex shrink-0 gap-1 overflow-x-auto border-b border-black/5 p-2">{([['chat','Codex'],['files','文件'],['workflow','工作流'],['git','Git']] as const).map(([key,label]) => <button type="button" key={key} onClick={() => setTab(key)} className={`rounded-full px-3 py-2 text-sm ${tab === key ? 'bg-black text-white' : 'text-black/55 hover:bg-black/5'}`}>{label}</button>)}<button type="button" onClick={() => void refresh()} className="ml-auto grid h-9 w-9 shrink-0 place-items-center rounded-full text-black/40 hover:bg-black/5" aria-label="刷新"><RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} /></button></div>
@@ -171,9 +176,24 @@ function WorkspaceShell({ workspace, mobile = false, onBack }: { workspace: Work
       <NewSessionDialog open={newSessionOpen} onClose={() => setNewSessionOpen(false)} onCreate={addSession} />
       <PromptDialog open={renameSessionOpen} onClose={() => setRenameSessionOpen(false)} onConfirm={renameSession} title="重命名会话" inputLabel="会话名称" value={sessionTitle} onChange={setSessionTitle} disabled={!sessionTitle.trim() || sessionTitle.trim() === session?.title} />
       <FilePreviewDialog workspace={workspace} file={filePreview} onClose={() => setFilePreview(null)} />
+      <SessionSearchDialog open={sessionSearchOpen} workspaceId={workspace.id} onClose={() => setSessionSearchOpen(false)} onSelect={(next) => { setSessions((current) => current.some((item) => item.id === next.id) ? current : [next, ...current]); setSession(next); setSessionSearchOpen(false); }} />
       <ConfirmDialog open={deleteSession !== null} onClose={() => setDeleteSession(null)} onConfirm={async () => { if (deleteSession) { await api.deleteWorkspaceSession(deleteSession.id); setSessions((items) => items.filter((item) => item.id !== deleteSession.id)); if (session?.id === deleteSession.id) setSession(null); setDeleteSession(null); } }} title="删除会话？" description="会话记录和 Codex thread 将被永久删除。" confirmLabel="删除" tone="danger" />
     </div>
   );
+}
+
+function SessionSearchDialog({ open, workspaceId, onClose, onSelect }: { open: boolean; workspaceId: string; onClose(): void; onSelect(session: WorkspaceSession): void }) {
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState<WorkspaceSession[]>([]);
+  useEffect(() => {
+    if (!open) return;
+    const normalized = query.trim();
+    if (!normalized) { setResults([]); return; }
+    const timer = window.setTimeout(() => { void api.listWorkspaceSessions(workspaceId, { query: normalized, limit: 50 }).then((page) => setResults(page.items)).catch(() => setResults([])); }, 180);
+    return () => window.clearTimeout(timer);
+  }, [open, workspaceId, query]);
+  useEffect(() => { if (!open) setQuery(''); }, [open]);
+  return <AppDialog open={open} onClose={onClose} title="搜索会话" widthClassName="max-w-xl"><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索标题或对话内容" className="h-11 w-full rounded-xl border border-black/10 px-3 text-sm outline-none focus:border-black/25" /><div className="mt-3 max-h-[50vh] space-y-1 overflow-y-auto">{results.length ? results.map((item) => <button type="button" key={item.id} onClick={() => onSelect(item)} className="w-full rounded-xl px-3 py-3 text-left hover:bg-black/[0.04]"><div className="flex items-center gap-2 text-sm font-medium"><MessageSquare className="h-3.5 w-3.5 text-black/40" />{item.title}</div>{item.match_context ? <div className="mt-1 line-clamp-2 text-xs leading-5 text-black/45">{item.match_context}</div> : <div className="mt-1 text-xs text-black/35">{item.updated_at}</div>}</button>) : <div className="py-10 text-center text-xs text-black/35">{query ? '没有匹配的会话' : '输入关键词搜索'}</div>}</div></AppDialog>;
 }
 
 function WorkspaceChat({ workspace, session, events, onEvents, onSessionUpdate, onNew, onDelete, onRename }: { workspace: Workspace; session: WorkspaceSession | null; events: WorkspaceEvent[]; onEvents(next: WorkspaceEvent[]): void; onSessionUpdate(next: WorkspaceSession): void; onNew(): void; onDelete(): void; onRename(): void }) {

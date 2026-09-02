@@ -89,6 +89,40 @@ def test_workspace_crud_sessions_files_and_owner_isolation(auth_client):
     assert renamed.status_code == 200
     assert renamed.json()["title"] == "Second"
 
+    second_session = auth_client.post(
+        f"/api/workspaces/{workspace_id}/sessions", json={"title": "Searchable"}
+    )
+    assert second_session.status_code == 200
+    second_session_id = second_session.json()["id"]
+    turn = auth_client.post(
+        f"/api/workspace-sessions/{second_session_id}/turns",
+        json={"text": "Find this conversation"},
+    )
+    assert turn.status_code == 200, turn.text
+
+    first_page = auth_client.get(
+        f"/api/workspaces/{workspace_id}/sessions", params={"limit": 1}
+    )
+    assert first_page.status_code == 200
+    assert first_page.json()["has_more"] is True
+    assert len(first_page.json()["items"]) == 1
+    assert first_page.json()["next_offset"] == 1
+
+    title_search = auth_client.get(
+        f"/api/workspaces/{workspace_id}/sessions", params={"q": "search"}
+    )
+    assert [item["id"] for item in title_search.json()["items"]] == [second_session_id]
+
+    content_search = auth_client.get(
+        f"/api/workspaces/{workspace_id}/sessions", params={"q": "conversation"}
+    )
+    content_item = content_search.json()["items"][0]
+    assert content_item["id"] == second_session_id
+    assert "conversation" in content_item["match_context"].lower()
+    assert auth_client.get(
+        f"/api/workspaces/{workspace_id}/sessions", params={"q": "role"}
+    ).json()["items"] == []
+
     uploaded = auth_client.post(
         f"/api/workspaces/{workspace_id}/files",
         files=[("files", ("notes.md", b"# Notes\n", "text/markdown"))],
@@ -110,6 +144,7 @@ def test_workspace_crud_sessions_files_and_owner_isolation(auth_client):
     outsider = create_regular_user("workspace-outsider")
     auth_client.headers.update({"Authorization": f"Bearer {outsider['token']}"})
     assert auth_client.get(f"/api/workspaces/{workspace_id}").status_code == 404
+    assert auth_client.get(f"/api/workspaces/{workspace_id}/sessions").status_code == 404
     assert auth_client.get(f"/api/workspace-sessions/{session_id}/events").status_code == 404
 
 
