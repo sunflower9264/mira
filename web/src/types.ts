@@ -576,6 +576,18 @@ export interface WorkspaceWorkflowProposal {
   applied_at?: string | null;
 }
 
+export interface WorkspaceWorkflowRun {
+  run_id: string;
+  app_id: string;
+  app_name: string;
+  status: string;
+  session_id?: string | null;
+  turn_id?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+  error?: string | null;
+}
+
 // JSON Patch ops (subset used by nlcompile, RFC 6902-ish)
 export type GraphPatch =
   | { op: 'add_node'; node: WorkflowNode }

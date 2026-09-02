@@ -21,11 +21,13 @@ from app.models import Workspace, WorkspaceSession, WorkspaceTurn
 from app.runtime.base import DecisionRequest, DecisionResult
 from app.runtime.codex_runtime import _prepare_scoped_home
 from app.runtime.workspace_runtime import (
+    WorkspaceDynamicToolResult,
     WorkspaceRuntimeEvent,
     WorkspaceRuntimeSpec,
     WorkspaceTurnRequest,
     get_workspace_runtime,
 )
+from app.services.workspace_workflows import call_workspace_workflow_tool, workflow_dynamic_tools
 from app.services.runtime_paths import codex_home
 from app.services.tools import runtime_tools_for_graph
 from app.services.workspaces import (
@@ -173,6 +175,29 @@ async def run_workspace_turn(turn_id: str) -> None:
                     await db.commit()
                 return decision
 
+            async def on_dynamic_tool_call(namespace: str, tool: str, arguments: dict) -> WorkspaceDynamicToolResult:
+                result = await call_workspace_workflow_tool(
+                    db,
+                    workspace=workspace,
+                    session=session,
+                    turn=turn,
+                    owner_id=workspace.owner_id,
+                    namespace=namespace,
+                    tool=tool,
+                    arguments=arguments,
+                    on_decision_request=on_decision_request,
+                    cancel_event=session_state.cancel_event,
+                )
+                await append_workspace_event(
+                    db,
+                    workspace_id=workspace.id,
+                    session_id=session.id,
+                    turn_id=turn.id,
+                    event_type="workflow_tool",
+                    payload={"namespace": namespace, "tool": tool, "success": result.success},
+                )
+                return result
+
             prompt = _workspace_prompt(turn.prompt)
             execution = await get_workspace_runtime().execute_turn(
                 _runtime_spec(workspace),
@@ -181,10 +206,12 @@ async def run_workspace_turn(turn_id: str) -> None:
                     thread_id=session.thread_id,
                     model=turn.model,
                     reasoning_effort=turn.reasoning_effort,
+                    dynamic_tools=workflow_dynamic_tools(),
                 ),
                 on_event=on_event,
                 cancel_event=session_state.cancel_event,
                 on_decision_request=on_decision_request,
+                on_dynamic_tool_call=on_dynamic_tool_call,
             )
             if execution.finished_with == "done":
                 wiki_publish = await publish_workspace_wiki_copy(db, workspace)
@@ -513,6 +540,7 @@ def _workspace_prompt(prompt: str) -> str:
         + "当前用户 Wiki 的完整 working copy 位于 /mnt/wiki。你可以按任务需要修改其中的 Markdown；"
         + "只能修改 /mnt/wiki/wiki/**/*.md，不得修改 /mnt/wiki/raw、purpose.md 或 schema.md。"
         + "成功完成后 Mira 会发布新 Wiki revision；失败或取消不会写回。"
+        + "\n工作流是可选能力：仅在用户明确要求时调用；自主建议调用时先通过原生提问获得确认。"
     )
 
 

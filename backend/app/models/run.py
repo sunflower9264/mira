@@ -9,11 +9,23 @@ from app.utils import now_utc
 
 class Run(Base):
     __tablename__ = "runs"
-    __table_args__ = (Index("ix_runs_owner_app_started_id", "owner_id", "app_id", "started_at", "id"),)
+    __table_args__ = (
+        Index("ix_runs_owner_app_started_id", "owner_id", "app_id", "started_at", "id"),
+        Index("ix_runs_workspace_started_id", "workspace_id", "started_at", "id"),
+    )
 
     id: Mapped[str] = mapped_column(String(80), primary_key=True)
     app_id: Mapped[str] = mapped_column(ForeignKey("apps.id", ondelete="CASCADE"), index=True)
     owner_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    workspace_id: Mapped[str | None] = mapped_column(
+        ForeignKey("workspaces.id", ondelete="SET NULL"), nullable=True
+    )
+    workspace_session_id: Mapped[str | None] = mapped_column(
+        ForeignKey("workspace_sessions.id", ondelete="SET NULL"), nullable=True
+    )
+    workspace_turn_id: Mapped[str | None] = mapped_column(
+        ForeignKey("workspace_turns.id", ondelete="SET NULL"), nullable=True
+    )
     status: Mapped[str] = mapped_column(String(24), default="pending")
     name: Mapped[str | None] = mapped_column(String(80), nullable=True)
     inputs_json: Mapped[str] = mapped_column(Text)

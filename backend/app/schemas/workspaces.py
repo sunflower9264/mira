@@ -186,7 +186,13 @@ class WorkspaceWorkflowProposalOut(BaseModel):
     applied_at: str | None = None
 
 
-class WorkspaceWorkflowRunIn(BaseModel):
+class WorkspaceWorkflowRunOut(BaseModel):
+    run_id: str
     app_id: str
-    inputs: dict[str, Any] = Field(default_factory=dict)
-    wiki_mode: Literal["auto", "without"] = "auto"
+    app_name: str
+    status: str
+    session_id: str | None = None
+    turn_id: str | None = None
+    started_at: str | None = None
+    finished_at: str | None = None
+    error: str | None = None

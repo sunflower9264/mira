@@ -8,7 +8,6 @@ from app.api.deps import get_current_user
 from app.db import get_db
 from app.models import User
 from app.schemas import (
-    RunCreatedOut,
     WorkspaceCreateIn,
     WorkspaceEventOut,
     WorkspaceFilePreviewOut,
@@ -27,12 +26,8 @@ from app.schemas import (
     WorkspaceTurnResumeIn,
     WorkspaceWorkflowProposalCreateIn,
     WorkspaceWorkflowProposalOut,
-    WorkspaceWorkflowRunIn,
+    WorkspaceWorkflowRunOut,
 )
-from app.services.graph_validation import sanitize_prompt_template_tokens
-from app.services.run_hub import get_run_hub
-from app.services.run_orchestrator import schedule_run
-from app.services.runs import create_run_record
 from app.services.workspaces import (
     confirm_workflow_proposal,
     create_workflow_proposal,
@@ -82,6 +77,7 @@ from app.services.workspace_runtime import (
     get_workspace_runtime_status,
     delete_workspace_thread,
 )
+from app.services.workspace_workflows import list_workspace_workflow_runs
 
 
 router = APIRouter(tags=["workspaces"])
@@ -482,23 +478,11 @@ async def post_reject_workspace_workflow_proposal(
     return await reject_workflow_proposal(db, workspace_id, proposal_id, user.id)
 
 
-@router.post("/workspaces/{workspace_id}/workflow-runs", response_model=RunCreatedOut)
-async def post_workspace_workflow_run(
+@router.get("/workspaces/{workspace_id}/workflow-runs", response_model=list[WorkspaceWorkflowRunOut])
+async def get_workspace_workflow_runs(
     workspace_id: str,
-    payload: WorkspaceWorkflowRunIn,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    workspace = await get_owned_workspace_or_404(db, workspace_id, user.id)
-    sync = await prepare_workspace_wiki_copy(db, workspace)
-    if sync["status"] != "ready":
-        raise HTTPException(status_code=409, detail=sync.get("error") or "Wiki 同步未完成")
-    published = await publish_workspace_wiki_copy(db, workspace)
-    if published["status"] != "ready":
-        raise HTTPException(status_code=409, detail=published.get("error") or "Wiki 同步未完成")
-    run_id, graph = await create_run_record(
-        db, user.id, payload.app_id, payload.inputs, payload.wiki_mode
-    )
-    await get_run_hub().create(run_id)
-    schedule_run(run_id)
-    return RunCreatedOut(run_id=run_id, graph=sanitize_prompt_template_tokens(graph))
+    await get_owned_workspace_or_404(db, workspace_id, user.id)
+    return await list_workspace_workflow_runs(db, workspace_id, user.id)

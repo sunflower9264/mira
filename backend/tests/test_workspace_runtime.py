@@ -16,6 +16,8 @@ from app.runtime.workspace_runtime import (
     _read_or_create_token,
     _safe_event,
     _token_path,
+    WorkspaceDynamicToolResult,
+    _dynamic_tool_response,
 )
 from app.services import workspace_runtime as workspace_service
 
@@ -68,9 +70,11 @@ class _FakeClient:
 class _FakeWebsocket:
     def __init__(self) -> None:
         self.messages: asyncio.Queue[str] = asyncio.Queue()
+        self.sent: list[dict] = []
 
     async def send(self, raw: str) -> None:
         message = json.loads(raw)
+        self.sent.append(message)
         method = message.get("method")
         if method == "initialize":
             await self.messages.put(json.dumps({"id": message["id"], "result": {}}))
@@ -211,6 +215,34 @@ def test_command_events_never_expose_command_or_output() -> None:
     assert _safe_event("item/commandExecution/outputDelta", {"delta": "secret"}) is None
 
 
+async def test_dynamic_tool_response_returns_safe_content_without_arguments() -> None:
+    seen = {}
+
+    async def callback(namespace, tool, arguments):  # noqa: ANN001
+        seen.update(namespace=namespace, tool=tool, arguments=arguments)
+        return WorkspaceDynamicToolResult(True, '{"ok":true}')
+
+    raw = await _dynamic_tool_response(
+        {
+            "id": 42,
+            "params": {
+                "namespace": "mira_workflows",
+                "tool": "list",
+                "arguments": {"secret": "must-not-be-persisted"},
+            },
+        },
+        callback,
+        asyncio.Event(),
+    )
+    payload = json.loads(raw)
+    assert payload["id"] == 42
+    assert payload["result"] == {
+        "success": True,
+        "contentItems": [{"type": "inputText", "text": '{"ok":true}'}],
+    }
+    assert seen["arguments"]["secret"] == "must-not-be-persisted"
+
+
 async def test_workspace_turn_streams_sanitized_events_and_reuses_thread(tmp_path, monkeypatch) -> None:
     websocket = _FakeWebsocket()
     runtime = WorkspaceCodexRuntime(connector=lambda *args, **kwargs: _FakeConnection(websocket))
@@ -243,7 +275,17 @@ async def test_workspace_turn_streams_sanitized_events_and_reuses_thread(tmp_pat
 
     result = await runtime.execute_turn(
         spec,
-        WorkspaceTurnRequest(prompt="hello"),
+        WorkspaceTurnRequest(
+            prompt="hello",
+            dynamic_tools=[
+                {
+                    "type": "namespace",
+                    "name": "mira_workflows",
+                    "description": "workflows",
+                    "tools": [],
+                }
+            ],
+        ),
         on_event=on_event,
         cancel_event=asyncio.Event(),
     )
@@ -251,6 +293,8 @@ async def test_workspace_turn_streams_sanitized_events_and_reuses_thread(tmp_pat
     assert result.finished_with == "done"
     assert result.session_id == "thread-1"
     assert result.total_text == "hello"
+    thread_request = next(message for message in websocket.sent if message.get("method") == "thread/start")
+    assert thread_request["params"]["dynamicTools"][0]["name"] == "mira_workflows"
     process_events = [event for event in events if event.type == "process"]
     assert len(process_events) == 2
     serialized = json.dumps([event.model_dump() for event in events])

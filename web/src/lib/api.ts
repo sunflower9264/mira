@@ -51,6 +51,7 @@ import type {
   WorkspaceTurn,
   WorkspaceWikiSyncResult,
   WorkspaceWorkflowProposal,
+  WorkspaceWorkflowRun,
 } from '../types';
 import { clearToken, clearUser, getToken } from './auth';
 
@@ -423,14 +424,8 @@ export async function rejectWorkspaceWorkflowProposal(
   );
 }
 
-export async function createWorkspaceWorkflowRun(
-  workspaceId: string,
-  input: { app_id: string; inputs: Record<string, unknown>; wiki_mode?: 'auto' | 'without' },
-): Promise<{ run_id: string; graph: Graph }> {
-  return request<{ run_id: string; graph: Graph }>(`/api/workspaces/${workspaceId}/workflow-runs`, {
-    method: 'POST',
-    body: input,
-  });
+export async function listWorkspaceWorkflowRuns(workspaceId: string): Promise<WorkspaceWorkflowRun[]> {
+  return request<WorkspaceWorkflowRun[]>(`/api/workspaces/${workspaceId}/workflow-runs`);
 }
 
 // --- Apps -----------------------------------------------------------------

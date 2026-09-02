@@ -16,7 +16,6 @@ from app.models import (
     WorkspaceTurn,
     WorkspaceWorkflowProposal,
 )
-from app.services.runtime_paths import wiki_run_snapshot_path
 from app.services.workspaces import _replace_wiki_tree, update_workspace_runtime_state
 from app.utils import dumps, now_utc
 from tests.auth_helpers import create_regular_user
@@ -233,35 +232,14 @@ def test_workspace_wiki_sync_and_workflow_proposal_confirmation(auth_client):
     assert confirmed.json()["app_id"]
 
 
-def test_workspace_workflow_run_freezes_workspace_published_wiki_without_sources(
-    auth_client,
-    configure_codex,
-    monkeypatch,
-):
-    configure_codex()
-    monkeypatch.setattr("app.api.workspaces.schedule_run", lambda _run_id: None)
-    workspace_id = _create_workspace(auth_client, "Wiki Run Bridge")["id"]
-    synced = auth_client.post(f"/api/workspaces/{workspace_id}/wiki/sync")
-    assert synced.status_code == 200, synced.text
-    working_tree = next(
-        (get_settings().runtime_dir / "persistent-workspaces").glob(
-            f"*/{workspace_id}/.mira/wiki/working-tree"
-        )
-    )
-    marker = "WORKSPACE_WIKI_RUN_SNAPSHOT"
-    (working_tree / "wiki" / "index.md").write_text(marker, encoding="utf-8")
-
-    app = auth_client.post("/api/apps", json={"name": "Workspace Wiki Run"}).json()
-    patched = auth_client.patch(f"/api/apps/{app['id']}", json={"graph": GRAPH})
-    assert patched.status_code == 200, patched.text
-    created = auth_client.post(
-        f"/api/workspaces/{workspace_id}/workflow-runs",
-        json={"app_id": app["id"], "inputs": {}},
-    )
-    assert created.status_code == 200, created.text
-
-    snapshot_file = wiki_run_snapshot_path(created.json()["run_id"]) / "tree" / "wiki" / "index.md"
-    assert snapshot_file.read_text(encoding="utf-8") == marker
+def test_workspace_workflow_runs_are_read_only_call_history(auth_client):
+    workspace_id = _create_workspace(auth_client, "Workflow history")["id"]
+    response = auth_client.get(f"/api/workspaces/{workspace_id}/workflow-runs")
+    assert response.status_code == 200
+    assert response.json() == []
+    assert auth_client.post(
+        f"/api/workspaces/{workspace_id}/workflow-runs", json={"app_id": "app"}
+    ).status_code == 405
 
 
 def test_workspace_turn_and_decision_resume_validate_current_request(auth_client, monkeypatch):

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, Bot, Check, ChevronRight, Download, File, Folder, GitBranch, MessageSquare, MoreHorizontal, Paperclip, Play, RefreshCw, Send, Square, Upload, X } from 'lucide-react';
+import { ArrowLeft, Bot, Check, ChevronRight, Download, File, Folder, GitBranch, MessageSquare, MoreHorizontal, Paperclip, RefreshCw, Send, Square, Upload, X } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Background, Controls, ReactFlow } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
@@ -9,10 +9,8 @@ import { AppDialog } from '../components/common/AppDialog';
 import { useWorkspaceStore } from '../stores/useWorkspaceStore';
 import { showCaughtError } from '../stores/useErrorDialogStore';
 import * as api from '../lib/api';
-import type { Workspace, WorkspaceEvent, WorkspaceFile, WorkspaceSession, WorkspaceWorkflowProposal } from '../types';
-import type { App, DecisionAnswer, RunWaitingRequest, UploadRef } from '../types';
-import { useRunStore } from '../stores/useRunStore';
-import { AppRunContent } from '../components/preview/AppRunContent';
+import type { Workspace, WorkspaceEvent, WorkspaceFile, WorkspaceSession, WorkspaceWorkflowProposal, WorkspaceWorkflowRun } from '../types';
+import type { DecisionAnswer, RunWaitingRequest, UploadRef } from '../types';
 import { DecisionPromptPanel } from '../components/common/DecisionPromptPanel';
 import { PromptDialog } from '../components/common/PromptDialog';
 
@@ -55,6 +53,7 @@ function WorkspaceShell({ workspace, mobile = false, onBack }: { workspace: Work
   const [events, setEvents] = useState<WorkspaceEvent[]>([]);
   const [files, setFiles] = useState<WorkspaceFile[]>([]);
   const [proposals, setProposals] = useState<WorkspaceWorkflowProposal[]>([]);
+  const [workflowRuns, setWorkflowRuns] = useState<WorkspaceWorkflowRun[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [newSessionOpen, setNewSessionOpen] = useState(false);
   const [syncingWiki, setSyncingWiki] = useState(false);
@@ -66,15 +65,17 @@ function WorkspaceShell({ workspace, mobile = false, onBack }: { workspace: Work
   const refresh = async () => {
     setRefreshing(true);
     try {
-      const [nextSessions, nextFiles, nextProposals] = await Promise.all([
+      const [nextSessions, nextFiles, nextProposals, nextWorkflowRuns] = await Promise.all([
         api.listWorkspaceSessions(workspace.id),
         api.listWorkspaceFiles(workspace.id),
         api.listWorkspaceWorkflowProposals(workspace.id),
+        api.listWorkspaceWorkflowRuns(workspace.id),
       ]);
       setSessions(nextSessions);
       setSession((current) => nextSessions.find((item) => item.id === current?.id) ?? nextSessions[0] ?? null);
       setFiles(nextFiles.files);
       setProposals(nextProposals);
+      setWorkflowRuns(nextWorkflowRuns);
     } finally {
       setRefreshing(false);
     }
@@ -90,6 +91,9 @@ function WorkspaceShell({ workspace, mobile = false, onBack }: { workspace: Work
         if (closed || next.length === 0) return;
         lastId = next[next.length - 1]?.id;
         setEvents((current) => lastId === next[next.length - 1]?.id && current.length === 0 ? next : [...current, ...next.filter((item) => !current.some((existing) => existing.id === item.id))]);
+        if (next.some((item) => item.event_type === 'workflow_run_finished')) {
+          void api.listWorkspaceWorkflowRuns(workspace.id).then(setWorkflowRuns);
+        }
       } catch {
         // A transient polling failure is retried on the next interval.
       }
@@ -158,7 +162,7 @@ function WorkspaceShell({ workspace, mobile = false, onBack }: { workspace: Work
             <div className="p-4 sm:p-5">
               {tab === 'chat' ? <WorkspaceChat workspace={workspace} session={session} events={events} onEvents={setEvents} onSessionUpdate={(next) => { setSession(next); setSessions((items) => items.map((item) => item.id === next.id ? next : item)); }} onNew={() => setNewSessionOpen(true)} onDelete={() => session && setDeleteSession(session)} onRename={() => { if (session) { setSessionTitle(session.title); setRenameSessionOpen(true); } }} /> : null}
               {tab === 'files' ? <WorkspaceFiles workspace={workspace} files={files} onRefresh={() => void refresh()} onPreview={setFilePreview} /> : null}
-              {tab === 'workflow' ? <WorkspaceWorkflow workspace={workspace} proposals={proposals} onRefresh={() => void refresh()} /> : null}
+              {tab === 'workflow' ? <WorkspaceWorkflow workspace={workspace} proposals={proposals} runs={workflowRuns} onRefresh={() => void refresh()} /> : null}
               {tab === 'git' ? <WorkspaceGit workspace={workspace} /> : null}
             </div>
           </section>
@@ -199,7 +203,10 @@ function WorkspaceChat({ workspace, session, events, onEvents, onSessionUpdate, 
     if (container) container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
   }, [events.length]);
   useEffect(() => { void api.getSettings().then((settings) => { setModels(settings.supported_models); setCapabilities({ skills: settings.skills.filter((item) => item.enabled).map((item) => item.name), mcp: settings.mcp_servers.filter((item) => item.enabled).map((item) => item.name) }); }).catch(() => undefined); }, []);
-  const terminalStatus = String(events.at(-1)?.payload?.status ?? '');
+  const lastEvent = events.at(-1);
+  const terminalStatus = lastEvent?.event_type === 'turn_completed'
+    ? String(lastEvent.payload?.status ?? '')
+    : lastEvent?.event_type === 'error' ? 'failed' : '';
   useEffect(() => {
     if (!session || !['success', 'failed', 'cancelled', 'completed'].includes(terminalStatus)) return;
     if (session.status !== 'idle') onSessionUpdate({ ...session, status: 'idle' });
@@ -295,28 +302,15 @@ function collapseWorkspaceEvents(events: WorkspaceEvent[]): WorkspaceEvent[] {
   return visible;
 }
 
-function EventBubble({ event }: { event: WorkspaceEvent }) { const payload = event.payload ?? {}; const text = String(payload.text ?? payload.content ?? payload.delta ?? payload.message ?? ''); const role = String(payload.role ?? payload.author ?? 'assistant'); if (!text && event.event_type !== 'status') return null; return <div className={`flex ${role === 'user' ? 'justify-end' : 'justify-start'}`}><div className={`max-w-[88%] break-words rounded-2xl px-3.5 py-2.5 text-sm leading-6 ${role === 'user' ? 'bg-black text-white' : 'bg-white text-black/75 shadow-sm'}`}>{text || String(payload.status ?? event.event_type)}</div></div>; }
+function EventBubble({ event }: { event: WorkspaceEvent }) { const payload = event.payload ?? {}; if (event.event_type.startsWith('workflow_run_')) { const name = String(payload.app_name ?? '工作流'); const status = event.event_type === 'workflow_run_started' ? '运行中' : event.event_type === 'workflow_run_waiting' ? '等待回复' : payload.status === 'success' ? '已完成' : '运行失败'; return <div className="flex justify-start"><div className="inline-flex max-w-[88%] items-center gap-2 rounded-xl border border-black/5 bg-white px-3 py-2 text-xs text-black/55 shadow-sm"><GitBranch className="h-3.5 w-3.5" /><span className="truncate">{name}</span><span className="text-black/35">{status}</span></div></div>; } const text = String(payload.text ?? payload.content ?? payload.delta ?? payload.message ?? ''); const role = String(payload.role ?? payload.author ?? 'assistant'); if (!text && event.event_type !== 'status') return null; return <div className={`flex ${role === 'user' ? 'justify-end' : 'justify-start'}`}><div className={`max-w-[88%] break-words rounded-2xl px-3.5 py-2.5 text-sm leading-6 ${role === 'user' ? 'bg-black text-white' : 'bg-white text-black/75 shadow-sm'}`}>{text || String(payload.status ?? event.event_type)}</div></div>; }
 
 function WorkspaceFiles({ workspace, files, onRefresh, onPreview }: { workspace: Workspace; files: WorkspaceFile[]; onRefresh(): void; onPreview(file: WorkspaceFile): void }) { const [uploading, setUploading] = useState(false); const upload = async (event: React.ChangeEvent<HTMLInputElement>) => { const selected = Array.from(event.target.files ?? []); if (!selected.length) return; setUploading(true); try { await api.uploadWorkspaceFiles(workspace.id, selected); onRefresh(); } finally { setUploading(false); event.target.value = ''; } }; return <div><div className="mb-4 flex items-center justify-between"><h2 className="text-base font-semibold">项目文件</h2><label className="inline-flex cursor-pointer items-center gap-1.5 rounded-full bg-black px-3 py-2 text-xs font-medium text-white hover:bg-black/85"><Upload className="h-3.5 w-3.5" />{uploading ? '上传中…' : '上传'}<input type="file" multiple className="hidden" onChange={(event) => void upload(event)} /></label></div><div className="divide-y divide-black/5 rounded-2xl border border-black/5">{files.length ? files.map((file) => <button type="button" key={file.path} onClick={() => file.kind === 'file' && onPreview(file)} className="flex w-full items-center gap-3 px-3.5 py-3 text-left hover:bg-black/[0.02]"><span className="grid h-8 w-8 place-items-center rounded-xl bg-black/[0.04]">{file.kind === 'directory' ? <Folder className="h-4 w-4 text-black/45" /> : <File className="h-4 w-4 text-black/45" />}</span><span className="min-w-0 flex-1 truncate text-sm text-black/75">{file.path}</span><span className="text-[11px] text-black/35">{file.kind === 'file' ? formatSize(file.size) : ''}</span><ChevronRight className="h-4 w-4 text-black/20" /></button>) : <div className="px-4 py-12 text-center text-xs text-black/40">目录为空</div>}</div></div>; }
 
 function FilePreviewDialog({ workspace, file, onClose }: { workspace: Workspace; file: WorkspaceFile | null; onClose(): void }) { const [preview, setPreview] = useState<Awaited<ReturnType<typeof api.previewWorkspaceFile>> | null>(null); useEffect(() => { if (!file) { setPreview(null); return; } void api.previewWorkspaceFile(workspace.id, file.path).then(setPreview).catch(() => setPreview(null)); }, [file, workspace.id]); const download = async () => { if (!file) return; const blob = await api.downloadWorkspaceFile(workspace.id, file.path); const url = URL.createObjectURL(blob); const anchor = document.createElement('a'); anchor.href = url; anchor.download = file.name; anchor.click(); window.setTimeout(() => URL.revokeObjectURL(url), 0); }; return <AppDialog open={file !== null} onClose={onClose} title={file?.name ?? '文件预览'} description={file?.path} widthClassName="max-w-3xl" footer={preview ? <button type="button" onClick={() => void download()} className="inline-flex items-center gap-1.5 rounded-full bg-black px-4 py-2 text-sm font-medium text-white"><Download className="h-4 w-4" />下载</button> : undefined}>{preview ? <div className="max-h-[60vh] overflow-auto rounded-2xl bg-[#F4F5F7] p-4">{preview.content != null ? <pre className="whitespace-pre-wrap break-words text-xs leading-6 text-black/75">{preview.content}</pre> : <div className="text-sm text-black/45">此文件类型仅支持下载。</div>}</div> : <div className="py-12 text-center text-sm text-black/40">加载预览…</div>}</AppDialog>; }
 
-function WorkspaceWorkflow({ workspace, proposals, onRefresh }: { workspace: Workspace; proposals: WorkspaceWorkflowProposal[]; onRefresh(): void }) {
+function WorkspaceWorkflow({ workspace, proposals, runs, onRefresh }: { workspace: Workspace; proposals: WorkspaceWorkflowProposal[]; runs: WorkspaceWorkflowRun[]; onRefresh(): void }) {
   const [selected, setSelected] = useState<WorkspaceWorkflowProposal | null>(null);
   const [busy, setBusy] = useState(false);
-  const [apps, setApps] = useState<App[]>([]);
-  const [runAppId, setRunAppId] = useState('');
-  const [runInput, setRunInput] = useState('');
-  const [runFiles, setRunFiles] = useState<UploadRef[]>([]);
-  const [uploadingRunFiles, setUploadingRunFiles] = useState(false);
-  const [runFileError, setRunFileError] = useState('');
-  const [activeRunApp, setActiveRunApp] = useState<App | null>(null);
-  useEffect(() => {
-    void api.listMyApps().then((items) => {
-      setApps(items);
-      setRunAppId((current) => items.some((item) => item.id === current) ? current : '');
-    });
-  }, []);
   const confirm = async () => {
     if (!selected) return;
     setBusy(true);
@@ -339,78 +333,13 @@ function WorkspaceWorkflow({ workspace, proposals, onRefresh }: { workspace: Wor
     target: edge.target,
     label: edge.branch_key,
   })) ?? [], [selected]);
-  const startFormalRun = async () => {
-    if (!runAppId) return;
-    setBusy(true);
-    try {
-      const app = await api.getApp(runAppId);
-      const inputNode = app.graph.nodes.find((node) => node.type === 'user_input');
-      if (!inputNode && runFiles.length > 0) {
-        setRunFileError('所选应用没有用户输入节点，无法接收文件。');
-        return;
-      }
-      const inputs = inputNode ? {
-        [inputNode.id]: runFiles.length > 0
-          ? { value: runInput, attachments: runFiles.map((file) => ({ id: file.id, name: file.name })) }
-          : runInput,
-      } : {};
-      const created = await api.createWorkspaceWorkflowRun(workspace.id, { app_id: app.id, inputs, wiki_mode: 'auto' });
-      const run = await api.getRun(created.run_id);
-      useRunStore.getState().resume(app, run);
-      setActiveRunApp(app);
-      setRunInput('');
-      setRunFiles([]);
-      setRunFileError('');
-    } finally {
-      setBusy(false);
-    }
-  };
-  const uploadRunFiles = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const selectedFiles = Array.from(event.target.files ?? []);
-    event.target.value = '';
-    if (!selectedFiles.length) return;
-    setUploadingRunFiles(true);
-    setRunFileError('');
-    try {
-      for (const file of selectedFiles) {
-        const uploaded = await api.uploadFile(file);
-        setRunFiles((current) => [...current, uploaded]);
-      }
-    } catch (error) {
-      setRunFileError(error instanceof Error ? error.message : '文件上传失败');
-    } finally {
-      setUploadingRunFiles(false);
-    }
-  };
   return (
     <div>
       <h2 className="mb-4 text-base font-semibold">可视化工作流</h2>
-      <div className="mb-5 rounded-2xl border border-black/5 bg-[#F4F5F7] p-4">
-        <div className="text-xs font-semibold text-black/55">在此工作空间运行应用</div>
-        <div className="mt-3 grid grid-cols-[minmax(0,1fr)] gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
-          <select value={runAppId} onChange={(event) => setRunAppId(event.target.value)} className="h-10 min-w-0 rounded-xl border border-black/10 bg-white px-3 text-sm outline-none focus:border-black/25">
-            <option value="">不选择工作流</option>
-            {apps.map((app) => <option key={app.id} value={app.id}>{app.name}</option>)}
-          </select>
-          <input value={runInput} onChange={(event) => setRunInput(event.target.value)} placeholder="应用输入（如需要）" className="h-10 min-w-0 rounded-xl border border-black/10 bg-white px-3 text-sm outline-none focus:border-black/25" />
-          <button type="button" disabled={!runAppId || busy || uploadingRunFiles} onClick={() => void startFormalRun()} className="inline-flex h-10 items-center justify-center gap-1.5 rounded-full bg-black px-4 text-sm font-medium text-white disabled:opacity-40"><Play className="h-4 w-4" />运行</button>
-        </div>
-      </div>
+      {runs.length ? <div className="mb-5 space-y-2"><div className="text-xs font-semibold text-black/55">对话调用记录</div>{runs.map((run) => <div key={run.run_id} className="flex items-center gap-3 rounded-xl border border-black/5 px-3 py-2.5"><span className={`h-2 w-2 rounded-full ${run.status === 'success' ? 'bg-emerald-500' : run.status === 'failed' ? 'bg-red-500' : 'bg-amber-500'}`} /><span className="min-w-0 flex-1 truncate text-sm text-black/70">{run.app_name}</span><span className="text-xs text-black/40">{run.status}</span></div>)}</div> : null}
       {proposals.length ? <div className="mb-3 space-y-3">{proposals.map((proposal) => <button type="button" key={proposal.id} onClick={() => setSelected(proposal)} className="flex w-full items-center gap-3 rounded-2xl border border-black/5 p-4 text-left hover:border-black/15"><span className={`grid h-9 w-9 place-items-center rounded-xl ${proposal.status === 'pending' ? 'bg-amber-50 text-amber-600' : 'bg-emerald-50 text-emerald-600'}`}><GitBranch className="h-4 w-4" /></span><span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium">{proposal.name}</span><span className="mt-0.5 block text-xs text-black/40">{proposal.kind === 'create' ? '新建应用' : '修改应用'} · {proposal.status}</span></span><ChevronRight className="h-4 w-4 text-black/25" /></button>)}</div> : null}
-      <div className="rounded-2xl border border-dashed border-black/15 p-4">
-        <label className={`flex min-h-28 flex-col items-center justify-center rounded-xl text-center transition hover:bg-black/[0.02] ${uploadingRunFiles ? 'pointer-events-none opacity-55' : 'cursor-pointer'}`}>
-          <span className="grid h-10 w-10 place-items-center rounded-full bg-black/[0.04] text-black/45"><Upload className="h-4 w-4" /></span>
-          <span className="mt-2 text-sm font-medium text-black/65">{uploadingRunFiles ? '正在上传…' : '上传工作流输入文件'}</span>
-          <input type="file" multiple className="hidden" disabled={uploadingRunFiles} onChange={(event) => void uploadRunFiles(event)} />
-        </label>
-        {runFiles.length > 0 ? <div className="mt-3 flex flex-wrap gap-2 border-t border-black/5 pt-3">{runFiles.map((file) => <button type="button" key={file.id} onClick={() => setRunFiles((current) => current.filter((item) => item.id !== file.id))} className="inline-flex max-w-full items-center gap-1.5 rounded-full bg-black/[0.05] px-3 py-1.5 text-xs text-black/60"><File className="h-3.5 w-3.5 shrink-0" /><span className="truncate">{file.name}</span><X className="h-3 w-3 shrink-0" /></button>)}</div> : null}
-        {runFileError ? <p className="mt-3 text-xs text-red-600">{runFileError}</p> : null}
-      </div>
       <AppDialog open={selected !== null} onClose={() => !busy && setSelected(null)} title={selected?.name ?? '工作流提案'} description={selected?.description} widthClassName="max-w-4xl" footer={selected?.status === 'pending' ? <><button type="button" onClick={() => { if (selected) void api.rejectWorkspaceWorkflowProposal(workspace.id, selected.id).then(() => { setSelected(null); onRefresh(); }); }} className="rounded-full border border-black/10 px-4 py-2 text-sm">拒绝</button><button type="button" disabled={busy} onClick={() => void confirm()} className="inline-flex items-center gap-1.5 rounded-full bg-black px-4 py-2 text-sm font-medium text-white disabled:opacity-40"><Check className="h-4 w-4" />确认应用</button></> : undefined}>
         {selected ? <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_220px]"><div className="rounded-2xl bg-[#F4F5F7] p-4"><div className="text-xs font-semibold text-black/55">Graph 预览</div><div className="mt-3 h-[360px] overflow-hidden rounded-xl border border-black/10 bg-white"><ReactFlow nodes={graphNodes} edges={graphEdges} fitView nodesDraggable={false} nodesConnectable={false} elementsSelectable={false} zoomOnScroll={false} proOptions={{ hideAttribution: true }}><Background color="#e5e7eb" gap={20} /><Controls showInteractive={false} /></ReactFlow></div></div><div className="rounded-2xl border border-black/5 bg-white p-4"><div className="text-xs font-semibold text-black/55">Lint</div><div className={`mt-2 text-sm ${selected.lint.ok ? 'text-emerald-600' : 'text-red-600'}`}>{selected.lint.ok ? '通过' : '需要修正'}</div>{selected.lint.issues.map((issue, index) => <div key={index} className="mt-2 text-xs leading-5 text-black/50">{issue.detail}</div>)}</div></div> : null}
-      </AppDialog>
-      <AppDialog open={activeRunApp !== null} onClose={() => { useRunStore.getState().reset(); setActiveRunApp(null); }} title={activeRunApp?.name ?? '运行应用'} widthClassName="max-w-5xl">
-        {activeRunApp ? <div className="relative h-[68vh] min-h-[520px] overflow-hidden rounded-2xl border border-black/5"><AppRunContent app={activeRunApp} variant="app" /></div> : null}
       </AppDialog>
     </div>
   );

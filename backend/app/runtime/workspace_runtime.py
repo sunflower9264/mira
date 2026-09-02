@@ -49,6 +49,15 @@ _CONTROL_ID = 4
 WorkspaceEventCallback = Callable[["WorkspaceRuntimeEvent"], Awaitable[None]]
 
 
+@dataclass(frozen=True)
+class WorkspaceDynamicToolResult:
+    success: bool
+    text: str
+
+
+WorkspaceDynamicToolCallback = Callable[[str, str, dict[str, Any]], Awaitable[WorkspaceDynamicToolResult]]
+
+
 class WorkspaceRuntimeError(RuntimeError):
     """Workspace 常驻 Codex runtime 无法启动、连接或执行。"""
 
@@ -93,6 +102,7 @@ class WorkspaceTurnRequest:
     thread_id: str | None = None
     model: str | None = None
     reasoning_effort: str | None = None
+    dynamic_tools: list[dict[str, Any]] | None = None
 
 
 @dataclass(frozen=True)
@@ -144,6 +154,7 @@ class WorkspaceCodexRuntime:
         on_event: WorkspaceEventCallback,
         cancel_event: asyncio.Event,
         on_decision_request: DecisionCallback | None = None,
+        on_dynamic_tool_call: WorkspaceDynamicToolCallback | None = None,
     ) -> AgentExecutionResult:
         lock = self._turn_locks.setdefault(spec.workspace_id, asyncio.Lock())
         async with lock:
@@ -153,6 +164,7 @@ class WorkspaceCodexRuntime:
                 on_event=on_event,
                 cancel_event=cancel_event,
                 on_decision_request=on_decision_request,
+                on_dynamic_tool_call=on_dynamic_tool_call,
             )
 
     async def interrupt(self, spec: WorkspaceRuntimeSpec) -> bool:
@@ -345,6 +357,7 @@ class WorkspaceCodexRuntime:
         on_event: WorkspaceEventCallback,
         cancel_event: asyncio.Event,
         on_decision_request: DecisionCallback | None,
+        on_dynamic_tool_call: WorkspaceDynamicToolCallback | None,
     ) -> AgentExecutionResult:
         handle = await self.ensure_started(spec)
         token = _read_token(_token_path(spec.workspace_id))
@@ -355,6 +368,8 @@ class WorkspaceCodexRuntime:
             runtime_policy="execute",
             fork_session=False,
         )
+        if request.dynamic_tools:
+            thread_request["params"]["dynamicTools"] = request.dynamic_tools
         thread_request["id"] = _THREAD_ID
         chunks: list[str] = []
         final_messages: list[str] = []
@@ -433,6 +448,14 @@ class WorkspaceCodexRuntime:
                         response = await _decision_response(
                             message,
                             on_decision_request,
+                            cancel_event,
+                        )
+                        await websocket.send(response)
+                        continue
+                    if method == "item/tool/call":
+                        response = await _dynamic_tool_response(
+                            message,
+                            on_dynamic_tool_call,
                             cancel_event,
                         )
                         await websocket.send(response)
@@ -807,10 +830,47 @@ async def _decision_response(
         cancel_task.cancel()
         with suppress(asyncio.CancelledError):
             await cancel_task
-        result = await callback_task
+        try:
+            result = await callback_task
+        except Exception:  # noqa: BLE001
+            result = WorkspaceDynamicToolResult(False, "工具调用失败")
     if not result.ok:
         return json.dumps(_jsonrpc_error(request_id, result.error or "用户输入未通过校验"), ensure_ascii=False)
     return json.dumps({"id": request_id, "result": _native_answers(request, result)}, ensure_ascii=False)
+
+
+async def _dynamic_tool_response(
+    message: dict[str, Any],
+    callback: WorkspaceDynamicToolCallback | None,
+    cancel_event: asyncio.Event,
+) -> str:
+    request_id = message.get("id")
+    params = message.get("params")
+    if not isinstance(params, dict) or callback is None:
+        return json.dumps(_jsonrpc_error(request_id, "Mira 当前未启用该工具"), ensure_ascii=False)
+    namespace = params.get("namespace")
+    tool = params.get("tool")
+    arguments = params.get("arguments")
+    if not isinstance(namespace, str) or not isinstance(tool, str) or not isinstance(arguments, dict):
+        return json.dumps(_jsonrpc_error(request_id, "工具请求格式无效"), ensure_ascii=False)
+    callback_task = asyncio.create_task(callback(namespace, tool, arguments))
+    cancel_task = asyncio.create_task(cancel_event.wait())
+    done, _ = await asyncio.wait({callback_task, cancel_task}, return_when=asyncio.FIRST_COMPLETED)
+    if cancel_task in done:
+        callback_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await callback_task
+        result = WorkspaceDynamicToolResult(False, "工作空间运行已取消")
+    else:
+        cancel_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await cancel_task
+        result = await callback_task
+    payload = {
+        "success": result.success,
+        "contentItems": [{"type": "inputText", "text": result.text}],
+    }
+    return json.dumps({"id": request_id, "result": payload}, ensure_ascii=False)
 
 
 def _safe_event(method: str, params: Any) -> WorkspaceRuntimeEvent | None:

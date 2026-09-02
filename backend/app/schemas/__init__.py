@@ -91,7 +91,7 @@ from .workspaces import (
     WorkspaceGoalIn,
     WorkspaceWorkflowProposalCreateIn,
     WorkspaceWorkflowProposalOut,
-    WorkspaceWorkflowRunIn,
+    WorkspaceWorkflowRunOut,
 )
 
 __all__ = [
@@ -184,5 +184,5 @@ __all__ = [
     "WorkspaceGoalIn",
     "WorkspaceWorkflowProposalCreateIn",
     "WorkspaceWorkflowProposalOut",
-    "WorkspaceWorkflowRunIn",
+    "WorkspaceWorkflowRunOut",
 ]

@@ -184,6 +184,10 @@ async def create_run_record(
     app_id: str,
     raw_inputs: dict[str, Any] | None,
     wiki_mode: str = "auto",
+    *,
+    workspace_id: str | None = None,
+    workspace_session_id: str | None = None,
+    workspace_turn_id: str | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """完成 POST /api/runs 的所有校验和 DB 落地，返回 (run_id, graph_snapshot)。
 
@@ -220,6 +224,9 @@ async def create_run_record(
         id=new_id("run"),
         app_id=app.id,
         owner_id=user_id,
+        workspace_id=workspace_id,
+        workspace_session_id=workspace_session_id,
+        workspace_turn_id=workspace_turn_id,
         status="pending",
         name=default_run_name(app.name, inputs),
         inputs_json=inputs_json,
