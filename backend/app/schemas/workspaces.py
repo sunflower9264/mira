@@ -193,6 +193,13 @@ class WorkspaceWorkflowProposalOut(BaseModel):
     applied_at: str | None = None
 
 
+class WorkspaceWorkflowRunFileOut(BaseModel):
+    path: str
+    name: str
+    mime: str
+    size: int
+
+
 class WorkspaceWorkflowRunOut(BaseModel):
     run_id: str
     app_id: str
@@ -203,3 +210,5 @@ class WorkspaceWorkflowRunOut(BaseModel):
     started_at: str | None = None
     finished_at: str | None = None
     error: str | None = None
+    result_path: str | None = None
+    files: list[WorkspaceWorkflowRunFileOut] = Field(default_factory=list)

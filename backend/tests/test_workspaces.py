@@ -11,13 +11,19 @@ import pytest
 from app.config import get_settings
 from app.db import SessionLocal
 from app.models import (
+    Run,
+    Workspace,
     WorkspaceEvent,
     WorkspaceSession,
     WorkspaceTurn,
     WorkspaceWorkflowProposal,
 )
-from app.services.workspaces import _replace_wiki_tree, update_workspace_runtime_state
-from app.utils import dumps, now_utc
+from app.services.workspaces import (
+    _replace_wiki_tree,
+    update_workspace_runtime_state,
+    workspace_project_path,
+)
+from app.utils import dumps, new_id, now_utc
 from tests.auth_helpers import create_regular_user
 
 
@@ -269,9 +275,85 @@ def test_workspace_wiki_sync_and_workflow_proposal_confirmation(auth_client):
 
 def test_workspace_workflow_runs_are_read_only_call_history(auth_client):
     workspace_id = _create_workspace(auth_client, "Workflow history")["id"]
+    proposal = auth_client.post(
+        f"/api/workspaces/{workspace_id}/workflow-proposals",
+        json={
+            "kind": "create",
+            "name": "Image workflow",
+            "description": "returns several files",
+            "graph": GRAPH,
+        },
+    )
+    assert proposal.status_code == 200, proposal.text
+    confirmed = auth_client.post(
+        f"/api/workspaces/{workspace_id}/workflow-proposals/{proposal.json()['id']}/confirm"
+    )
+    assert confirmed.status_code == 200, confirmed.text
+    app_id = confirmed.json()["app_id"]
+    run_id = new_id("run")
+
+    async def create_run_and_outputs() -> None:
+        async with SessionLocal() as db:
+            workspace = await db.get(Workspace, workspace_id)
+            assert workspace is not None
+            db.add(
+                Run(
+                    id=run_id,
+                    app_id=app_id,
+                    owner_id=workspace.owner_id,
+                    workspace_id=workspace_id,
+                    status="success",
+                    inputs_json="{}",
+                    graph_json=dumps(GRAPH),
+                    started_at=now_utc(),
+                    finished_at=now_utc(),
+                )
+            )
+            await db.commit()
+            output_root = workspace_project_path(workspace.owner_id, workspace_id) / "workflow-runs" / run_id
+            (output_root / "images").mkdir(parents=True)
+            (output_root / "result.html").write_text("<main>Done</main>", encoding="utf-8")
+            (output_root / "images" / "one.png").write_bytes(b"first")
+            (output_root / "images" / "two.png").write_bytes(b"second")
+            (output_root / "report.pdf").write_bytes(b"report")
+
+    asyncio.run(create_run_and_outputs())
     response = auth_client.get(f"/api/workspaces/{workspace_id}/workflow-runs")
     assert response.status_code == 200
-    assert response.json() == []
+    assert response.json() == [
+        {
+            "run_id": run_id,
+            "app_id": app_id,
+            "app_name": "Image workflow",
+            "status": "success",
+            "session_id": None,
+            "turn_id": None,
+            "started_at": response.json()[0]["started_at"],
+            "finished_at": response.json()[0]["finished_at"],
+            "error": None,
+            "result_path": f"workflow-runs/{run_id}/result.html",
+            "files": [
+                {
+                    "path": f"workflow-runs/{run_id}/images/one.png",
+                    "name": "one.png",
+                    "mime": "image/png",
+                    "size": 5,
+                },
+                {
+                    "path": f"workflow-runs/{run_id}/images/two.png",
+                    "name": "two.png",
+                    "mime": "image/png",
+                    "size": 6,
+                },
+                {
+                    "path": f"workflow-runs/{run_id}/report.pdf",
+                    "name": "report.pdf",
+                    "mime": "application/pdf",
+                    "size": 6,
+                },
+            ],
+        }
+    ]
     assert auth_client.post(
         f"/api/workspaces/{workspace_id}/workflow-runs", json={"app_id": "app"}
     ).status_code == 405

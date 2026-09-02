@@ -87,6 +87,25 @@ function WorkspaceShell({ workspace, mobile = false, onBack }: { workspace: Work
       setRefreshing(false);
     }
   };
+  const selectTab = async (nextTab: typeof tab) => {
+    setTab(nextTab);
+    if (nextTab !== 'files' && nextTab !== 'workflow') return;
+    setRefreshing(true);
+    try {
+      if (nextTab === 'files') {
+        setFiles((await api.listWorkspaceFiles(workspace.id)).files);
+      } else {
+        const [nextProposals, nextWorkflowRuns] = await Promise.all([
+          api.listWorkspaceWorkflowProposals(workspace.id),
+          api.listWorkspaceWorkflowRuns(workspace.id),
+        ]);
+        setProposals(nextProposals);
+        setWorkflowRuns(nextWorkflowRuns);
+      }
+    } finally {
+      setRefreshing(false);
+    }
+  };
   useEffect(() => { void refresh(); }, [workspace.id]);
   useEffect(() => {
     if (!session) return;
@@ -100,7 +119,13 @@ function WorkspaceShell({ workspace, mobile = false, onBack }: { workspace: Work
         lastId = next[next.length - 1]?.id;
         setEvents((current) => lastId === next[next.length - 1]?.id && current.length === 0 ? next : [...current, ...next.filter((item) => !current.some((existing) => existing.id === item.id))]);
         if (next.some((item) => item.event_type === 'workflow_run_finished')) {
-          void api.listWorkspaceWorkflowRuns(workspace.id).then(setWorkflowRuns);
+          void Promise.all([
+            api.listWorkspaceWorkflowRuns(workspace.id),
+            api.listWorkspaceFiles(workspace.id),
+          ]).then(([nextRuns, nextFiles]) => {
+            setWorkflowRuns(nextRuns);
+            setFiles(nextFiles.files);
+          });
         }
       } catch {
         // A transient polling failure is retried on the next interval.
@@ -171,9 +196,9 @@ function WorkspaceShell({ workspace, mobile = false, onBack }: { workspace: Work
             <div className="space-y-1">{sessions.map((item) => <button type="button" key={item.id} onClick={() => setSession(item)} className={`flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm ${session?.id === item.id ? 'bg-black text-white' : 'text-black/65 hover:bg-black/5'}`}><MessageSquare className="h-3.5 w-3.5 shrink-0" /><span className="min-w-0 flex-1 truncate">{item.title}</span>{item.status === 'running' ? <span className="ml-auto h-1.5 w-1.5 rounded-full bg-emerald-400" /> : null}</button>)}{sessionHasMore ? <button type="button" onClick={async () => { const page = await api.listWorkspaceSessions(workspace.id, { offset: sessionOffset }); setSessions((current) => [...current, ...page.items]); setSessionHasMore(page.has_more); setSessionOffset(page.next_offset ?? sessionOffset + page.items.length); }} className="w-full rounded-xl px-3 py-2 text-xs text-black/40 hover:bg-black/5">加载更多</button> : null}</div>
           </aside>
           <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-[22px] border border-black/5 bg-white shadow-card">
-            <div className="flex shrink-0 gap-1 overflow-x-auto border-b border-black/5 p-2">{([['chat','Codex'],['files','文件'],['workflow','工作流'],['git','Git']] as const).map(([key,label]) => <button type="button" key={key} onClick={() => setTab(key)} className={`rounded-full px-3 py-2 text-sm ${tab === key ? 'bg-black text-white' : 'text-black/55 hover:bg-black/5'}`}>{label}</button>)}<button type="button" onClick={() => void refresh()} className="ml-auto grid h-9 w-9 shrink-0 place-items-center rounded-full text-black/40 hover:bg-black/5" aria-label="刷新"><RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} /></button></div>
+            <div className="flex shrink-0 gap-1 overflow-x-auto border-b border-black/5 p-2">{([['chat','Codex'],['files','文件'],['workflow','工作流'],['git','Git']] as const).map(([key,label]) => <button type="button" key={key} onClick={() => void selectTab(key)} className={`rounded-full px-3 py-2 text-sm ${tab === key ? 'bg-black text-white' : 'text-black/55 hover:bg-black/5'}`}>{label}</button>)}<button type="button" onClick={() => void refresh()} className="ml-auto grid h-9 w-9 shrink-0 place-items-center rounded-full text-black/40 hover:bg-black/5" aria-label="刷新"><RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} /></button></div>
             <div className={`min-h-0 flex-1 p-4 sm:p-5 ${tab === 'chat' ? 'overflow-hidden' : 'overflow-y-auto'}`}>
-              {tab === 'chat' ? <WorkspaceChat workspace={workspace} session={session} events={events} onEvents={setEvents} onSessionUpdate={(next) => { setSession(next); setSessions((items) => items.map((item) => item.id === next.id ? next : item)); }} onNew={() => setNewSessionOpen(true)} onDelete={() => session && setDeleteSession(session)} onRename={() => { if (session) { setSessionTitle(session.title); setRenameSessionOpen(true); } }} /> : null}
+              {tab === 'chat' ? <WorkspaceChat workspace={workspace} session={session} events={events} workflowRuns={workflowRuns} onEvents={setEvents} onSessionUpdate={(next) => { setSession(next); setSessions((items) => items.map((item) => item.id === next.id ? next : item)); }} onNew={() => setNewSessionOpen(true)} onDelete={() => session && setDeleteSession(session)} onRename={() => { if (session) { setSessionTitle(session.title); setRenameSessionOpen(true); } }} /> : null}
               {tab === 'files' ? <WorkspaceFiles workspace={workspace} files={files} onRefresh={() => void refresh()} onPreview={setFilePreview} /> : null}
               {tab === 'workflow' ? <WorkspaceWorkflow workspace={workspace} proposals={proposals} runs={workflowRuns} onRefresh={() => void refresh()} /> : null}
               {tab === 'git' ? <WorkspaceGit workspace={workspace} /> : null}
@@ -204,7 +229,7 @@ function SessionSearchDialog({ open, workspaceId, onClose, onSelect }: { open: b
   return <AppDialog open={open} onClose={onClose} title="搜索会话" widthClassName="max-w-xl"><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索标题或对话内容" className="h-11 w-full rounded-xl border border-black/10 px-3 text-sm outline-none focus:border-black/25" /><div className="mt-3 max-h-[50vh] space-y-1 overflow-y-auto">{results.length ? results.map((item) => <button type="button" key={item.id} onClick={() => onSelect(item)} className="w-full rounded-xl px-3 py-3 text-left hover:bg-black/[0.04]"><div className="flex items-center gap-2 text-sm font-medium"><MessageSquare className="h-3.5 w-3.5 text-black/40" />{item.title}</div>{item.match_context ? <div className="mt-1 line-clamp-2 text-xs leading-5 text-black/45">{item.match_context}</div> : <div className="mt-1 text-xs text-black/35">{item.updated_at}</div>}</button>) : <div className="py-10 text-center text-xs text-black/35">{query ? '没有匹配的会话' : '输入关键词搜索'}</div>}</div></AppDialog>;
 }
 
-function WorkspaceChat({ workspace, session, events, onEvents, onSessionUpdate, onNew, onDelete, onRename }: { workspace: Workspace; session: WorkspaceSession | null; events: WorkspaceEvent[]; onEvents(next: WorkspaceEvent[]): void; onSessionUpdate(next: WorkspaceSession): void; onNew(): void; onDelete(): void; onRename(): void }) {
+function WorkspaceChat({ workspace, session, events, workflowRuns, onEvents, onSessionUpdate, onNew, onDelete, onRename }: { workspace: Workspace; session: WorkspaceSession | null; events: WorkspaceEvent[]; workflowRuns: WorkspaceWorkflowRun[]; onEvents(next: WorkspaceEvent[]): void; onSessionUpdate(next: WorkspaceSession): void; onNew(): void; onDelete(): void; onRename(): void }) {
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
   const [turnId, setTurnId] = useState<string | null>(null);
@@ -277,7 +302,7 @@ function WorkspaceChat({ workspace, session, events, onEvents, onSessionUpdate, 
     await api.resumeWorkspaceTurn(waiting.turnId, { request_id: waiting.request.request_id, answers });
     onSessionUpdate({ ...session, status: 'running' });
   };
-  return <div className="flex h-full min-h-0 flex-col"><div className="mb-4 flex shrink-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="text-base font-semibold">{session.title}</h2><p className="mt-0.5 text-xs text-black/40">{session.thread_id ? `Codex thread 已连接 · ${model || '默认模型'}` : '尚未开始对话'}</p></div><div className="flex w-full items-center justify-end gap-1 sm:w-auto"><button type="button" onClick={() => setToolsOpen(true)} className="rounded-full px-3 py-1.5 text-xs text-black/45 hover:bg-black/5 hover:text-black">会话工具</button><button type="button" onClick={onRename} className="rounded-full px-3 py-1.5 text-xs text-black/45 hover:bg-black/5 hover:text-black">重命名</button><button type="button" onClick={onDelete} className="rounded-full px-3 py-1.5 text-xs text-red-500 hover:bg-red-50">删除</button></div></div>{actionStatus ? <div className="mb-3 shrink-0 rounded-xl border border-black/5 bg-black/[0.025] px-3 py-2 text-xs text-black/55">{actionStatus}</div> : null}<div ref={messagesRef} aria-live="polite" className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain rounded-2xl bg-[#F4F5F7] p-3">{events.length === 0 ? <div className="flex h-full items-center justify-center text-xs text-black/35">告诉 Codex 你想在这个项目中完成什么。</div> : collapseWorkspaceEvents(events).map((event) => <EventBubble key={event.id} event={event} workspaceId={workspace.id} />)}{waiting ? <DecisionPromptPanel context={waiting.request.context} groups={waiting.request.groups} disabled={sending} onComplete={(answers) => void submitDecision(answers)} /> : null}</div><div className="mt-3 shrink-0 rounded-2xl border border-black/10 bg-white p-2 shadow-pill">{attachments.length ? <div className="flex flex-wrap gap-1.5 px-2 pt-1">{attachments.map((item) => <button type="button" key={item.id} onClick={() => setAttachments((current) => current.filter((entry) => entry.id !== item.id))} className="inline-flex items-center gap-1 rounded-full bg-black/[0.05] px-2.5 py-1 text-[11px] text-black/60">{item.name}<X className="h-3 w-3" /></button>)}</div> : null}<textarea value={text} onChange={(event) => setText(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void send(); } }} placeholder="向 Codex 描述下一步…" className="min-h-16 w-full resize-none bg-transparent px-2 py-1.5 text-sm leading-6 outline-none placeholder:text-black/35" disabled={isRunning || waiting !== null} /><div className="flex items-center justify-end px-1"><div className="flex items-center gap-1"><label className={`grid h-8 w-8 place-items-center rounded-full text-black/35 hover:bg-black/5 ${isRunning ? 'pointer-events-none opacity-30' : 'cursor-pointer'}`} aria-label="添加附件"><Paperclip className="h-4 w-4" /><input type="file" multiple className="hidden" onChange={(event) => void uploadAttachments(event)} /></label>{isRunning && turnId ? <button type="button" onClick={() => void api.interruptWorkspaceTurn(turnId)} className="grid h-8 w-8 place-items-center rounded-full text-red-500 hover:bg-red-50" aria-label="停止"><Square className="h-3.5 w-3.5 fill-current" /></button> : <button type="button" onClick={() => void send()} disabled={!text.trim() || uploading || waiting !== null} className="grid h-8 w-8 place-items-center rounded-full bg-black text-white hover:bg-black/85 disabled:opacity-30" aria-label="发送"><Send className="h-4 w-4" /></button>}</div></div></div><SessionToolsDialog open={toolsOpen} onClose={() => setToolsOpen(false)} workspace={workspace} session={session} models={models} model={model} capabilities={capabilities} onModel={setModel} onStatus={setActionStatus} /></div>;
+  return <div className="flex h-full min-h-0 flex-col"><div className="mb-4 flex shrink-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="text-base font-semibold">{session.title}</h2><p className="mt-0.5 text-xs text-black/40">{session.thread_id ? `Codex thread 已连接 · ${model || '默认模型'}` : '尚未开始对话'}</p></div><div className="flex w-full items-center justify-end gap-1 sm:w-auto"><button type="button" onClick={() => setToolsOpen(true)} className="rounded-full px-3 py-1.5 text-xs text-black/45 hover:bg-black/5 hover:text-black">会话工具</button><button type="button" onClick={onRename} className="rounded-full px-3 py-1.5 text-xs text-black/45 hover:bg-black/5 hover:text-black">重命名</button><button type="button" onClick={onDelete} className="rounded-full px-3 py-1.5 text-xs text-red-500 hover:bg-red-50">删除</button></div></div>{actionStatus ? <div className="mb-3 shrink-0 rounded-xl border border-black/5 bg-black/[0.025] px-3 py-2 text-xs text-black/55">{actionStatus}</div> : null}<div ref={messagesRef} aria-live="polite" className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain rounded-2xl bg-[#F4F5F7] p-3">{events.length === 0 ? <div className="flex h-full items-center justify-center text-xs text-black/35">告诉 Codex 你想在这个项目中完成什么。</div> : collapseWorkspaceEvents(events).map((event) => <EventBubble key={event.id} event={event} workspaceId={workspace.id} workflowRun={workflowRuns.find((run) => run.run_id === event.payload?.run_id)} />)}{waiting ? <DecisionPromptPanel context={waiting.request.context} groups={waiting.request.groups} disabled={sending} onComplete={(answers) => void submitDecision(answers)} /> : null}</div><div className="mt-3 shrink-0 rounded-2xl border border-black/10 bg-white p-2 shadow-pill">{attachments.length ? <div className="flex flex-wrap gap-1.5 px-2 pt-1">{attachments.map((item) => <button type="button" key={item.id} onClick={() => setAttachments((current) => current.filter((entry) => entry.id !== item.id))} className="inline-flex items-center gap-1 rounded-full bg-black/[0.05] px-2.5 py-1 text-[11px] text-black/60">{item.name}<X className="h-3 w-3" /></button>)}</div> : null}<textarea value={text} onChange={(event) => setText(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void send(); } }} placeholder="向 Codex 描述下一步…" className="min-h-16 w-full resize-none bg-transparent px-2 py-1.5 text-sm leading-6 outline-none placeholder:text-black/35" disabled={isRunning || waiting !== null} /><div className="flex items-center justify-end px-1"><div className="flex items-center gap-1"><label className={`grid h-8 w-8 place-items-center rounded-full text-black/35 hover:bg-black/5 ${isRunning ? 'pointer-events-none opacity-30' : 'cursor-pointer'}`} aria-label="添加附件"><Paperclip className="h-4 w-4" /><input type="file" multiple className="hidden" onChange={(event) => void uploadAttachments(event)} /></label>{isRunning && turnId ? <button type="button" onClick={() => void api.interruptWorkspaceTurn(turnId)} className="grid h-8 w-8 place-items-center rounded-full text-red-500 hover:bg-red-50" aria-label="停止"><Square className="h-3.5 w-3.5 fill-current" /></button> : <button type="button" onClick={() => void send()} disabled={!text.trim() || uploading || waiting !== null} className="grid h-8 w-8 place-items-center rounded-full bg-black text-white hover:bg-black/85 disabled:opacity-30" aria-label="发送"><Send className="h-4 w-4" /></button>}</div></div></div><SessionToolsDialog open={toolsOpen} onClose={() => setToolsOpen(false)} workspace={workspace} session={session} models={models} model={model} capabilities={capabilities} onModel={setModel} onStatus={setActionStatus} /></div>;
 }
 
 function workspaceWaitingRequest(event: WorkspaceEvent): RunWaitingRequest | null {
@@ -330,12 +355,15 @@ function collapseWorkspaceEvents(events: WorkspaceEvent[]): WorkspaceEvent[] {
   return visible;
 }
 
-function EventBubble({ event, workspaceId }: { event: WorkspaceEvent; workspaceId: string }) {
+function EventBubble({ event, workspaceId, workflowRun }: { event: WorkspaceEvent; workspaceId: string; workflowRun?: WorkspaceWorkflowRun }) {
   const payload = event.payload ?? {};
   if (event.event_type.startsWith('workflow_run_')) {
     const name = String(payload.app_name ?? '工作流');
     const status = event.event_type === 'workflow_run_started' ? '运行中' : event.event_type === 'workflow_run_waiting' ? '等待回复' : payload.status === 'success' ? '已完成' : '运行失败';
-    return <div className="flex justify-start"><div className="inline-flex max-w-[88%] items-center gap-2 rounded-xl border border-black/5 bg-white px-3 py-2 text-xs text-black/55 shadow-sm"><GitBranch className="h-3.5 w-3.5" /><span className="truncate">{name}</span><span className="text-black/35">{status}</span></div></div>;
+    const images = event.event_type === 'workflow_run_finished'
+      ? workflowRun?.files.filter((file) => file.mime.startsWith('image/')) ?? []
+      : [];
+    return <div className="flex justify-start"><div className="max-w-[88%] rounded-xl border border-black/5 bg-white px-3 py-2 text-xs text-black/55 shadow-sm"><div className="flex items-center gap-2"><GitBranch className="h-3.5 w-3.5" /><span className="truncate">{name}</span><span className="text-black/35">{status}</span></div>{images.length ? <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3">{images.map((file) => <WorkspaceRunImage key={file.path} workspaceId={workspaceId} file={file} />)}</div> : null}</div></div>;
   }
   const text = String(payload.text ?? payload.content ?? payload.delta ?? payload.message ?? '');
   const role = String(payload.role ?? payload.author ?? 'assistant');
@@ -390,12 +418,41 @@ function WorkspaceMessageAttachment({ attachment, dark, workspaceId }: { attachm
   return <div className={`inline-flex max-w-56 items-center gap-1.5 rounded-xl px-2.5 py-1.5 text-xs leading-5 ${dark ? 'bg-white/10' : 'bg-black/[0.05]'}`}><File className="h-3.5 w-3.5 shrink-0" /><span className="truncate">{attachment.name}</span></div>;
 }
 
+async function downloadWorkspacePath(workspaceId: string, path: string, name: string) {
+  const blob = await api.downloadWorkspaceFile(workspaceId, path);
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = name;
+  anchor.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+function WorkspaceRunImage({ workspaceId, file }: { workspaceId: string; file: WorkspaceWorkflowRun['files'][number] }) {
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
+  useEffect(() => {
+    let closed = false;
+    let objectUrl: string | null = null;
+    void api.downloadWorkspaceFile(workspaceId, file.path).then((blob) => {
+      if (closed) return;
+      objectUrl = URL.createObjectURL(blob);
+      setImageUrl(objectUrl);
+    }).catch(() => setImageUrl(null));
+    return () => {
+      closed = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [file.path, workspaceId]);
+  return <figure className="group relative overflow-hidden rounded-xl border border-black/10 bg-[#F4F5F7]"><div className="flex aspect-square items-center justify-center">{imageUrl ? <img src={imageUrl} alt={file.name} className="h-full w-full object-contain" /> : <File className="h-5 w-5 text-black/20" />}</div><figcaption className="flex items-center gap-1.5 border-t border-black/10 bg-white px-2 py-1.5"><span className="min-w-0 flex-1 truncate text-[11px] text-black/55">{file.name}</span><button type="button" onClick={() => void downloadWorkspacePath(workspaceId, file.path, file.name)} className="grid h-6 w-6 shrink-0 place-items-center rounded-full text-black/40 hover:bg-black/5 hover:text-black" aria-label={`下载 ${file.name}`}><Download className="h-3.5 w-3.5" /></button></figcaption></figure>;
+}
+
 function WorkspaceFiles({ workspace, files, onRefresh, onPreview }: { workspace: Workspace; files: WorkspaceFile[]; onRefresh(): void; onPreview(file: WorkspaceFile): void }) { const [uploading, setUploading] = useState(false); const upload = async (event: React.ChangeEvent<HTMLInputElement>) => { const selected = Array.from(event.target.files ?? []); if (!selected.length) return; setUploading(true); try { await api.uploadWorkspaceFiles(workspace.id, selected); onRefresh(); } finally { setUploading(false); event.target.value = ''; } }; return <div><div className="mb-4 flex items-center justify-between"><h2 className="text-base font-semibold">项目文件</h2><label className="inline-flex cursor-pointer items-center gap-1.5 rounded-full bg-black px-3 py-2 text-xs font-medium text-white hover:bg-black/85"><Upload className="h-3.5 w-3.5" />{uploading ? '上传中…' : '上传'}<input type="file" multiple className="hidden" onChange={(event) => void upload(event)} /></label></div><div className="divide-y divide-black/5 rounded-2xl border border-black/5">{files.length ? files.map((file) => <button type="button" key={file.path} onClick={() => file.kind === 'file' && onPreview(file)} className="flex w-full items-center gap-3 px-3.5 py-3 text-left hover:bg-black/[0.02]"><span className="grid h-8 w-8 place-items-center rounded-xl bg-black/[0.04]">{file.kind === 'directory' ? <Folder className="h-4 w-4 text-black/45" /> : <File className="h-4 w-4 text-black/45" />}</span><span className="min-w-0 flex-1 truncate text-sm text-black/75">{file.path}</span><span className="text-[11px] text-black/35">{file.kind === 'file' ? formatSize(file.size) : ''}</span><ChevronRight className="h-4 w-4 text-black/20" /></button>) : <div className="px-4 py-12 text-center text-xs text-black/40">目录为空</div>}</div></div>; }
 
 function FilePreviewDialog({ workspace, file, onClose }: { workspace: Workspace; file: WorkspaceFile | null; onClose(): void }) { const [preview, setPreview] = useState<Awaited<ReturnType<typeof api.previewWorkspaceFile>> | null>(null); useEffect(() => { if (!file) { setPreview(null); return; } void api.previewWorkspaceFile(workspace.id, file.path).then(setPreview).catch(() => setPreview(null)); }, [file, workspace.id]); const download = async () => { if (!file) return; const blob = await api.downloadWorkspaceFile(workspace.id, file.path); const url = URL.createObjectURL(blob); const anchor = document.createElement('a'); anchor.href = url; anchor.download = file.name; anchor.click(); window.setTimeout(() => URL.revokeObjectURL(url), 0); }; return <AppDialog open={file !== null} onClose={onClose} title={file?.name ?? '文件预览'} description={file?.path} widthClassName="max-w-3xl" footer={preview ? <button type="button" onClick={() => void download()} className="inline-flex items-center gap-1.5 rounded-full bg-black px-4 py-2 text-sm font-medium text-white"><Download className="h-4 w-4" />下载</button> : undefined}>{preview ? <div className="max-h-[60vh] overflow-auto rounded-2xl bg-[#F4F5F7] p-4">{preview.content != null ? <pre className="whitespace-pre-wrap break-words text-xs leading-6 text-black/75">{preview.content}</pre> : <div className="text-sm text-black/45">此文件类型仅支持下载。</div>}</div> : <div className="py-12 text-center text-sm text-black/40">加载预览…</div>}</AppDialog>; }
 
 function WorkspaceWorkflow({ workspace, proposals, runs, onRefresh }: { workspace: Workspace; proposals: WorkspaceWorkflowProposal[]; runs: WorkspaceWorkflowRun[]; onRefresh(): void }) {
   const [selected, setSelected] = useState<WorkspaceWorkflowProposal | null>(null);
+  const [selectedRun, setSelectedRun] = useState<WorkspaceWorkflowRun | null>(null);
   const [busy, setBusy] = useState(false);
   const confirm = async () => {
     if (!selected) return;
@@ -422,13 +479,37 @@ function WorkspaceWorkflow({ workspace, proposals, runs, onRefresh }: { workspac
   return (
     <div>
       <h2 className="mb-4 text-base font-semibold">可视化工作流</h2>
-      {runs.length ? <div className="mb-5 space-y-2"><div className="text-xs font-semibold text-black/55">对话调用记录</div>{runs.map((run) => <div key={run.run_id} className="flex items-center gap-3 rounded-xl border border-black/5 px-3 py-2.5"><span className={`h-2 w-2 rounded-full ${run.status === 'success' ? 'bg-emerald-500' : run.status === 'failed' ? 'bg-red-500' : 'bg-amber-500'}`} /><span className="min-w-0 flex-1 truncate text-sm text-black/70">{run.app_name}</span><span className="text-xs text-black/40">{run.status}</span></div>)}</div> : null}
+      {runs.length ? <div className="mb-5 space-y-2"><div className="text-xs font-semibold text-black/55">对话调用记录</div>{runs.map((run) => <button type="button" key={run.run_id} onClick={() => setSelectedRun(run)} className="flex w-full items-center gap-3 rounded-xl border border-black/5 px-3 py-2.5 text-left hover:border-black/15 hover:bg-black/[0.02]"><span className={`h-2 w-2 rounded-full ${run.status === 'success' ? 'bg-emerald-500' : run.status === 'failed' ? 'bg-red-500' : 'bg-amber-500'}`} /><span className="min-w-0 flex-1 truncate text-sm text-black/70">{run.app_name}</span><span className="text-xs text-black/40">{run.status}</span><ChevronRight className="h-4 w-4 text-black/20" /></button>)}</div> : null}
       {proposals.length ? <div className="mb-3 space-y-3">{proposals.map((proposal) => <button type="button" key={proposal.id} onClick={() => setSelected(proposal)} className="flex w-full items-center gap-3 rounded-2xl border border-black/5 p-4 text-left hover:border-black/15"><span className={`grid h-9 w-9 place-items-center rounded-xl ${proposal.status === 'pending' ? 'bg-amber-50 text-amber-600' : 'bg-emerald-50 text-emerald-600'}`}><GitBranch className="h-4 w-4" /></span><span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium">{proposal.name}</span><span className="mt-0.5 block text-xs text-black/40">{proposal.kind === 'create' ? '新建应用' : '修改应用'} · {proposal.status}</span></span><ChevronRight className="h-4 w-4 text-black/25" /></button>)}</div> : null}
       <AppDialog open={selected !== null} onClose={() => !busy && setSelected(null)} title={selected?.name ?? '工作流提案'} description={selected?.description} widthClassName="max-w-4xl" footer={selected?.status === 'pending' ? <><button type="button" onClick={() => { if (selected) void api.rejectWorkspaceWorkflowProposal(workspace.id, selected.id).then(() => { setSelected(null); onRefresh(); }); }} className="rounded-full border border-black/10 px-4 py-2 text-sm">拒绝</button><button type="button" disabled={busy} onClick={() => void confirm()} className="inline-flex items-center gap-1.5 rounded-full bg-black px-4 py-2 text-sm font-medium text-white disabled:opacity-40"><Check className="h-4 w-4" />确认应用</button></> : undefined}>
         {selected ? <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_220px]"><div className="rounded-2xl bg-[#F4F5F7] p-4"><div className="text-xs font-semibold text-black/55">Graph 预览</div><div className="mt-3 h-[360px] overflow-hidden rounded-xl border border-black/10 bg-white"><ReactFlow nodes={graphNodes} edges={graphEdges} fitView nodesDraggable={false} nodesConnectable={false} elementsSelectable={false} zoomOnScroll={false} proOptions={{ hideAttribution: true }}><Background color="#e5e7eb" gap={20} /><Controls showInteractive={false} /></ReactFlow></div></div><div className="rounded-2xl border border-black/5 bg-white p-4"><div className="text-xs font-semibold text-black/55">Lint</div><div className={`mt-2 text-sm ${selected.lint.ok ? 'text-emerald-600' : 'text-red-600'}`}>{selected.lint.ok ? '通过' : '需要修正'}</div>{selected.lint.issues.map((issue, index) => <div key={index} className="mt-2 text-xs leading-5 text-black/50">{issue.detail}</div>)}</div></div> : null}
       </AppDialog>
+      <WorkspaceWorkflowRunDialog workspace={workspace} run={selectedRun} onClose={() => setSelectedRun(null)} />
     </div>
   );
+}
+
+function WorkspaceWorkflowRunDialog({ workspace, run, onClose }: { workspace: Workspace; run: WorkspaceWorkflowRun | null; onClose(): void }) {
+  const [resultHtml, setResultHtml] = useState<string | null>(null);
+  const [resultLoading, setResultLoading] = useState(false);
+  useEffect(() => {
+    setResultHtml(null);
+    if (!run?.result_path) return;
+    let closed = false;
+    setResultLoading(true);
+    void api.previewWorkspaceFile(workspace.id, run.result_path).then((preview) => {
+      if (!closed) setResultHtml(preview.content ?? null);
+    }).catch(() => {
+      if (!closed) setResultHtml(null);
+    }).finally(() => {
+      if (!closed) setResultLoading(false);
+    });
+    return () => { closed = true; };
+  }, [run?.result_path, workspace.id]);
+  if (!run) return null;
+  const images = run.files.filter((file) => file.mime.startsWith('image/'));
+  const otherFiles = run.files.filter((file) => !file.mime.startsWith('image/'));
+  return <AppDialog open onClose={onClose} title={run.app_name} description={`${run.status}${run.finished_at ? ` · ${run.finished_at}` : ''}`} widthClassName="max-w-4xl"><div className="space-y-4">{run.error ? <div className="rounded-xl bg-red-50 px-3 py-2 text-sm text-red-600">{run.error}</div> : null}{run.result_path ? <section><div className="mb-2 flex items-center justify-between"><h3 className="text-xs font-semibold text-black/55">运行结果</h3><button type="button" onClick={() => void downloadWorkspacePath(workspace.id, run.result_path as string, 'result.html')} className="inline-flex items-center gap-1 rounded-full px-2.5 py-1.5 text-xs text-black/45 hover:bg-black/5 hover:text-black"><Download className="h-3.5 w-3.5" />下载</button></div><div className="overflow-hidden rounded-2xl border border-black/10 bg-[#F4F5F7]">{resultHtml ? <iframe title={`${run.app_name} 运行结果`} srcDoc={resultHtml} sandbox="" className="h-[420px] w-full bg-white" /> : <div className="grid h-40 place-items-center text-sm text-black/40">{resultLoading ? '加载预览…' : '无法预览'}</div>}</div></section> : null}{images.length ? <section><h3 className="mb-2 text-xs font-semibold text-black/55">图片</h3><div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">{images.map((file) => <WorkspaceRunImage key={file.path} workspaceId={workspace.id} file={file} />)}</div></section> : null}{otherFiles.length ? <section><h3 className="mb-2 text-xs font-semibold text-black/55">文件</h3><div className="divide-y divide-black/5 rounded-2xl border border-black/5">{otherFiles.map((file) => <button type="button" key={file.path} onClick={() => void downloadWorkspacePath(workspace.id, file.path, file.name)} className="flex w-full items-center gap-3 px-3.5 py-3 text-left hover:bg-black/[0.02]"><File className="h-4 w-4 shrink-0 text-black/35" /><span className="min-w-0 flex-1 truncate text-sm text-black/70">{file.name}</span><span className="text-[11px] text-black/35">{formatSize(file.size)}</span><Download className="h-4 w-4 text-black/25" /></button>)}</div></section> : null}</div></AppDialog>;
 }
 
 function WorkspaceGit({ workspace }: { workspace: Workspace }) {

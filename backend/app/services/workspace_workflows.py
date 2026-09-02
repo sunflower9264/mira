@@ -27,7 +27,7 @@ from app.services.runs import (
 from app.services.uploads import seed_upload_from_file
 from app.services.workspaces import append_workspace_event, workspace_project_path
 from app.utils import dumps, iso, loads, new_id
-from app.schemas.workspaces import WorkspaceWorkflowRunOut
+from app.schemas.workspaces import WorkspaceWorkflowRunFileOut, WorkspaceWorkflowRunOut
 from app.services.workflow_data import visible_output
 from app.services.run_output_sanitizer import sanitize_run_value
 
@@ -118,8 +118,32 @@ async def list_workspace_workflow_runs(
             .limit(100)
         )
     ).all()
-    return [
-        WorkspaceWorkflowRunOut(
+    result: list[WorkspaceWorkflowRunOut] = []
+    workspace_root = workspace_project_path(owner_id, workspace_id).resolve()
+    for run, app in rows:
+        run_root = workspace_root / "workflow-runs" / run.id
+        result_path: str | None = None
+        files: list[WorkspaceWorkflowRunFileOut] = []
+        if run_root.is_dir() and not run_root.is_symlink():
+            for path in sorted(run_root.rglob("*")):
+                if path.is_symlink() or not path.is_file():
+                    continue
+                try:
+                    relative = path.resolve().relative_to(workspace_root).as_posix()
+                except ValueError:
+                    continue
+                if path.relative_to(run_root).as_posix() == "result.html":
+                    result_path = relative
+                    continue
+                files.append(
+                    WorkspaceWorkflowRunFileOut(
+                        path=relative,
+                        name=path.name,
+                        mime=mimetypes.guess_type(path.name)[0] or "application/octet-stream",
+                        size=path.stat().st_size,
+                    )
+                )
+        result.append(WorkspaceWorkflowRunOut(
             run_id=run.id,
             app_id=run.app_id,
             app_name=app.name,
@@ -129,9 +153,10 @@ async def list_workspace_workflow_runs(
             started_at=iso(run.started_at),
             finished_at=iso(run.finished_at),
             error="运行失败" if run.error and should_redact_app_source(app, owner_id) else run.error,
-        )
-        for run, app in rows
-    ]
+            result_path=result_path,
+            files=files,
+        ))
+    return result
 
 
 async def _list_workflows(db: AsyncSession, owner_id: str, arguments: dict[str, Any]) -> list[dict[str, Any]]:

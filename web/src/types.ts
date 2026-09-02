@@ -593,6 +593,13 @@ export interface WorkspaceWorkflowRun {
   started_at?: string | null;
   finished_at?: string | null;
   error?: string | null;
+  result_path?: string | null;
+  files: Array<{
+    path: string;
+    name: string;
+    mime: string;
+    size: number;
+  }>;
 }
 
 // JSON Patch ops (subset used by nlcompile, RFC 6902-ish)
