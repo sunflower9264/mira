@@ -277,7 +277,7 @@ function WorkspaceChat({ workspace, session, events, onEvents, onSessionUpdate, 
     await api.resumeWorkspaceTurn(waiting.turnId, { request_id: waiting.request.request_id, answers });
     onSessionUpdate({ ...session, status: 'running' });
   };
-  return <div className="flex h-full min-h-0 flex-col"><div className="mb-4 flex shrink-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="text-base font-semibold">{session.title}</h2><p className="mt-0.5 text-xs text-black/40">{session.thread_id ? `Codex thread 已连接 · ${model || '默认模型'}` : '尚未开始对话'}</p></div><div className="flex w-full items-center justify-end gap-1 sm:w-auto"><button type="button" onClick={() => setToolsOpen(true)} className="rounded-full px-3 py-1.5 text-xs text-black/45 hover:bg-black/5 hover:text-black">会话工具</button><button type="button" onClick={onRename} className="rounded-full px-3 py-1.5 text-xs text-black/45 hover:bg-black/5 hover:text-black">重命名</button><button type="button" onClick={onDelete} className="rounded-full px-3 py-1.5 text-xs text-red-500 hover:bg-red-50">删除</button></div></div>{actionStatus ? <div className="mb-3 shrink-0 rounded-xl border border-black/5 bg-black/[0.025] px-3 py-2 text-xs text-black/55">{actionStatus}</div> : null}<div ref={messagesRef} aria-live="polite" className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain rounded-2xl bg-[#F4F5F7] p-3">{events.length === 0 ? <div className="flex h-full items-center justify-center text-xs text-black/35">告诉 Codex 你想在这个项目中完成什么。</div> : collapseWorkspaceEvents(events).map((event) => <EventBubble key={event.id} event={event} />)}{waiting ? <DecisionPromptPanel context={waiting.request.context} groups={waiting.request.groups} disabled={sending} onComplete={(answers) => void submitDecision(answers)} /> : null}</div><div className="mt-3 shrink-0 rounded-2xl border border-black/10 bg-white p-2 shadow-pill">{attachments.length ? <div className="flex flex-wrap gap-1.5 px-2 pt-1">{attachments.map((item) => <button type="button" key={item.id} onClick={() => setAttachments((current) => current.filter((entry) => entry.id !== item.id))} className="inline-flex items-center gap-1 rounded-full bg-black/[0.05] px-2.5 py-1 text-[11px] text-black/60">{item.name}<X className="h-3 w-3" /></button>)}</div> : null}<textarea value={text} onChange={(event) => setText(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void send(); } }} placeholder="向 Codex 描述下一步…" className="min-h-16 w-full resize-none bg-transparent px-2 py-1.5 text-sm leading-6 outline-none placeholder:text-black/35" disabled={isRunning || waiting !== null} /><div className="flex items-center justify-end px-1"><div className="flex items-center gap-1"><label className={`grid h-8 w-8 place-items-center rounded-full text-black/35 hover:bg-black/5 ${isRunning ? 'pointer-events-none opacity-30' : 'cursor-pointer'}`} aria-label="添加附件"><Paperclip className="h-4 w-4" /><input type="file" multiple className="hidden" onChange={(event) => void uploadAttachments(event)} /></label>{isRunning && turnId ? <button type="button" onClick={() => void api.interruptWorkspaceTurn(turnId)} className="grid h-8 w-8 place-items-center rounded-full text-red-500 hover:bg-red-50" aria-label="停止"><Square className="h-3.5 w-3.5 fill-current" /></button> : <button type="button" onClick={() => void send()} disabled={!text.trim() || uploading || waiting !== null} className="grid h-8 w-8 place-items-center rounded-full bg-black text-white hover:bg-black/85 disabled:opacity-30" aria-label="发送"><Send className="h-4 w-4" /></button>}</div></div></div><SessionToolsDialog open={toolsOpen} onClose={() => setToolsOpen(false)} workspace={workspace} session={session} models={models} model={model} capabilities={capabilities} onModel={setModel} onStatus={setActionStatus} /></div>;
+  return <div className="flex h-full min-h-0 flex-col"><div className="mb-4 flex shrink-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="text-base font-semibold">{session.title}</h2><p className="mt-0.5 text-xs text-black/40">{session.thread_id ? `Codex thread 已连接 · ${model || '默认模型'}` : '尚未开始对话'}</p></div><div className="flex w-full items-center justify-end gap-1 sm:w-auto"><button type="button" onClick={() => setToolsOpen(true)} className="rounded-full px-3 py-1.5 text-xs text-black/45 hover:bg-black/5 hover:text-black">会话工具</button><button type="button" onClick={onRename} className="rounded-full px-3 py-1.5 text-xs text-black/45 hover:bg-black/5 hover:text-black">重命名</button><button type="button" onClick={onDelete} className="rounded-full px-3 py-1.5 text-xs text-red-500 hover:bg-red-50">删除</button></div></div>{actionStatus ? <div className="mb-3 shrink-0 rounded-xl border border-black/5 bg-black/[0.025] px-3 py-2 text-xs text-black/55">{actionStatus}</div> : null}<div ref={messagesRef} aria-live="polite" className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain rounded-2xl bg-[#F4F5F7] p-3">{events.length === 0 ? <div className="flex h-full items-center justify-center text-xs text-black/35">告诉 Codex 你想在这个项目中完成什么。</div> : collapseWorkspaceEvents(events).map((event) => <EventBubble key={event.id} event={event} workspaceId={workspace.id} />)}{waiting ? <DecisionPromptPanel context={waiting.request.context} groups={waiting.request.groups} disabled={sending} onComplete={(answers) => void submitDecision(answers)} /> : null}</div><div className="mt-3 shrink-0 rounded-2xl border border-black/10 bg-white p-2 shadow-pill">{attachments.length ? <div className="flex flex-wrap gap-1.5 px-2 pt-1">{attachments.map((item) => <button type="button" key={item.id} onClick={() => setAttachments((current) => current.filter((entry) => entry.id !== item.id))} className="inline-flex items-center gap-1 rounded-full bg-black/[0.05] px-2.5 py-1 text-[11px] text-black/60">{item.name}<X className="h-3 w-3" /></button>)}</div> : null}<textarea value={text} onChange={(event) => setText(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void send(); } }} placeholder="向 Codex 描述下一步…" className="min-h-16 w-full resize-none bg-transparent px-2 py-1.5 text-sm leading-6 outline-none placeholder:text-black/35" disabled={isRunning || waiting !== null} /><div className="flex items-center justify-end px-1"><div className="flex items-center gap-1"><label className={`grid h-8 w-8 place-items-center rounded-full text-black/35 hover:bg-black/5 ${isRunning ? 'pointer-events-none opacity-30' : 'cursor-pointer'}`} aria-label="添加附件"><Paperclip className="h-4 w-4" /><input type="file" multiple className="hidden" onChange={(event) => void uploadAttachments(event)} /></label>{isRunning && turnId ? <button type="button" onClick={() => void api.interruptWorkspaceTurn(turnId)} className="grid h-8 w-8 place-items-center rounded-full text-red-500 hover:bg-red-50" aria-label="停止"><Square className="h-3.5 w-3.5 fill-current" /></button> : <button type="button" onClick={() => void send()} disabled={!text.trim() || uploading || waiting !== null} className="grid h-8 w-8 place-items-center rounded-full bg-black text-white hover:bg-black/85 disabled:opacity-30" aria-label="发送"><Send className="h-4 w-4" /></button>}</div></div></div><SessionToolsDialog open={toolsOpen} onClose={() => setToolsOpen(false)} workspace={workspace} session={session} models={models} model={model} capabilities={capabilities} onModel={setModel} onStatus={setActionStatus} /></div>;
 }
 
 function workspaceWaitingRequest(event: WorkspaceEvent): RunWaitingRequest | null {
@@ -330,7 +330,7 @@ function collapseWorkspaceEvents(events: WorkspaceEvent[]): WorkspaceEvent[] {
   return visible;
 }
 
-function EventBubble({ event }: { event: WorkspaceEvent }) {
+function EventBubble({ event, workspaceId }: { event: WorkspaceEvent; workspaceId: string }) {
   const payload = event.payload ?? {};
   if (event.event_type.startsWith('workflow_run_')) {
     const name = String(payload.app_name ?? '工作流');
@@ -339,22 +339,23 @@ function EventBubble({ event }: { event: WorkspaceEvent }) {
   }
   const text = String(payload.text ?? payload.content ?? payload.delta ?? payload.message ?? '');
   const role = String(payload.role ?? payload.author ?? 'assistant');
-  const messageAttachments = workspaceMessageAttachments(payload.attachments);
+  const messageAttachments = workspaceMessageAttachments(payload.attachments, event.turn_id);
   if (!text && messageAttachments.length === 0 && event.event_type !== 'status') return null;
   const dark = role === 'user';
-  return <div className={`flex ${dark ? 'justify-end' : 'justify-start'}`}><div className={`max-w-[88%] break-words rounded-2xl px-3.5 py-2.5 text-sm leading-6 ${dark ? 'bg-black text-white' : 'bg-white text-black/75 shadow-sm'}`}>{text ? <div>{text}</div> : null}{messageAttachments.length ? <div className={`${text ? 'mt-2' : ''} flex flex-wrap justify-end gap-2`}>{messageAttachments.map((attachment, index) => <WorkspaceMessageAttachment key={attachment.id || `${attachment.name}-${index}`} attachment={attachment} dark={dark} />)}</div> : null}</div></div>;
+  return <div className={`flex ${dark ? 'justify-end' : 'justify-start'}`}><div className={`max-w-[88%] break-words rounded-2xl px-3.5 py-2.5 text-sm leading-6 ${dark ? 'bg-black text-white' : 'bg-white text-black/75 shadow-sm'}`}>{text ? <div>{text}</div> : null}{messageAttachments.length ? <div className={`${text ? 'mt-2' : ''} flex flex-wrap justify-end gap-2`}>{messageAttachments.map((attachment, index) => <WorkspaceMessageAttachment key={attachment.id || attachment.path || `${attachment.name}-${index}`} attachment={attachment} dark={dark} workspaceId={workspaceId} />)}</div> : null}</div></div>;
 }
 
 interface WorkspaceMessageAttachmentValue {
   id?: string;
   name: string;
   mime?: string;
+  path?: string;
 }
 
-function workspaceMessageAttachments(value: unknown): WorkspaceMessageAttachmentValue[] {
+function workspaceMessageAttachments(value: unknown, turnId?: string | null): WorkspaceMessageAttachmentValue[] {
   if (!Array.isArray(value)) return [];
-  return value.flatMap((item) => {
-    if (typeof item === 'string' && item.trim()) return [{ name: item.trim() }];
+  return value.flatMap<WorkspaceMessageAttachmentValue>((item): WorkspaceMessageAttachmentValue[] => {
+    if (typeof item === 'string' && item.trim()) return [{ name: item.trim(), path: turnId ? `inputs/${turnId}/${item.trim()}` : undefined }];
     if (!item || typeof item !== 'object') return [];
     const record = item as Record<string, unknown>;
     const name = typeof record.name === 'string' ? record.name.trim() : '';
@@ -363,22 +364,28 @@ function workspaceMessageAttachments(value: unknown): WorkspaceMessageAttachment
   });
 }
 
-function WorkspaceMessageAttachment({ attachment, dark }: { attachment: WorkspaceMessageAttachmentValue; dark: boolean }) {
+function WorkspaceMessageAttachment({ attachment, dark, workspaceId }: { attachment: WorkspaceMessageAttachmentValue; dark: boolean; workspaceId: string }) {
   const [imageUrl, setImageUrl] = useState<string | null>(null);
-  const isImage = Boolean(attachment.id && attachment.mime?.startsWith('image/'));
+  const isImage = Boolean((attachment.id || attachment.path) && (attachment.mime?.startsWith('image/') || /\.(?:png|jpe?g|gif|webp)$/i.test(attachment.name)));
   useEffect(() => {
-    if (!isImage || !attachment.id) return;
+    if (!isImage || (!attachment.id && !attachment.path)) return;
     const controller = new AbortController();
+    let closed = false;
     let objectUrl: string | null = null;
-    void api.fetchUploadBlob(attachment.id, controller.signal).then((blob) => {
+    const image = attachment.id
+      ? api.fetchUploadBlob(attachment.id, controller.signal)
+      : api.downloadWorkspaceFile(workspaceId, attachment.path as string);
+    void image.then((blob) => {
+      if (closed) return;
       objectUrl = URL.createObjectURL(blob);
       setImageUrl(objectUrl);
     }).catch(() => setImageUrl(null));
     return () => {
+      closed = true;
       controller.abort();
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [attachment.id, isImage]);
+  }, [attachment.id, attachment.path, isImage, workspaceId]);
   if (imageUrl) return <figure className={`w-40 overflow-hidden rounded-xl border ${dark ? 'border-white/15 bg-white/5' : 'border-black/10 bg-black/[0.03]'}`}><img src={imageUrl} alt={attachment.name} className="max-h-52 w-full object-contain" /><figcaption className={`truncate border-t px-2 py-1 text-[11px] leading-4 ${dark ? 'border-white/10 text-white/70' : 'border-black/10 text-black/55'}`}>{attachment.name}</figcaption></figure>;
   return <div className={`inline-flex max-w-56 items-center gap-1.5 rounded-xl px-2.5 py-1.5 text-xs leading-5 ${dark ? 'bg-white/10' : 'bg-black/[0.05]'}`}><File className="h-3.5 w-3.5 shrink-0" /><span className="truncate">{attachment.name}</span></div>;
 }
