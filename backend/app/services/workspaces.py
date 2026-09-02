@@ -337,7 +337,9 @@ async def create_workspace_turn(
         raise HTTPException(status_code=409, detail="该工作空间已有任务正在执行")
     turn_id = new_id("wturn")
     prompt_text = _required_text(prompt, "消息", 1_000_000)
+    display_text = prompt_text
     attachment_paths: list[str] = []
+    attachment_names: list[str] = []
     if attachments:
         workspace = await db.get(Workspace, workspace_id)
         if workspace is None:
@@ -352,6 +354,7 @@ async def create_workspace_turn(
             destination = destination_root / name
             shutil.copy2(resolved.path, destination)
             attachment_paths.append(destination.relative_to(_verified_project_root(workspace)).as_posix())
+            attachment_names.append(name)
     if attachment_paths:
         prompt_text += "\n\nWorkspace 附件：\n" + "\n".join(f"- {path}" for path in attachment_paths)
     row = WorkspaceTurn(
@@ -365,6 +368,18 @@ async def create_workspace_turn(
         created_at=now_utc(),
     )
     db.add(row)
+    db.add(
+        WorkspaceEvent(
+            workspace_id=workspace_id,
+            session_id=session_id,
+            turn_id=turn_id,
+            event_type="message_completed",
+            payload_json=dumps(
+                {"role": "user", "text": display_text, "attachments": attachment_names}
+            ),
+            created_at=now_utc(),
+        )
+    )
     await db.flush()
     return row
 

@@ -252,6 +252,13 @@ def test_workspace_turn_and_decision_resume_validate_current_request(auth_client
     )
     assert created.status_code == 200, created.text
     turn_id = created.json()["id"]
+    events = auth_client.get(f"/api/workspace-sessions/{session_id}/events").json()
+    assert events[-1]["event_type"] == "message_completed"
+    assert events[-1]["payload"] == {
+        "role": "user",
+        "text": "Need a choice",
+        "attachments": [],
+    }
 
     async def waiting_event() -> None:
         async with SessionLocal() as db:
