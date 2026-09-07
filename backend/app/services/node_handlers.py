@@ -469,6 +469,26 @@ async def _run_llm_with_upload_context(
         if ctx.channel.cancel_event.is_set():
             return NodeResult(status="cancelled", agent_session_id=next_session_id)
         if not validated.ok:
+            if validated.recovery_kind == "root_cause":
+                await _append_log(
+                    ctx,
+                    step,
+                    "warn",
+                    f"检测到可恢复的业务验收失败，开始根因恢复 1/1：{validated.error}",
+                )
+                return await _recover_node_root_cause(
+                    ctx,
+                    node,
+                    step,
+                    runtime=runtime,
+                    original_output=text,
+                    validation_error=validated.error or "业务验收未通过",
+                    model=model,
+                    reasoning_effort=reasoning_effort,
+                    cwd=cwd,
+                    on_chunk=on_chunk,
+                    output_schema=output_schema,
+                )
             if not validated.repairable:
                 await _append_log(ctx, step, "error", f"输出契约校验不可用：{validated.error}")
                 return NodeResult(
@@ -500,6 +520,103 @@ async def _run_llm_with_upload_context(
         output = text if expects_text else text
     await _append_log(ctx, step, "info", "节点执行完成")
     return NodeResult(status="success", output=output, agent_session_id=next_session_id)
+
+
+async def _recover_node_root_cause(
+    ctx: ExecutionContext,
+    node: dict[str, Any],
+    step: Step,
+    *,
+    runtime,
+    original_output: str,
+    validation_error: str,
+    model: str | None,
+    reasoning_effort: str | None,
+    cwd: Path,
+    on_chunk,
+    output_schema: dict[str, Any] | None,
+) -> NodeResult:
+    recovery_prompt = rewrite_runtime_upload_paths(
+        "\n".join(
+            [
+                "当前节点首次执行后的真实验收未通过。",
+                "请继续使用当前会话和工作区，检查刚才的执行记录、项目日志、测试报告和当前工作区，",
+                "定位并修复根因后重新执行原验收，最后直接返回重新验收得到的真实结果。",
+                "",
+                "首次失败证据：",
+                validation_error,
+                "",
+                "首次验收输出：",
+                original_output,
+            ]
+        )
+    )
+    recovery_chunks: list[str] = []
+
+    async def on_recovery_chunk(chunk: AgentChunk) -> None:
+        if chunk.type == "text" and chunk.text:
+            recovery_chunks.append(chunk.text)
+        await on_chunk(chunk)
+
+    try:
+        result = await runtime.execute(
+            prompt=recovery_prompt,
+            session_id=ctx.agent_session_id,
+            model=model,
+            reasoning_effort=reasoning_effort,
+            cwd=cwd,
+            on_chunk=on_recovery_chunk,
+            cancel_event=ctx.channel.cancel_event,
+            on_decision_request=None,
+            runtime_tools=ctx.runtime_tools,
+            runtime_policy="execute",
+            output_schema=output_schema,
+            session_scope=f"run:{ctx.run_id}",
+            fork_session=ctx.fork_session,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("root-cause recovery crashed for node=%s", node.get("id"))
+        return NodeResult(
+            status="failed",
+            error=f"Agent 根因恢复异常: {exc}",
+            failure_kind="runtime",
+            agent_session_id=ctx.agent_session_id,
+        )
+
+    next_session_id = result.session_id or ctx.agent_session_id
+    if next_session_id:
+        ctx.agent_session_id = next_session_id
+    ctx.fork_session = False
+    if result.finished_with == "cancelled":
+        return NodeResult(status="cancelled", agent_session_id=next_session_id)
+    if result.finished_with == "error":
+        return NodeResult(
+            status="failed",
+            error=result.error or "Agent 根因恢复失败",
+            failure_kind="runtime",
+            agent_session_id=next_session_id,
+        )
+
+    recovered_text = result.total_text or "".join(recovery_chunks)
+    validated = await _validate_node_output(ctx, node, recovered_text)
+    if ctx.channel.cancel_event.is_set():
+        return NodeResult(status="cancelled", agent_session_id=next_session_id)
+    if not validated.ok:
+        await _append_log(
+            ctx,
+            step,
+            "error",
+            f"根因恢复后复验仍未通过：{validated.error or '输出无效'}",
+        )
+        return NodeResult(
+            status="failed",
+            error=f"根因恢复后复验仍未通过：{_contract_failure_message(node, validated.error or '输出无效')}",
+            failure_kind="contract",
+            agent_session_id=next_session_id,
+        )
+
+    await _append_log(ctx, step, "info", "根因恢复后复验通过")
+    return NodeResult(status="success", output=validated.output, agent_session_id=next_session_id)
 
 
 async def _run_planning_turn(

@@ -4,11 +4,11 @@
 
 ## Role
 
-`editor/` 是桌面可视化工作流编辑器组件层，负责 React Flow 画布、节点工具栏、自然语言编辑入口、节点/边交互和布局美化入口。
+`editor/` 是桌面与手机共用的可视化工作流编辑器组件层，负责 React Flow 画布、节点工具栏、自然语言编辑入口、节点/边交互和布局美化入口。
 
 ## Key Components
 
-- `Canvas.tsx`：React Flow 画布、本地选择/拖拽/连线交互。
+- `Canvas.tsx`：React Flow 画布、本地选择/拖拽/连线交互；手机显示触控新增、框选、批量移动/删除和撤销重做入口，并保留画布双指缩放。
 - `NodeToolbar.tsx`：新增节点和画布工具入口。
 - `NlInputBar.tsx`：自然语言编排、decision_request 方案追问、方案确认/应用。
 - `nodes/`：各节点视图。
@@ -22,7 +22,9 @@
 - 画布“美化布局”调用后端 `POST /api/graph-layout/beautify`，只写回节点 `position`；前端不要维护第二套布局算法。
 - NL compile 调用后端两阶段流程：先恢复/生成 planned 会话并展示确认，确认后调用 apply，只有 apply 返回 `new_graph` 才写入画布。
 - NL compile waiting 使用 `DecisionPromptPanel` 风格：选项来自后端，补充文本/附件按题目保存，最后一题统一提交，提交后保留可停止状态。
-- 确认弹窗默认展示目标摘要和 graph changes；长文本必须在滚动区域内完整可读。
+- 桌面 NlInputBar 使用 conversation 模式：提交与方案记录留在对话主区，方案内嵌确认，底部唯一输入框支持调整方案；记录只保留当前页面，刷新仅恢复后端 active 任务。手机保留默认输入栏与确认弹窗。
+- 方案默认展示目标摘要和 graph changes；长文本必须在滚动区域内完整可读。
+- 桌面 Canvas 使用 hideNlInput，避免重复自然语言输入组件；单击选择节点、双击打开步骤，切换工作区或展开不能卸载对话。
 - Undo/redo 只管理画布结构和节点位置等 graph 操作；文本输入框内 `Ctrl/Cmd+Z`、redo 交给浏览器原生行为。
 - 连线和节点删除走 React Flow selection/delete 事件；节点选择写入 store，连线选择保持 Canvas 局部状态。
 - 不在 Canvas 中直接实现保存或 API 细节；通过 store/API 封装。

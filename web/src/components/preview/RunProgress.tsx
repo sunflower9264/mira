@@ -4,6 +4,7 @@
 import { useMemo, useState } from 'react';
 import { isCancellableRunStatus, useRunStore } from '../../stores/useRunStore';
 import { StopIcon } from '../common/Icons';
+import { AiActivityIndicator } from '../common/AiActivityIndicator';
 import type { Step, WorkflowNode } from '../../types';
 
 const NODE_TYPE_LABEL: Record<WorkflowNode['type'], string> = {
@@ -46,7 +47,7 @@ export function RunProgress() {
   return (
     <section className="rounded-2xl border border-black/10 bg-white p-6 shadow-card">
       <header className="flex items-center gap-4">
-        <PulseDots waiting={isWaiting} />
+        <AiActivityIndicator status={isWaiting ? 'waiting_user' : 'working'} />
         <div className="min-w-0 flex-1">
           <div className="text-[11px] font-medium uppercase tracking-wider text-black/50">
             {isWaiting ? '等待补充输入' : '运行中'}
@@ -90,20 +91,5 @@ export function RunProgress() {
         </div>
       </div>
     </section>
-  );
-}
-
-function PulseDots({ waiting }: { waiting: boolean }) {
-  const color = waiting ? 'bg-amber-500' : 'bg-black/75';
-  return (
-    <div className="flex shrink-0 items-end gap-1.5" aria-hidden="true">
-      {[0, 1, 2].map((i) => (
-        <span
-          key={i}
-          className={`block h-2.5 w-2.5 rounded-full ${color} animate-bounce`}
-          style={{ animationDelay: `${i * 0.15}s` }}
-        />
-      ))}
-    </div>
   );
 }

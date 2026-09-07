@@ -24,8 +24,8 @@ interface HistoryReplayBannerProps {
 
 export function HistoryReplayBanner({ run, onExit }: HistoryReplayBannerProps) {
   return (
-    <div className="mx-auto mb-4 flex max-w-3xl flex-wrap items-center justify-between gap-2 rounded-2xl border border-amber-200 bg-amber-50/80 px-4 py-2 text-sm text-amber-800">
-      <div className="flex items-center gap-2">
+    <div className="mx-auto flex w-full max-w-3xl flex-wrap items-center justify-between gap-2 rounded-2xl border border-amber-200 bg-amber-50/80 px-4 py-2 text-xs text-amber-800">
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
         <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium uppercase tracking-wider">
           历史
         </span>

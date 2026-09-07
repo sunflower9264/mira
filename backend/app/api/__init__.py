@@ -1,10 +1,11 @@
 from fastapi import APIRouter
 
-from . import apps, auth, graph_layout, health, nlcompile, prompt_assistant, runs, settings, uploads, wiki, workspaces
+from . import activities, apps, auth, graph_layout, health, nlcompile, prompt_assistant, runs, settings, uploads, wiki, workspaces
 
 router = APIRouter()
 router.include_router(health.router)
 router.include_router(auth.router)
+router.include_router(activities.router)
 router.include_router(apps.router)
 router.include_router(settings.router)
 router.include_router(uploads.router)

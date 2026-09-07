@@ -7,10 +7,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from app.runtime.base import DecisionResult
 from app.runtime.workspace_runtime import (
     WorkspaceCodexRuntime,
     WorkspaceRuntimeHandle,
+    WorkspaceRuntimeError,
     WorkspaceRuntimeSpec,
     WorkspaceTurnRequest,
     _read_or_create_token,
@@ -159,6 +162,62 @@ class _FakeConnection:
 
     async def __aexit__(self, exc_type, exc, traceback) -> None:  # noqa: ANN001
         return None
+
+
+async def test_get_goal_does_not_start_a_stopped_runtime(tmp_path, monkeypatch) -> None:
+    settings = SimpleNamespace(runtime_dir=tmp_path / "runtime")
+    monkeypatch.setattr("app.runtime.workspace_runtime.get_settings", lambda: settings)
+    spec = WorkspaceRuntimeSpec(
+        workspace_id="workspace-1",
+        project_path=tmp_path / "project",
+        codex_home=tmp_path / "codex-home",
+        wiki_path=tmp_path / "wiki-working-tree",
+    )
+    runtime = WorkspaceCodexRuntime(client=_FakeClient())
+
+    with pytest.raises(WorkspaceRuntimeError, match="runtime 未运行"):
+        await runtime.get_goal(spec, thread_id="thread-1")
+
+    assert runtime._client.containers.created is None
+
+
+async def test_get_goal_reads_from_an_existing_runtime(tmp_path, monkeypatch) -> None:
+    settings = SimpleNamespace(runtime_dir=tmp_path / "runtime")
+    monkeypatch.setattr("app.runtime.workspace_runtime.get_settings", lambda: settings)
+    spec = WorkspaceRuntimeSpec(
+        workspace_id="workspace-1",
+        project_path=tmp_path / "project",
+        codex_home=tmp_path / "codex-home",
+        wiki_path=tmp_path / "wiki-working-tree",
+    )
+    _read_or_create_token(_token_path(spec.workspace_id))
+    runtime = WorkspaceCodexRuntime(client=_FakeClient())
+    handle = WorkspaceRuntimeHandle(
+        workspace_id=spec.workspace_id,
+        container_id="container-1",
+        host="127.0.0.1",
+        port=32123,
+        started_at=datetime.now(timezone.utc),
+    )
+    monkeypatch.setattr(runtime, "_find_running_sync", lambda *_args: handle)
+
+    async def rpc(actual_handle, _token, method, params):  # noqa: ANN001
+        assert actual_handle is handle
+        assert method == "thread/goal/get"
+        assert params == {"threadId": "thread-1"}
+        return {"goal": {"objective": "Ship the workspace", "status": "active"}}
+
+    monkeypatch.setattr(runtime, "_rpc", rpc)
+
+    assert await runtime.get_goal(spec, thread_id="thread-1") == {
+        "objective": "Ship the workspace",
+        "status": "active",
+        "tokenBudget": None,
+        "tokensUsed": None,
+        "timeUsedSeconds": None,
+        "createdAt": None,
+        "updatedAt": None,
+    }
 
 
 def test_workspace_container_uses_host_only_hashed_token_and_bridge(tmp_path, monkeypatch) -> None:

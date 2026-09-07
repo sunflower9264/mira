@@ -5,7 +5,7 @@ import type { App } from '../../types';
 import * as api from '../../lib/api';
 import { AppLaunchView, type LaunchInputs } from './AppLaunchView';
 import { HistoryReplayBanner } from './HistoryReplayBanner';
-import { HtmlOutputFrame } from './HtmlOutputFrame';
+import { HtmlOutputPreview } from './HtmlOutputPreview';
 import { RunArtifactsPanel, useRunArtifacts } from './RunArtifactsPanel';
 import { RunProgress } from './RunProgress';
 import { WaitingInputPanel } from './WaitingInputPanel';
@@ -140,7 +140,7 @@ export function AppRunContent({
       {wikiAccessDialog}
 
       {(phase === 'running' || phase === 'done') && (
-        <div className={isAppView ? `flex flex-col gap-5 px-6 py-10 ${isWaiting ? 'min-h-0 flex-1' : 'min-h-full'}` : 'flex min-h-0 flex-1 flex-col gap-5 p-5'}>
+        <div className={`flex min-h-0 flex-1 flex-col gap-3 ${showFullOutput ? 'p-3' : isAppView ? 'px-6 py-6' : 'p-4'}`}>
           {mode === 'replay' && replayRun && (
             <HistoryReplayBanner
               run={replayRun}
@@ -182,13 +182,12 @@ export function AppRunContent({
                       outputStep?.status === 'skipped';
                     const text = outputDone ? formatOutputValue(outputStep?.output) : '';
                     return (
-                      <div key={o.id} className="flex flex-1 flex-col overflow-hidden rounded-2xl border border-black/10 bg-white shadow-card">
+                      <div key={o.id} className="min-w-0 shrink-0 overflow-hidden rounded-xl border border-black/10 bg-white">
                         {text ? (
-                          <HtmlOutputFrame
+                          <HtmlOutputPreview
                             html={text}
                             artifacts={artifactsState.artifacts}
                             title={o.title || '输出预览'}
-                            className="block w-full rounded-2xl border-0 bg-white"
                           />
                         ) : outputStep?.status === 'skipped' ? (
                           <div className="p-6 text-xs text-black/45">已跳过</div>
@@ -229,14 +228,14 @@ export function AppRunContent({
 
   if (isAppView) {
     return (
-      <div className={`absolute inset-0 ${isWaiting ? 'flex flex-col' : 'overflow-y-auto'}`}>
+      <div className={`absolute inset-0 ${isWaiting ? 'flex flex-col' : 'overflow-y-auto overscroll-contain'}`}>
         {content}
       </div>
     );
   }
 
   return (
-    <div className="flex h-full flex-col bg-[#F4F5F7] text-[#0B0B0F]">
+    <div className={`flex ${phase === 'idle' || isWaiting ? 'h-full min-h-0' : 'min-h-full'} flex-col bg-[#F4F5F7] text-[#0B0B0F]`}>
       {content}
     </div>
   );

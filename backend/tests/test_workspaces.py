@@ -23,6 +23,7 @@ from app.services.workspaces import (
     update_workspace_runtime_state,
     workspace_project_path,
 )
+from app.services.workspace_workflows import _wait_for_run
 from app.utils import dumps, new_id, now_utc
 from tests.auth_helpers import create_regular_user
 
@@ -70,6 +71,32 @@ def _create_workspace(client, name: str = "Workspace") -> dict:
     )
     assert response.status_code == 200, response.text
     return response.json()
+
+
+async def test_workspace_workflow_wait_stops_for_interrupted_run() -> None:
+    run = type("InterruptedRun", (), {"status": "interrupted"})()
+
+    class FakeDb:
+        async def get(self, _model, _run_id):
+            return run
+
+        async def refresh(self, _run):
+            return None
+
+    await asyncio.wait_for(
+        _wait_for_run(
+            FakeDb(),
+            "run-1",
+            "owner-1",
+            "Workflow",
+            "workspace-1",
+            "session-1",
+            "turn-1",
+            None,
+            asyncio.Event(),
+        ),
+        timeout=0.1,
+    )
 
 
 def test_workspace_crud_sessions_files_and_owner_isolation(auth_client):
@@ -446,6 +473,9 @@ def test_workspace_turn_and_decision_resume_validate_current_request(auth_client
     )
     assert response.status_code == 204, response.text
     assert accepted == {"turn_id": turn_id, "request_id": "request-1"}
+    events = auth_client.get(f"/api/workspace-sessions/{session_id}/events").json()
+    assert events[-1]["event_type"] == "decision_submitted"
+    assert events[-1]["payload"] == {"request_id": "request-1"}
 
 
 def test_workspace_delete_removes_database_tree_and_runtime_directory(auth_client):

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { ImagePreview } from '../common/ImagePreview';
 import { Download, FileText } from 'lucide-react';
 import { listRunArtifacts } from '../../lib/api';
 import { showCaughtError } from '../../stores/useErrorDialogStore';
@@ -110,8 +111,9 @@ export function RunArtifactsPanel({
         <ul className="mt-3 divide-y divide-black/5 overflow-hidden rounded-xl border border-black/10">
           {artifacts.map((artifact) => (
             <li key={artifact.id} className="flex items-center gap-3 px-3 py-2.5">
+              {artifact.integrity === 'verified' && artifact.mime?.startsWith('image/') ? <div className="w-16 shrink-0 overflow-hidden rounded-lg border border-black/5"><ImagePreview src={artifact.download_url} name={artifact.name} className="h-14 w-full object-contain" /></div> : null}
               <div className="min-w-0 flex-1">
-                <div className="truncate text-sm font-medium text-black/78">{artifact.name}</div>
+                <div className="break-words text-sm font-medium text-black/78 [overflow-wrap:anywhere]">{artifact.name}</div>
                 <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-black/42">
                   {artifact.size !== null && artifact.size !== undefined ? (
                     <span className="font-mono">{formatBytes(artifact.size)}</span>
@@ -122,7 +124,7 @@ export function RunArtifactsPanel({
               <a
                 href={artifact.download_url}
                 download
-                className="grid h-9 w-9 shrink-0 place-items-center rounded-full border border-black/10 text-black/65 hover:border-black/20 hover:bg-black/[0.03] hover:text-black"
+                className="grid h-11 w-11 shrink-0 place-items-center rounded-full border border-black/10 text-black/65 hover:border-black/20 hover:bg-black/[0.03] hover:text-black"
                 aria-label={`下载 ${artifact.name}`}
                 title="下载"
               >

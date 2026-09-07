@@ -235,7 +235,7 @@ class WorkspaceCodexRuntime:
         )
 
     async def get_goal(self, spec: WorkspaceRuntimeSpec, *, thread_id: str) -> dict[str, Any] | None:
-        handle = await self.ensure_started(spec)
+        handle = await self._running_handle(spec)
         token = _read_token(_token_path(spec.workspace_id))
         result = await self._rpc(handle, token, "thread/goal/get", {"threadId": thread_id})
         goal = result.get("goal")
@@ -253,6 +253,17 @@ class WorkspaceCodexRuntime:
                 "updatedAt",
             )
         }
+
+    async def _running_handle(self, spec: WorkspaceRuntimeSpec) -> WorkspaceRuntimeHandle:
+        handle = await asyncio.to_thread(
+            self._find_running_sync,
+            spec.workspace_id,
+            _path_sha256(spec.project_path),
+            _path_sha256(spec.wiki_path) if spec.wiki_path is not None else "",
+        )
+        if handle is None:
+            raise WorkspaceRuntimeError("Workspace runtime 未运行")
+        return handle
 
     async def set_goal(
         self,

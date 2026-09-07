@@ -8,6 +8,7 @@
 
 ## Rules
 
+- 手机管理页 `/m/settings` 复用 `SettingsDialog mobile` 的全部分类和 API，整屏展示、分类横向滚动；`MobileSettings` 用 `selectIsAdmin` 守卫。Codex 初始化、MCP 表单、Skill 预览和提示词编辑必须保持窄屏可操作。
 - Settings 入口和写操作只面向管理员；不要绕过 `selectIsAdmin`、路由 gate 或后端 admin 权限。
 - Codex config 正文、Codex auth、supported models、MCP、Skills、Instructions 和 Prompt Templates 都是全局数据，不是单个 App 的私有配置。
 - 支持模型列表由管理员手动维护；前端不要从 Codex config、auth 或 App Server 状态自动发现/补入模型。

@@ -344,7 +344,7 @@ async def _wait_for_run(
         run = await db.get(Run, run_id)
         if run is not None:
             await db.refresh(run)
-        if run is None or run.status in {"success", "failed", "cancelled"}:
+        if run is None or run.status in {"success", "failed", "cancelled", "interrupted"}:
             return
         if run.status == "waiting_for_user":
             step = (await db.execute(select(Step).where(Step.run_id == run_id, Step.status == "waiting_for_user"))).scalars().first()

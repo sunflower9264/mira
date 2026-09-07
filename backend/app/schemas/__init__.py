@@ -1,3 +1,4 @@
+from .activities import AiActivityOut
 from .runs import (
     ConditionBranchOverrideIn,
     LogLineOut,
@@ -96,6 +97,7 @@ from .workspaces import (
 )
 
 __all__ = [
+    "AiActivityOut",
     "AppOut",
     "AppVersionOut",
     "CodexConfigContent",

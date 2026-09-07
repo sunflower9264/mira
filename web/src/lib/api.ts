@@ -11,6 +11,7 @@ import type {
   CodexConfigFile,
   CodexSetupState,
   CodexStatus,
+  AiActivity,
   App,
   AppVersion,
   ConditionBranchOverride,
@@ -191,6 +192,10 @@ export async function login(input: { username: string; password: string }): Prom
  */
 export async function me(): Promise<{ username: string; is_admin: boolean }> {
   return request<{ username: string; is_admin: boolean }>('/api/auth/me');
+}
+
+export async function listAiActivities(): Promise<AiActivity[]> {
+  return request<AiActivity[]>('/api/ai-activities');
 }
 
 // --- Persistent workspaces ------------------------------------------------
@@ -527,6 +532,8 @@ function sanitizeOutputContract(contract: NodeOutputContract): NodeOutputContrac
   if (contract.type === 'html') {
     const {
       json_schema: _json_schema,
+      success_field: _success_field,
+      success_value: _success_value,
       artifact_kind: _artifact_kind,
       max_count: _max_count,
       validate_office_documents: _validate_office_documents,
@@ -535,7 +542,12 @@ function sanitizeOutputContract(contract: NodeOutputContract): NodeOutputContrac
     return cleaned as NodeOutputContract;
   }
   if (contract.type === 'artifact') {
-    const { json_schema: _json_schema, ...cleaned } = loose;
+    const {
+      json_schema: _json_schema,
+      success_field: _success_field,
+      success_value: _success_value,
+      ...cleaned
+    } = loose;
     return cleaned as NodeOutputContract;
   }
   return contract;

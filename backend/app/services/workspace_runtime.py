@@ -390,7 +390,6 @@ async def get_workspace_goal(
     session: WorkspaceSession,
 ) -> dict | None:
     _require_thread(session)
-    await start_workspace_runtime(db, workspace)
     return await get_workspace_runtime().get_goal(_runtime_spec(workspace), thread_id=session.thread_id)
 
 

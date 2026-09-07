@@ -130,12 +130,12 @@ export function Home() {
   return (
     <div className="min-h-full">
       <TopNav />
-      <main className="max-w-6xl mx-auto px-6 pt-16 pb-24">
-        <h1 className="text-center text-3xl font-medium leading-tight">
-          {homeTab === 'apps' ? <>用自然语言创建和编辑<br />迷你 AI 应用</> : <>让 Codex 在持久项目中<br />继续完成复杂工作</>}
+      <main className={`max-w-6xl mx-auto px-6 pb-24 ${homeTab === 'workspaces' ? 'pt-8' : 'pt-16'}`}>
+        <h1 className={homeTab === 'workspaces' ? 'sr-only' : 'text-center text-3xl font-medium leading-tight'}>
+          {homeTab === 'apps' ? <>用自然语言创建和编辑<br />迷你 AI 应用</> : '工作空间'}
         </h1>
 
-        <div role="tablist" aria-label="首页功能" className="mx-auto mt-7 flex w-fit rounded-full border border-black/5 bg-white p-1 text-sm shadow-pill">
+        <div role="tablist" aria-label="首页功能" className={`flex w-fit rounded-full border border-black/5 bg-white p-1 text-sm shadow-pill ${homeTab === 'apps' ? 'mx-auto mt-7' : ''}`}>
           <button type="button" role="tab" aria-selected={homeTab === 'apps'} onClick={() => setHomeTab('apps')} className={`h-9 rounded-full px-5 transition ${homeTab === 'apps' ? 'bg-black font-medium text-white' : 'text-black/50 hover:bg-black/[0.04] hover:text-black'}`}>应用</button>
           <button type="button" role="tab" aria-selected={homeTab === 'workspaces'} onClick={() => setHomeTab('workspaces')} className={`h-9 rounded-full px-5 transition ${homeTab === 'workspaces' ? 'bg-black font-medium text-white' : 'text-black/50 hover:bg-black/[0.04] hover:text-black'}`}>工作空间</button>
         </div>

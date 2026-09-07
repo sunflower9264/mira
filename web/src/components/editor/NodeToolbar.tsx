@@ -47,7 +47,7 @@ function singletonNodeMessage(type: NodeType): string | null {
   return null;
 }
 
-export function NodeToolbar({ onToast }: { onToast?: (message: string) => void }) {
+export function NodeToolbar({ onToast, onAdded, mobile = false }: { onToast?: (message: string) => void; onAdded?: () => void; mobile?: boolean }) {
   const toolbarRef = useRef<HTMLDivElement | null>(null);
   const { screenToFlowPosition } = useReactFlow();
   const app = useEditorStore((s) => s.app);
@@ -64,7 +64,9 @@ export function NodeToolbar({ onToast }: { onToast?: (message: string) => void }
 
   const addNodeAtCenter = (type: NodeType, init?: Partial<WorkflowNode>) => {
     const position = positionAtCanvasCenter();
-    return addNode(type, { ...init, ...(position ? { position } : {}) });
+    const node = addNode(type, { ...init, ...(position ? { position } : {}) });
+    onAdded?.();
+    return node;
   };
 
   const handlePickAsset = (kind: AssetKind) => {
@@ -80,7 +82,7 @@ export function NodeToolbar({ onToast }: { onToast?: (message: string) => void }
   };
 
   return (
-    <div ref={toolbarRef} className="mira-node-toolbar nodrag min-w-[520px] bg-white rounded-full shadow-pill flex flex-nowrap items-center justify-center gap-2 px-3 py-1 border border-black/5">
+    <div ref={toolbarRef} style={mobile ? { overflow: 'visible' } : undefined} className="mira-node-toolbar nodrag  bg-white rounded-2xl shadow-pill flex min-w-0 flex-wrap items-center justify-center gap-1 px-2 py-1 border border-black/5">
       {ITEMS.map((it) => (
         <ToolbarNodeButton
           key={it.type}
@@ -117,7 +119,7 @@ function ToolbarNodeButton({
     <button
       type="button"
       draggable={!blocked}
-      className={`inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-3 py-1.5 text-sm ${
+      className={`inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-2 py-2 text-xs ${
         blocked ? 'cursor-not-allowed text-black/35' : 'hover:bg-black/5'
       }`}
       title={blockedMessage ?? label}
@@ -163,14 +165,14 @@ function AssetDropdown({ onPick }: { onPick: (kind: AssetKind) => void }) {
     <div ref={ref} className="relative">
       <button
         type="button"
-        className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap px-3 py-1.5 rounded-full text-sm hover:bg-black/5"
+        className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap px-2 py-2 rounded-full text-xs hover:bg-black/5"
         onClick={() => setOpen((v) => !v)}
       >
         <PlusIcon className="w-4 h-4" />
         添加素材
       </button>
       {open && (
-        <div className="absolute top-full mt-1 left-0 bg-white border border-black/10 rounded-xl shadow-lg p-1 z-30 w-36">
+        <div className="absolute top-full mt-1 right-0 bg-white border border-black/10 rounded-xl shadow-lg p-1 z-30 w-36">
           {ASSET_KINDS.map((k) => (
             <button
               key={k.kind}

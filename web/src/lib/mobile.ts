@@ -16,15 +16,17 @@ export function installMobileZoomGuard(): () => void {
   const shouldBlockZoom = () => mobileQuery.matches;
 
   const preventGestureZoom = (event: Event) => {
+    if (event.target instanceof Element && event.target.closest('.react-flow')) return;
     if (shouldBlockZoom()) event.preventDefault();
   };
 
   const preventPinchZoom = (event: TouchEvent) => {
+    if (event.target instanceof Element && event.target.closest('.react-flow')) return;
     if (shouldBlockZoom() && event.touches.length > 1) event.preventDefault();
   };
 
   const preventDoubleTapZoom = (event: TouchEvent) => {
-    if (!shouldBlockZoom()) return;
+    if (!shouldBlockZoom() || (event.target instanceof Element && event.target.closest('.react-flow'))) return;
     const now = Date.now();
     if (now - lastTouchEnd <= 300) event.preventDefault();
     lastTouchEnd = now;
@@ -46,13 +48,16 @@ export function installMobileZoomGuard(): () => void {
 }
 
 export function mobilePathFor(pathname: string): string | null {
-  if (pathname.startsWith('/m')) return null;
+  if (pathname === '/m' || pathname.startsWith('/m/')) return null;
   if (pathname === '/') return '/m';
   if (pathname === '/login') return '/m/login';
+  if (pathname === '/wiki') return '/m/wiki';
+  if (pathname === '/settings') return '/m/settings';
+  const editorMatch = matchPath('/apps/:id/editor', pathname);
+  if (editorMatch?.params.id) return `/m/apps/${editorMatch.params.id}/editor`;
   const workspaceMatch = matchPath('/workspaces/:id', pathname);
   if (workspaceMatch?.params.id) return `/m/workspaces/${workspaceMatch.params.id}`;
   const appMatch =
-    matchPath('/apps/:id/editor', pathname) ??
     matchPath('/apps/:id/view', pathname) ??
     matchPath('/market/apps/:id', pathname);
   if (appMatch?.params.id) return `/m/apps/${appMatch.params.id}/run`;
@@ -60,9 +65,13 @@ export function mobilePathFor(pathname: string): string | null {
 }
 
 export function desktopPathFor(pathname: string): string | null {
-  if (!pathname.startsWith('/m')) return null;
+  if (pathname !== '/m' && !pathname.startsWith('/m/')) return null;
   if (pathname === '/m') return '/';
   if (pathname === '/m/login') return '/login';
+  if (pathname === '/m/wiki') return '/wiki';
+  if (pathname === '/m/settings') return '/settings';
+  const editorMatch = matchPath('/m/apps/:id/editor', pathname);
+  if (editorMatch?.params.id) return `/apps/${editorMatch.params.id}/editor`;
   const workspaceMatch = matchPath('/m/workspaces/:id', pathname);
   if (workspaceMatch?.params.id) return `/workspaces/${workspaceMatch.params.id}`;
   const appMatch = matchPath('/m/apps/:id/run', pathname);

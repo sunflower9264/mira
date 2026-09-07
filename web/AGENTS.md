@@ -15,7 +15,7 @@
 - `src/types.ts`：核心数据契约，必须与后端 schema 对齐。
 - `src/lib/`：HTTP API、SSE、auth、mobile route helper 和通用工具。
 - `src/stores/`：Zustand 状态层，负责 Apps、Editor、Run、Settings、Auth 等跨组件流程。
-- `src/pages/`：路由级页面；`src/pages/mobile/` 是手机端执行入口。
+- `src/pages/`：路由级页面；`src/pages/mobile/` 是手机端页面入口。
 - `src/components/`：通用 UI、编辑器、预览/运行、首页、设置和手机端组件。
 
 ## Data Flow And Contracts
@@ -40,8 +40,8 @@
 - 素材节点字段必须遵守 `types.ts`：文本 `content`，URL `urls[]`，文件 `uploads[]`，画板 `upload`。
 - 所有应用固定使用 Codex；Graph 不保存运行时选择字段或提问开关。`generate` / `condition` / `output` 节点只保存 prompt、model、reasoning_effort、output_contract 等节点级字段。
 - App 级 Tools 排除项写入 `graph.tools.disabled_tool_ids`。Preview、App View 和 Mobile Run 可展示/调整 App 级 Tools；不要把 Tools 重新做成 generate 节点配置。
-- `generate.output_contract` 只在 generate 节点配置，支持 json/html/artifact；普通 generate 默认自由文本且不保存契约。只有下游需要稳定字段、当前节点明确输出 HTML 片段或需要可下载文件产物时才使用契约。JSON 契约必须携带 strict object `json_schema`，artifact 必须携带 `artifact_kind`；`zip` kind 表示只接受真实 `.zip` 文件，`validate_office_documents` 是 artifact-only 的可选严格打开校验；`output` 节点固定为 HTML 最终展示。
-- JSON output contract 和 Schema 仅作为内部校验契约，由 Prompt Assistant 根据提示词维护；普通用户界面不展示 JSON Schema、字段大纲、字段引用或“可引用结果”选项。
+- `generate.output_contract` 只在 generate 节点配置，支持 json/html/artifact；普通 generate 默认自由文本且不保存契约。只有下游需要稳定字段、当前节点明确输出 HTML 片段或需要可下载文件产物时才使用契约。JSON 契约必须携带 strict object `json_schema`，可选 `success_field` / `success_value` 必须在编辑保存时原样保留；artifact 必须携带 `artifact_kind`；`zip` kind 表示只接受真实 `.zip` 文件，`validate_office_documents` 是 artifact-only 的可选严格打开校验；`output` 节点固定为 HTML 最终展示。
+- JSON output contract 和 Schema 仅作为内部校验契约，由 Prompt Assistant 根据提示词维护；普通用户界面不展示 JSON Schema、字段大纲、字段引用或“可引用结果”选项。已有 `success_field` / `success_value` 业务门禁是固定控制流契约，Prompt Assistant 完成时只能更新提示词，不能覆盖门禁。
 - 运行期除 `output` 外的 LLM 节点统一先进入 Codex Plan，由原生 `requestUserInput` 决定是否等待用户输入；前端不提供节点级提问开关。
 - 条件分支 edge 必须保持 `branch_key` 与分支 key 对齐；`CONDITION_DEFAULT_BRANCH_KEY` 是系统保留 fallback key。
 - 从历史 run 节点重新执行、失败修复和 condition 分支测试走 `useRunStore.rerunFrom`，创建 checkpoint rerun：cut 前状态冻结，当前 App graph 只用于 cut 及下游；不修改来源 run 或 App graph。
@@ -51,15 +51,16 @@
 - 桌面 Home 的“我的应用”和“最近使用”是同组 tab；应用市场只在“我的应用”tab 下展示。模板点击先导入为当前用户草稿。
 - Home 顶层增加“工作空间”tab；Workspace 桌面和手机入口都必须支持 CRUD、Session、Codex turn、文件、Git、Wiki 同步和 WorkflowProposal。视觉继续复用 Mira 的字体、黑白灰、圆角、阴影和桌面 `px-6` / 手机 `px-4` 间距。
 - App View 遇到 `can_edit=false` 或 `/market/apps/:id` 路由必须保持只读，不显示编辑、发布、版本管理等 owner-only 入口。
-- Mobile 路由通过 viewport media query 切换到 `/m`，不要改成 UA 判断。手机端只承载登录、应用列表、最近运行、市场、运行、历史、结果和 owner 运行设置，不加节点编辑器或 Settings。
-- Mobile Workspace 可以显示只读 WorkflowProposal React Flow 预览并确认，但不开放通用节点编辑器；Workspace 内正式 Run 继续复用现有 Decision、取消、HTML 输出和 Artifact UI。
+- Mobile 路由通过 viewport media query 切换到 `/m`，不要改成 UA 判断。手机端提供应用管理、完整工作流编辑、运行调试、Wiki 和管理员 Settings；使用正式共享组件与 API，保持桌面权限边界。
+- Desktop Workspace 使用全宽项目布局，侧栏固定导航并单独滚动会话；目标与项目设置收纳在侧栏底部，会话只保留单层工具栏；对话与输入区限制阅读宽度，AI 活动入口嵌入会话工具栏。文件列表与工作流记录保留现有 API 边界。
+- Mobile Workspace 可以显示只读 WorkflowProposal React Flow 预览并确认，通用节点编辑使用独立 MobileEditor；Workspace 内正式 Run 继续复用现有 Decision、取消、HTML 输出和 Artifact UI。
 - Mobile Run 不使用 `useEditorStore`；owner 运行设置可写回节点 model 和 `graph.tools.disabled_tool_ids`，不编辑节点 prompt、结构或 reasoning_effort。
 - `decision_request` UI 统一使用后端返回的 context/groups/options。面板先显示 `context.title` 和 `context.summary`；每组必须选择选项，补充文字和附件始终可用；多问题只在最后一题提交；提交后显示“已选择 / 已补充”摘要并保留停止入口。
 - 自然语言编辑首次提交允许附件；必须先通过 uploads API 获得 upload id，再随 `POST /api/nlcompile` 发送引用，不能只把文件名拼进 instruction。
 - HTML 输出只通过 `HtmlOutputFrame` iframe 隔离渲染；滚动应由外层 Preview/App View/Mobile 容器承载。
 - Skill 的 `dependency_status` / `dependency_error` 来自后端 Settings 契约；`pending` 或 `failed` 时 UI 只能继续禁用、预览或删除，不能发起启用或设为规划可用。
 - 视觉改动保持现有 Tailwind、黑白灰和少量强调色体系；图标优先使用现有组件或 `lucide-react`。
-- 桌面 `/wiki` 管理当前用户的长期 Wiki；Mobile 只遵守授权与自动使用规则，不提供 Wiki 管理。原始文件上传只接受可转换文档和图片，压缩包等无法解析的格式由前后端同时拒绝。第三方 App 的 Wiki 授权必须按后端返回的 graph digest 确认，也必须保留“不使用 Wiki 运行”。
+- 桌面 `/wiki` 与手机 `/m/wiki` 管理当前用户的长期 Wiki，复用相同授权与维护流程。原始文件上传只接受可转换文档和图片，压缩包等无法解析的格式由前后端同时拒绝。第三方 App 的 Wiki 授权必须按后端返回的 graph digest 确认，也必须保留“不使用 Wiki 运行”。
 
 ## Commands
 

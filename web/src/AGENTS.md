@@ -23,7 +23,7 @@
 - `Run.status === "interrupted"` 是可恢复状态，不应当当作普通终态回放。
 - `RunArtifact.download_url` 是后端签名下载地址；HTML 内嵌文件入口只能由 `HtmlOutputFrame` 根据同一次 Run 的 `verified` artifact 绑定，不能把 runtime 文件路径放进前端契约。
 - `SkillConfig` 包含依赖状态和失败原因；`pending` / `failed` 不能在 Settings 中启用或设为规划可用。
-- 手机端路径只做执行体验，不引入编辑器、React Flow 或管理员设置能力。
+- 手机端覆盖与桌面一致的工作流体验：应用库、运行、编辑器、Workspace、Wiki 与管理员 Settings；保持 viewport 路由切换、权限 gate 与后端 API 契约，不复制业务状态。
 
 ## Verification
 

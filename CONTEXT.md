@@ -8,7 +8,7 @@ Mira 把一次 Application Run 视为一个逻辑 RunAgent，而不是一组彼�
 - 非 Agent 输入：`user_input` 接受文本、附件或两者组合，至少一项非空后写入 `/workspace/.mira/run-context/`；附件副本写入 `/workspace/inputs/`。`asset` 使用同一上下文目录。
 - 并行：只有一个已完成节点产生多个实际活动后继时才 fan-out。每个后继从同一 checkpoint 通过 Codex App Server `thread/fork` 创建 thread，并从内容寻址 checkpoint 物化独立可写 workspace。
 - 汇合：RunAgent 创建协调 branch，把共同父 checkpoint、完整分支快照、节点上下文和 diff manifest 交给协调 Agent。后端验证 receipt 的路径、来源和最终 hash 后，才消费并清理源分支。
-- 正式输出：共享 workspace 不替代节点输出 Envelope。JSON、HTML 和 artifact 继续执行强契约；首次契约失败只允许在原 thread/workspace 修正一次。
+- 正式输出：共享 workspace 不替代节点输出 Envelope。JSON、HTML 和 artifact 继续执行强契约；格式型契约失败只在原 thread/workspace 修正一次。显式业务门禁首次失败时，同一 thread/workspace 检查既有执行证据、修复根因并重新验收一次，仍失败才终止 Step/Run。
 - 文件视图：workspace 内未声明文件可以参与本次运行推理，但只有 artifact contract 声明且完整性通过的产物可以进入 Run Files、Trace artifacts 和下载 API。
 - Checkpoint rerun：从 cut 节点前 checkpoint 创建新 Run。cut 前 workspace、Codex thread lineage 和 step 状态冻结；当前 App graph 只执行 cut 及下游。cut 前 input override 不生效。
 - Wiki：每个用户拥有一个独立长期 Wiki。新 Run 冻结当前 Wiki revision 与 raw manifest，并在所有 branch/plan/repair/join turn 中只读挂载到 `/mnt/wiki`；Wiki 不进入 workspace/checkpoint，Run 输出和 artifact 绝不自动写回。checkpoint rerun 继承来源 Run 的同一 Wiki 快照。

@@ -15,7 +15,7 @@
 
 - Workflow wire shape 仍主要是 `dict[str, Any]`，由 `services/graph_validation.py` 和相关 service 做语义校验。
 - Run 状态为 `pending/running/waiting_for_user/interrupted/success/failed/cancelled`；Step 另有 `checkpoint_reused/skipped`。
-- `FailureKind` 仅为 `runtime/contract/routing/integrity/internal`；业务验收失败不是执行异常。
+- `FailureKind` 仅为 `runtime/contract/routing/integrity/internal`；普通业务验收失败不是执行异常，只有 Graph 明确声明的输出契约业务门禁不通过时归为 `contract`。
 - Run、NL compile 和 Prompt Assistant 的附件只接收当前用户 upload 引用；路径和元数据由 service 解析。
 - NL compile 响应是 planned/completed/waiting/progress 联合类型；apply 前不能返回 `new_graph`。
 - Prompt Assistant 响应是 completed/waiting/interrupted 联合类型。

@@ -27,13 +27,15 @@ import { AppDialog } from '../components/common/AppDialog';
 import { ConfirmDialog } from '../components/common/ConfirmDialog';
 import { UserMenu } from '../components/common/UserMenu';
 import { showCaughtError } from '../stores/useErrorDialogStore';
+import { AiActivityDock } from '../components/common/AiActivityDock';
+import { AiActivityIndicator } from '../components/common/AiActivityIndicator';
 
 type FileView = 'raw' | 'wiki';
 
 const WIKI_SOURCE_ACCEPT = '.txt,.md,.markdown,.csv,.json,.xml,.html,.htm,.pdf,.docx,.pptx,.xls,.xlsx,.msg,.eml,.png,.jpg,.jpeg,.webp,.gif';
 const WIKI_SOURCE_SUFFIX = /\.(txt|md|markdown|csv|json|xml|html|htm|pdf|docx|pptx|xls|xlsx|msg|eml|png|jpe?g|webp|gif)$/i;
 
-export function Wiki() {
+export function Wiki({ mobile = false }: { mobile?: boolean }) {
   const navigate = useNavigate();
   const uploadRef = useRef<HTMLInputElement>(null);
   const [info, setInfo] = useState<WikiInfo | null>(null);
@@ -45,6 +47,7 @@ export function Wiki() {
   const [preview, setPreview] = useState('');
   const [previewLoading, setPreviewLoading] = useState(false);
   const [view, setView] = useState<FileView>('wiki');
+  const [mobilePanel, setMobilePanel] = useState<'files' | 'read' | 'activity'>('files');
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -168,10 +171,10 @@ export function Wiki() {
   }
 
   return (
-    <div className="min-h-full bg-[#f6f4ef] text-[#0b0b0f]">
-      <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-black/5 bg-white/80 px-6 backdrop-blur">
+    <div className={`${mobile ? 'flex h-dvh flex-col overflow-hidden pb-[env(safe-area-inset-bottom)] [&_button]:min-h-11 [&_input]:text-base [&_textarea]:text-base' : 'min-h-full'} bg-[#f6f4ef] text-[#0b0b0f]`}>
+      <header className={`sticky top-0 z-30 flex shrink-0 items-center justify-between border-b border-black/5 bg-white/80 backdrop-blur ${mobile ? 'h-14 px-3' : 'h-16 px-6'}`}>
         <div className="flex min-w-0 items-center gap-3">
-          <button type="button" onClick={() => navigate('/')} className="rounded-full p-2 text-black/55 hover:bg-black/5" aria-label="返回首页">
+          <button type="button" onClick={() => navigate(mobile ? '/m' : '/')} className="grid h-11 w-11 place-items-center rounded-full text-black/55 hover:bg-black/5" aria-label="返回首页">
             <ArrowLeft className="h-4 w-4" />
           </button>
           <div className="flex items-center gap-2">
@@ -181,15 +184,19 @@ export function Wiki() {
           <span className="hidden rounded-full bg-black/[0.05] px-2.5 py-1 text-[11px] text-black/50 sm:inline">{info.source_count} 个来源 · {formatBytes(info.total_size)}</span>
         </div>
         <div className="flex items-center gap-2">
-          <button type="button" onClick={() => setSettingsOpen(true)} className="rounded-full p-2 text-black/55 hover:bg-black/5" aria-label="Wiki 设置">
+          {mobile ? <AiActivityDock compact /> : null}
+          <button type="button" onClick={() => setSettingsOpen(true)} className="grid h-11 w-11 place-items-center rounded-full text-black/55 hover:bg-black/5" aria-label="Wiki 设置">
             <Settings2 className="h-4 w-4" />
           </button>
-          <UserMenu iconClassName="w-5 h-5" />
+          <div className={mobile ? '[&_button>span]:hidden [&_button]:h-11 [&_button]:w-11 [&_button]:justify-center [&_button]:p-0' : ''}><UserMenu iconClassName="w-5 h-5" /></div>
         </div>
       </header>
 
-      <div className="hidden h-[calc(100vh-64px)] grid-cols-[280px_minmax(0,1fr)_320px] gap-px bg-black/[0.06] md:grid">
-        <aside className="flex min-h-0 flex-col bg-[#fbfaf7]">
+      {mobile ? <nav className="grid shrink-0 grid-cols-3 border-b border-black/10 bg-white px-3" aria-label="Wiki 导航">
+        {([{ id: 'wiki', label: '知识文档' }, { id: 'raw', label: '原始来源' }, { id: 'activity', label: '维护与版本' }] as const).map((tab) => <button key={tab.id} type="button" aria-pressed={tab.id === 'activity' ? mobilePanel === 'activity' : mobilePanel !== 'activity' && view === tab.id} onClick={() => { if (tab.id === 'activity') setMobilePanel('activity'); else { setView(tab.id); setMobilePanel('files'); } }} className={`h-11 border-b-2 text-sm font-medium ${tab.id === 'activity' ? (mobilePanel === 'activity' ? 'border-black text-black' : 'border-transparent text-black/45') : mobilePanel !== 'activity' && view === tab.id ? 'border-black text-black' : 'border-transparent text-black/45'}`}>{tab.label}</button>)}
+      </nav> : null}
+      <div className={mobile ? 'flex min-h-0 flex-1 flex-col' : 'grid h-[calc(100vh-64px)] grid-cols-[280px_minmax(0,1fr)_320px] gap-px bg-black/[0.06]'}>
+        <aside className={`${mobile ? (mobilePanel === 'files' ? 'flex flex-1' : 'hidden') : 'flex'} min-h-0 flex-col bg-[#fbfaf7]`}>
           <div className="border-b border-black/[0.06] p-4">
             <button type="button" onClick={() => uploadRef.current?.click()} disabled={uploading} className="flex h-10 w-full items-center justify-center gap-2 rounded-full bg-black text-sm font-medium text-white hover:bg-black/85 disabled:opacity-50">
               {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
@@ -198,7 +205,7 @@ export function Wiki() {
             <input ref={uploadRef} type="file" multiple accept={WIKI_SOURCE_ACCEPT} className="hidden" onChange={(event) => void upload(event)} />
             <p className="mt-2 text-center text-[11px] leading-4 text-black/40">Markdown / Office / PDF / 文本 / 图片 · 单文件 20 MB · 总容量 500 MB</p>
           </div>
-          <div className="p-3">
+          <div className={mobile ? 'hidden' : 'p-3'}>
             <div className="grid grid-cols-2 rounded-full bg-black/[0.05] p-1 text-xs">
               <button type="button" onClick={() => setView('raw')} className={`rounded-full px-3 py-2 ${view === 'raw' ? 'bg-white font-medium shadow-sm' : 'text-black/50'}`}>Raw</button>
               <button type="button" onClick={() => setView('wiki')} className={`rounded-full px-3 py-2 ${view === 'wiki' ? 'bg-white font-medium shadow-sm' : 'text-black/50'}`}>Wiki</button>
@@ -210,16 +217,16 @@ export function Wiki() {
                 {sources.map((source) => (
                   <div key={source.id} className={`group flex items-start gap-2 rounded-xl px-2.5 py-2.5 ${selectedPath === `raw/${source.path}` ? 'bg-black text-white' : 'hover:bg-black/[0.035]'}`}>
                     <File className={`mt-0.5 h-4 w-4 shrink-0 ${selectedPath === `raw/${source.path}` ? 'text-white/50' : 'text-black/35'}`} />
-                    <button type="button" onClick={() => setSelectedPath(`raw/${source.path}`)} className="min-w-0 flex-1 text-left">
+                    <button type="button" onClick={() => { setSelectedPath(`raw/${source.path}`); setMobilePanel('read'); }} className="min-w-0 flex-1 text-left">
                       <div className={`truncate text-xs font-medium ${selectedPath === `raw/${source.path}` ? 'text-white' : 'text-black/75'}`}>{source.path}</div>
                       <div className={`mt-1 text-[10px] ${selectedPath === `raw/${source.path}` ? 'text-white/55' : source.status === 'failed' ? 'text-red-600' : source.status === 'unsupported' ? 'text-amber-600' : 'text-black/35'}`}>
                         {sourceStatus(source.status)} · {formatBytes(source.size)}
                       </div>
                     </button>
-                    <button type="button" onClick={() => setRenameTarget(source)} className={`rounded-full p-1 opacity-0 group-hover:opacity-100 ${selectedPath === `raw/${source.path}` ? 'text-white/45 hover:bg-white/10 hover:text-white' : 'text-black/25 hover:bg-black/5 hover:text-black'}`} aria-label={`重命名 ${source.path}`}>
+                    <button type="button" onClick={() => setRenameTarget(source)} className={`${mobile ? 'grid h-11 w-11 shrink-0 place-items-center rounded-full' : 'rounded-full p-1 opacity-0 group-hover:opacity-100'} ${selectedPath === `raw/${source.path}` ? 'text-white/45 hover:bg-white/10 hover:text-white' : 'text-black/25 hover:bg-black/5 hover:text-black'}`} aria-label={`重命名 ${source.path}`}>
                       <MoreHorizontal className="h-3.5 w-3.5" />
                     </button>
-                    <button type="button" onClick={() => setDeleteTarget(source)} className={`rounded-full p-1 opacity-0 group-hover:opacity-100 ${selectedPath === `raw/${source.path}` ? 'text-white/45 hover:bg-white/10 hover:text-white' : 'text-black/25 hover:bg-red-50 hover:text-red-600'}`} aria-label={`删除 ${source.path}`}>
+                    <button type="button" onClick={() => setDeleteTarget(source)} className={`${mobile ? 'grid h-11 w-11 shrink-0 place-items-center rounded-full' : 'rounded-full p-1 opacity-0 group-hover:opacity-100'} ${selectedPath === `raw/${source.path}` ? 'text-white/45 hover:bg-white/10 hover:text-white' : 'text-black/25 hover:bg-red-50 hover:text-red-600'}`} aria-label={`删除 ${source.path}`}>
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>
                   </div>
@@ -228,27 +235,29 @@ export function Wiki() {
               </div>
             ) : (
               <div className="space-y-0.5">
-                <div className="mb-2 flex items-center gap-2 px-2 text-[10px] font-medium uppercase tracking-[0.16em] text-black/35"><FolderOpen className="h-3.5 w-3.5" /> compiled wiki</div>
+                <div className="mb-2 flex items-center gap-2 px-2 text-[10px] font-medium uppercase tracking-[0.16em] text-black/35"><FolderOpen className="h-3.5 w-3.5" /> 知识文档</div>
                 {compiledFiles.map((file) => (
-                  <button key={file.path} type="button" onClick={() => setSelectedPath(file.path)} className={`flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-xs transition ${selectedPath === file.path ? 'bg-black text-white' : 'text-black/65 hover:bg-black/[0.04]'}`}>
+                  <button key={file.path} type="button" onClick={() => { setSelectedPath(file.path); setMobilePanel('read'); }} className={`flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-xs transition ${selectedPath === file.path ? 'bg-black text-white' : 'text-black/65 hover:bg-black/[0.04]'}`}>
                     <FileText className="h-3.5 w-3.5 shrink-0 opacity-60" />
                     <span className="truncate" style={{ paddingLeft: `${Math.max(0, file.path.split('/').length - 2) * 8}px` }}>{file.path.replace(/^wiki\//, '')}</span>
                   </button>
                 ))}
+                {!compiledFiles.length ? <EmptyFiles text="添加原始文件后，知识文档将在这里显示" /> : null}
               </div>
             )}
           </div>
         </aside>
 
-        <main className="min-w-0 overflow-y-auto bg-white">
+        <main className={`${mobile && mobilePanel !== 'read' ? 'hidden' : ''} min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain bg-white`}>
           <div className="sticky top-0 z-10 flex h-14 items-center justify-between border-b border-black/[0.06] bg-white/90 px-6 backdrop-blur">
-            <div className="min-w-0">
+            {mobile ? <button type="button" onClick={() => setMobilePanel('files')} className="mr-2 grid h-11 w-11 shrink-0 place-items-center rounded-full hover:bg-black/5" aria-label="返回文件列表"><ArrowLeft className="h-4 w-4" /></button> : null}
+            <div className="min-w-0 flex-1">
               <div className="truncate text-sm font-medium">{selectedFile?.path ?? '选择一个 Wiki 文件'}</div>
               {selectedFile ? <div className="mt-0.5 text-[10px] text-black/35">{formatBytes(selectedFile.size)} · {selectedFile.sha256.slice(0, 10)}</div> : null}
             </div>
-            {selectedFile ? <a href={selectedFile.download_url} className="rounded-full p-2 text-black/45 hover:bg-black/5 hover:text-black" aria-label="下载"><Download className="h-4 w-4" /></a> : null}
+            {selectedFile ? <a href={selectedFile.download_url} className="grid h-11 w-11 shrink-0 place-items-center rounded-full text-black/45 hover:bg-black/5 hover:text-black" aria-label="下载"><Download className="h-4 w-4" /></a> : null}
           </div>
-          <div className="mx-auto max-w-4xl px-10 py-12">
+          <div className={`mx-auto max-w-4xl ${mobile ? 'px-4 py-6 [overflow-wrap:anywhere] [&_table]:block [&_table]:max-w-full [&_table]:overflow-x-auto [&_pre]:overflow-x-auto' : 'px-10 py-12'}`}>
             {previewLoading ? (
               <div className="flex items-center gap-2 text-sm text-black/40"><Loader2 className="h-4 w-4 animate-spin" />正在读取…</div>
             ) : selectedFile && isMarkdownFile(selectedFile.path) ? (
@@ -274,13 +283,13 @@ export function Wiki() {
           </div>
         </main>
 
-        <aside className="min-h-0 overflow-y-auto bg-[#fbfaf7] p-4">
+        <aside className={`${mobile && mobilePanel !== 'activity' ? 'hidden' : ''} min-h-0 flex-1 overflow-y-auto overscroll-contain bg-[#fbfaf7] p-4`}>
           <section className="rounded-2xl border border-black/[0.07] bg-white p-4 shadow-[0_1px_2px_rgba(0,0,0,0.03)]">
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2 text-sm font-semibold"><WandSparkles className="h-4 w-4" /> Maintainer</div>
-              <button type="button" onClick={() => void load(true)} className="rounded-full p-1.5 text-black/35 hover:bg-black/5"><RefreshCw className="h-3.5 w-3.5" /></button>
+              <div className="flex items-center gap-2 text-sm font-semibold"><WandSparkles className="h-4 w-4" /> 内容维护</div>
+              <button type="button" onClick={() => void load(true)} aria-label="刷新 Wiki" className="rounded-full p-1.5 text-black/35 hover:bg-black/5"><RefreshCw className="h-3.5 w-3.5" /></button>
             </div>
-            <textarea value={instruction} onChange={(event) => setInstruction(event.target.value)} placeholder="例如：把部署相关内容单独整理成主题页" className="mt-3 min-h-20 w-full resize-none rounded-xl border border-black/10 bg-[#faf9f6] px-3 py-2 text-xs leading-5 outline-none focus:border-black/25" />
+            <textarea aria-label="维护指令" value={instruction} onChange={(event) => setInstruction(event.target.value)} placeholder="例如：把部署相关内容单独整理成主题页" className="mt-3 min-h-20 w-full resize-none rounded-xl border border-black/10 bg-[#faf9f6] px-3 py-2 text-xs leading-5 outline-none focus:border-black/25" />
             <button type="button" disabled={!instruction.trim() || maintaining} onClick={() => void runMaintenance()} className="mt-2 h-9 w-full rounded-full bg-black text-xs font-medium text-white disabled:opacity-40">{maintaining ? '提交中…' : '开始维护'}</button>
           </section>
 
@@ -292,7 +301,7 @@ export function Wiki() {
           </RightSection>
 
           <RightSection title="质量检查" icon={<ShieldCheck className="h-4 w-4" />}>
-            <button type="button" onClick={() => void runLint()} disabled={linting} className="h-9 w-full rounded-full border border-black/10 bg-white text-xs font-medium hover:bg-black/[0.03] disabled:opacity-50">{linting ? '检查中…' : '运行 lint'}</button>
+            <button type="button" onClick={() => void runLint()} disabled={linting} className="h-9 w-full rounded-full border border-black/10 bg-white text-xs font-medium hover:bg-black/[0.03] disabled:opacity-50">{linting ? '检查中…' : '检查 Wiki'}</button>
             {lint ? <div className={`mt-3 rounded-xl p-3 text-xs ${lint.ok ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-800'}`}>{lint.ok ? '结构与完整性检查通过' : `${lint.issues.length} 项需要处理`}</div> : null}
           </RightSection>
 
@@ -309,10 +318,6 @@ export function Wiki() {
         </aside>
       </div>
 
-      <div className="grid min-h-[calc(100vh-64px)] place-items-center px-8 text-center md:hidden">
-        <div><BookOpen className="mx-auto h-8 w-8 text-black/25" /><h2 className="mt-4 font-semibold">Wiki 管理目前仅支持桌面端</h2><p className="mt-2 text-sm leading-6 text-black/45">手机运行仍会遵守 Wiki 授权与冻结规则。</p></div>
-      </div>
-
       <WikiSettingsDialog open={settingsOpen} info={info} onClose={() => setSettingsOpen(false)} onSaved={async () => { setSettingsOpen(false); await load(true); }} />
       <RenameSourceDialog source={renameTarget} onClose={() => setRenameTarget(null)} onSaved={async () => { setRenameTarget(null); await load(true); }} />
       <ConfirmDialog open={deleteTarget !== null} onClose={() => setDeleteTarget(null)} title="删除原始文件？" description="Maintainer 会生成新版本并移除对应内容；历史版本仍可恢复。" confirmLabel="删除" tone="danger" onConfirm={async () => { if (!deleteTarget) return; try { await api.deleteWikiSource(deleteTarget.id); setDeleteTarget(null); await load(true); } catch (error) { showCaughtError(error, '删除 Wiki 文件失败', '删除失败'); } }} />
@@ -327,14 +332,14 @@ function WikiSettingsDialog({ open, info, onClose, onSaved }: { open: boolean; i
   const [schema, setSchema] = useState(info.schema);
   const [busy, setBusy] = useState(false);
   useEffect(() => { if (open) { setPurpose(info.purpose); setSchema(info.schema); } }, [info.purpose, info.schema, open]);
-  return <AppDialog open={open} onClose={onClose} title="Wiki 说明" description="Maintainer 会以这些约束组织长期内容。" footer={<><button type="button" onClick={onClose} className="rounded-full border border-black/10 px-4 py-2 text-sm">取消</button><button type="button" disabled={busy || !purpose.trim() || !schema.trim()} onClick={() => void (async () => { setBusy(true); try { await api.updateWiki({ purpose, schema }); await onSaved(); } catch (error) { showCaughtError(error, '保存 Wiki 设置失败', '保存失败'); } finally { setBusy(false); } })()} className="rounded-full bg-black px-4 py-2 text-sm font-medium text-white disabled:opacity-40">{busy ? '保存中…' : '保存'}</button></>}><label className="block text-xs font-medium text-black/55">用途<textarea value={purpose} onChange={(event) => setPurpose(event.target.value)} className="mt-2 min-h-24 w-full rounded-xl border border-black/10 px-3 py-2 text-sm leading-6 outline-none focus:border-black/25" /></label><label className="mt-4 block text-xs font-medium text-black/55">结构说明<textarea value={schema} onChange={(event) => setSchema(event.target.value)} className="mt-2 min-h-24 w-full rounded-xl border border-black/10 px-3 py-2 text-sm leading-6 outline-none focus:border-black/25" /></label></AppDialog>;
+  return <AppDialog open={open} onClose={onClose} title="Wiki 说明" widthClassName="max-w-md max-sm:[&_textarea]:text-base" description="Maintainer 会以这些约束组织长期内容。" footer={<><button type="button" onClick={onClose} className="rounded-full border border-black/10 px-4 py-2 text-sm">取消</button><button type="button" disabled={busy || !purpose.trim() || !schema.trim()} onClick={() => void (async () => { setBusy(true); try { await api.updateWiki({ purpose, schema }); await onSaved(); } catch (error) { showCaughtError(error, '保存 Wiki 设置失败', '保存失败'); } finally { setBusy(false); } })()} className="rounded-full bg-black px-4 py-2 text-sm font-medium text-white disabled:opacity-40">{busy ? '保存中…' : '保存'}</button></>}><label className="block text-xs font-medium text-black/55">用途<textarea value={purpose} onChange={(event) => setPurpose(event.target.value)} className="mt-2 min-h-24 w-full rounded-xl border border-black/10 px-3 py-2 text-sm leading-6 outline-none focus:border-black/25" /></label><label className="mt-4 block text-xs font-medium text-black/55">结构说明<textarea value={schema} onChange={(event) => setSchema(event.target.value)} className="mt-2 min-h-24 w-full rounded-xl border border-black/10 px-3 py-2 text-sm leading-6 outline-none focus:border-black/25" /></label></AppDialog>;
 }
 
 function RenameSourceDialog({ source, onClose, onSaved }: { source: WikiSource | null; onClose(): void; onSaved(): Promise<void> }) {
   const [path, setPath] = useState('');
   const [busy, setBusy] = useState(false);
   useEffect(() => { setPath(source?.path ?? ''); }, [source]);
-  return <AppDialog open={source !== null} onClose={onClose} title="重命名原始文件" description="保留 POSIX 相对路径，例如 handbook/policy.pdf。" footer={<><button type="button" onClick={onClose} className="rounded-full border border-black/10 px-4 py-2 text-sm">取消</button><button type="button" disabled={busy || !path.trim() || path === source?.path} onClick={() => void (async () => { if (!source) return; setBusy(true); try { await api.renameWikiSource(source.id, path.trim()); await onSaved(); } catch (error) { showCaughtError(error, '重命名 Wiki 文件失败', '重命名失败'); } finally { setBusy(false); } })()} className="rounded-full bg-black px-4 py-2 text-sm font-medium text-white disabled:opacity-40">{busy ? '保存中…' : '保存'}</button></>}><input value={path} onChange={(event) => setPath(event.target.value)} className="h-11 w-full rounded-xl border border-black/10 px-3 text-sm outline-none focus:border-black/25" autoFocus /></AppDialog>;
+  return <AppDialog open={source !== null} onClose={onClose} title="重命名原始文件" widthClassName="max-w-md max-sm:[&_input]:text-base" description="保留 POSIX 相对路径，例如 handbook/policy.pdf。" footer={<><button type="button" onClick={onClose} className="rounded-full border border-black/10 px-4 py-2 text-sm">取消</button><button type="button" disabled={busy || !path.trim() || path === source?.path} onClick={() => void (async () => { if (!source) return; setBusy(true); try { await api.renameWikiSource(source.id, path.trim()); await onSaved(); } catch (error) { showCaughtError(error, '重命名 Wiki 文件失败', '重命名失败'); } finally { setBusy(false); } })()} className="rounded-full bg-black px-4 py-2 text-sm font-medium text-white disabled:opacity-40">{busy ? '保存中…' : '保存'}</button></>}><input value={path} onChange={(event) => setPath(event.target.value)} className="h-11 w-full rounded-xl border border-black/10 px-3 text-sm outline-none focus:border-black/25" autoFocus /></AppDialog>;
 }
 
 function RightSection({ title, icon, children }: { title: string; icon: React.ReactNode; children: React.ReactNode }) {
@@ -343,7 +348,7 @@ function RightSection({ title, icon, children }: { title: string; icon: React.Re
 
 function OperationRow({ operation, onRetry, onCancel }: { operation: WikiOperation; onRetry(): Promise<void>; onCancel(): Promise<void> }) {
   const active = operation.status === 'pending' || operation.status === 'running';
-  return <div className="rounded-xl border border-black/[0.06] bg-white p-3"><div className="flex items-center gap-2">{active ? <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-500" /> : operation.status === 'success' ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" /> : <Clock3 className="h-3.5 w-3.5 text-amber-600" />}<span className="flex-1 text-xs font-medium">{operationLabel(operation.kind)}</span><span className="text-[10px] text-black/35">{operationStatus(operation.status)}</span></div>{operation.error ? <div className="mt-2 text-[10px] leading-4 text-red-600">{operation.error}</div> : null}<div className="mt-2 flex gap-3">{operation.status === 'failed' ? <button type="button" onClick={() => void onRetry()} className="text-[10px] font-medium text-black underline underline-offset-2">重试</button> : null}{active ? <button type="button" onClick={() => void onCancel()} className="text-[10px] font-medium text-red-600 underline underline-offset-2">取消</button> : null}</div></div>;
+  return <div className="rounded-xl border border-black/[0.06] bg-white p-3"><div className="flex items-center gap-2">{active ? <AiActivityIndicator status={operation.status === 'pending' ? 'queued' : 'working'} compact /> : operation.status === 'success' ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" /> : <Clock3 className="h-3.5 w-3.5 text-amber-600" />}<span className="min-w-0 flex-1 text-xs font-medium">{operationLabel(operation.kind)}</span><span className="text-[10px] text-black/35">{operationStatus(operation.status)}</span></div>{operation.error ? <div className="mt-2 break-words text-xs leading-5 text-red-600">{operation.error}</div> : null}<div className="mt-2 flex gap-3">{operation.status === 'failed' ? <button type="button" onClick={() => void onRetry()} className="min-h-11 text-xs font-medium text-black underline underline-offset-2">重试</button> : null}{active ? <button type="button" onClick={() => void onCancel()} className="min-h-11 text-xs font-medium text-red-600 underline underline-offset-2">取消</button> : null}</div></div>;
 }
 
 function EmptyFiles({ text }: { text: string }) { return <div className="py-12 text-center text-xs text-black/35">{text}</div>; }

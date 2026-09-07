@@ -882,6 +882,80 @@ def test_prompt_assistant_returns_generate_output_contract(auth_client, configur
     assert "当用户明确要求图片、代码包、HTML 文件" in runtime.last_prompt
 
 
+def test_prompt_assistant_preserves_fixed_business_gate_contract(auth_client, configure_codex):
+    configure_codex()
+    app_id = _create_app(auth_client)
+    graph = _prompt_graph()
+    graph["nodes"][1]["output_contract"] = {
+        "type": "json",
+        "success_field": "status",
+        "success_value": "passed",
+        "json_schema": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {"status": {"type": "string", "enum": ["passed", "failed"]}},
+            "required": ["status"],
+        },
+    }
+    runtime = PromptAssistantRuntime(
+        text=_assistant_result(
+            "更新后的门禁提示词。",
+            {
+                "type": "json",
+                "json_schema": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {"status": {"type": "string"}},
+                    "required": ["status"],
+                },
+            },
+        )
+    )
+    set_runtime_override(runtime)
+    try:
+        response = auth_client.post(
+            "/api/prompt-assistant/generate",
+            json=_assistant_payload(app_id=app_id, graph=graph, user_request="只优化提示词"),
+        )
+    finally:
+        set_runtime_override(MockRuntime())
+
+    assert response.status_code == 200, response.text
+    assert response.json()["prompt"] == "更新后的门禁提示词。"
+    assert response.json()["output_contract"] is None
+    assert runtime.last_prompt is not None
+    assert "业务门禁属于固定控制流契约" not in runtime.last_prompt
+    assert "success_field" not in runtime.last_prompt
+    assert "success_value" not in runtime.last_prompt
+
+
+def test_prompt_assistant_rejects_internal_recovery_protocol_from_visible_prompt(
+    auth_client,
+    configure_codex,
+):
+    configure_codex()
+    app_id = _create_app(auth_client)
+    runtime = PromptAssistantRuntime(
+        texts=[
+            _assistant_result("读取 success_field 并触发自动修复机制。"),
+            _assistant_result("检查项目实际结果并生成清晰结论。"),
+        ]
+    )
+    set_runtime_override(runtime)
+    try:
+        response = auth_client.post(
+            "/api/prompt-assistant/generate",
+            json=_assistant_payload(app_id=app_id, user_request="优化提示词"),
+        )
+    finally:
+        set_runtime_override(MockRuntime())
+
+    assert response.status_code == 200, response.text
+    assert response.json()["prompt"] == "检查项目实际结果并生成清晰结论。"
+    assert runtime.call_count == 2
+    assert "用户可见提示词包含内部字段或协议" in runtime.prompts[1]
+
+
 def test_prompt_assistant_accepts_zip_output_contract(auth_client, configure_codex):
     configure_codex()
     app_id = _create_app(auth_client)

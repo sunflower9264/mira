@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowLeft } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { AiActivityDock } from '../common/AiActivityDock';
 import { AppDialog } from '../common/AppDialog';
 import { EditIcon, PlusIcon, RefreshIcon, SettingsIcon } from '../common/Icons';
 import { useSettingsStore } from '../../stores/useSettingsStore';
@@ -38,6 +40,7 @@ const SETTINGS_DARK_SCROLLBAR_CLASSES =
   '[scrollbar-width:thin] [scrollbar-color:rgba(255,255,255,0.24)_transparent] [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-button]:hidden [&::-webkit-scrollbar-button]:h-0 [&::-webkit-scrollbar-button]:w-0 [&::-webkit-scrollbar-corner]:bg-transparent [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-white/25 [&::-webkit-resizer]:bg-transparent';
 
 interface SettingsDialogProps {
+  mobile?: boolean;
   open: boolean;
   onClose(): void;
 }
@@ -140,7 +143,7 @@ function getErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : '操作失败，请稍后重试';
 }
 
-export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
+export function SettingsDialog({ open, onClose, mobile = false }: SettingsDialogProps) {
   const loadSettings = useSettingsStore((s) => s.load);
   const updateSkillEnabled = useSettingsStore((s) => s.updateSkillEnabled);
   const updateSkillPlanningEnabled = useSettingsStore((s) => s.updateSkillPlanningEnabled);
@@ -621,19 +624,19 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                   <div className="min-w-0 flex-1">
                     <div className="flex min-w-0 flex-wrap items-center gap-2">
                       <span className="truncate text-sm font-semibold text-black">{prompt.name}</span>
-                      <span className="rounded-full bg-black/[0.04] px-2.5 py-1 font-mono text-[11px] text-black/55">
+                      <span className="max-w-full break-all rounded-full bg-black/[0.04] px-2.5 py-1 font-mono text-[11px] text-black/55">
                         {prompt.key}
                       </span>
                     </div>
                     <p className="mt-2 text-xs leading-5 text-black/55">{prompt.description}</p>
                     <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-black/55">
-                      <span className="rounded-full border border-black/10 bg-black/[0.02] px-2 py-1 font-mono">{variables}</span>
+                      <span className="max-w-full break-all rounded-full border border-black/10 bg-black/[0.02] px-2 py-1 font-mono">{variables}</span>
                       <span className="rounded-full border border-black/10 bg-black/[0.02] px-2 py-1">
                         {formatDate(prompt.updated_at)}
                       </span>
                     </div>
                   </div>
-                  <div className="flex shrink-0 gap-2">
+                  <div className="flex shrink-0 flex-wrap gap-2">
                     <button
                       type="button"
                       onClick={() => openPromptEditor(prompt)}
@@ -669,7 +672,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
           <div className="text-[11px] font-medium uppercase tracking-wider text-black/45">Codex 设置</div>
           <h4 className="mt-1 text-xl font-semibold tracking-tight text-black">Codex App Server</h4>
         </div>
-        <div className="grid gap-3 sm:grid-cols-3">
+        <div className="grid grid-cols-2 gap-3 [&>div:first-child]:col-span-2 sm:grid-cols-3 sm:[&>div:first-child]:col-span-1">
           {(() => {
             const status = codexStatus;
             const available = !!status && status.installed && status.runnable === true;
@@ -898,7 +901,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     const isEditing = mode === 'editing';
     return (
       <section key={server.id} className={`rounded-2xl border p-4 ${isEditing ? 'border-black/10 bg-black/[0.02]' : 'border-amber-200 bg-amber-50/40'}`}>
-        <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex flex-col items-stretch justify-between gap-3 sm:flex-row sm:flex-wrap sm:items-start">
           <div className="min-w-0 flex-1">
             <div className="flex min-w-0 flex-wrap items-center gap-2">
               <span className="truncate text-sm font-semibold text-black">
@@ -910,7 +913,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               </span>
             </div>
           </div>
-          <div className="flex shrink-0 gap-2">
+          <div className="flex shrink-0 flex-wrap gap-2">
             <button
               type="button"
               onClick={() => void (isEditing ? saveEditingMcpServer(server) : savePendingMcpServer(server))}
@@ -1048,7 +1051,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     if (!draft) return null;
     return (
       <div className="space-y-5">
-        <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex flex-col items-stretch justify-between gap-3 sm:flex-row sm:flex-wrap sm:items-start">
           <div>
             <div className="text-[11px] font-medium uppercase tracking-wider text-black/45">Global MCP</div>
             <h4 className="mt-1 text-xl font-semibold tracking-tight text-black">HTTP MCP Server</h4>
@@ -1069,7 +1072,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
             if (editingServer) return renderMcpFormCard(editingServer, 'editing');
             return (
               <section key={server.id} className="rounded-2xl border border-black/10 bg-white p-4">
-                <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="flex flex-col items-stretch justify-between gap-3 sm:flex-row sm:flex-wrap sm:items-start">
                   <div className="min-w-0 flex-1">
                     <div className="flex min-w-0 flex-wrap items-center gap-2">
                       <span className="truncate text-sm font-semibold text-black">{server.name}</span>
@@ -1087,7 +1090,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                       {server.env_var_names.length > 0 && <span className="rounded-full border border-black/10 bg-black/[0.02] px-2 py-1">{server.env_var_names.length} 环境变量</span>}
                     </div>
                   </div>
-                  <div className="flex shrink-0 gap-2">
+                  <div className="flex shrink-0 flex-wrap gap-2">
                     <button
                       type="button"
                       onClick={() => startEditingMcpServer(server)}
@@ -1150,53 +1153,45 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     : '无变量';
   const savingEditingPrompt = editingPrompt ? savingPromptKey === editingPrompt.key : false;
 
+  const closeDisabled = saving || isSavingConfig || isSavingInstructions || savingPromptKey !== null;
+  const settingsContent = (
+    <div className={`flex min-h-0 overflow-hidden ${mobile ? 'flex-1 flex-col' : 'h-[680px] max-h-[calc(100dvh-180px)] flex-col rounded-2xl border border-black/10 sm:flex-row'}`}>
+      <nav className={`shrink-0 border-black/10 bg-black/[0.02] ${mobile ? 'border-b px-3' : 'border-b px-3 sm:w-52 sm:border-b-0 sm:border-r sm:p-3'}`} aria-label="设置分类">
+        <div className={`flex gap-1 overflow-x-auto ${mobile ? '' : 'sm:grid sm:gap-2'}`}>
+          {categories.map((category) => {
+            const active = category.id === activeCategory;
+            return <button key={category.id} type="button" aria-pressed={active} onClick={() => { setActiveCategory(category.id); setError(''); }} className={`shrink-0 border-b-2 px-3 py-3 text-left transition ${mobile ? '' : 'sm:rounded-xl sm:border'} ${active ? 'border-black bg-white' : 'border-transparent text-black/50 hover:bg-white'}`}>
+              <span className="block whitespace-nowrap text-sm font-semibold">{category.label}</span>
+              {!mobile ? <span className="mt-0.5 hidden text-xs text-black/50 sm:block">{category.description}</span> : null}
+            </button>;
+          })}
+        </div>
+      </nav>
+      <div key={activeCategory} className={`min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain p-4 [overflow-wrap:anywhere] [&_input]:min-w-0 [&_textarea]:min-w-0 max-sm:[&_input]:text-base max-sm:[&_textarea]:text-base max-sm:[&_button]:min-h-11 ${SETTINGS_SCROLLBAR_CLASSES}`}>
+        {error ? <div className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm leading-5 text-amber-800">{error}</div> : null}
+        {renderContent()}
+      </div>
+    </div>
+  );
+
   return (
     <>
-      <AppDialog
-        open={open}
-        onClose={saving || isSavingInstructions || savingPromptKey !== null ? () => undefined : onClose}
-        title="设置"
-        widthClassName="max-w-5xl"
-      >
-        <div className="flex h-[680px] max-h-[calc(100vh-220px)] min-h-[420px] overflow-hidden rounded-2xl border border-black/10">
-          <nav className="w-60 shrink-0 border-r border-black/10 bg-black/[0.02] p-3" aria-label="设置分类">
-            <div className="grid gap-2">
-              {categories.map((category) => {
-                const active = category.id === activeCategory;
-                return (
-                  <button
-                    key={category.id}
-                    type="button"
-                    onClick={() => {
-                      setActiveCategory(category.id);
-                      setError('');
-                    }}
-                    className={`rounded-2xl border px-3 py-3 text-left transition ${active ? 'border-black bg-white shadow-card' : 'border-transparent hover:border-black/10 hover:bg-white'}`}
-                  >
-                    <span className="block text-sm font-semibold text-black">{category.label}</span>
-                    <span className="mt-0.5 block text-xs text-black/50">{category.description}</span>
-                  </button>
-                );
-              })}
-            </div>
-          </nav>
-          <div className={`min-w-0 flex-1 overflow-y-auto p-5 ${SETTINGS_SCROLLBAR_CLASSES}`}>
-            {error && (
-              <div className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm leading-5 text-amber-800">
-                {error}
-              </div>
-            )}
-            {renderContent()}
-          </div>
-        </div>
-      </AppDialog>
+      {mobile ? (open ? <div className="flex h-dvh flex-col overflow-hidden bg-white pb-[env(safe-area-inset-bottom)]">
+        <header className="flex h-14 shrink-0 items-center gap-2 border-b border-black/10 px-3">
+          <button type="button" onClick={onClose} disabled={closeDisabled} aria-label="返回首页" className="grid h-11 w-11 place-items-center rounded-full hover:bg-black/5 disabled:opacity-40"><ArrowLeft className="h-5 w-5" /></button>
+          <h1 className="text-base font-semibold">管理设置</h1>
+          <div className="ml-auto"><AiActivityDock compact /></div>
+          <span className="rounded-full bg-black/5 px-2 py-1 text-xs text-black/50">管理员</span>
+        </header>
+        {settingsContent}
+      </div> : null) : <AppDialog open={open} onClose={closeDisabled ? () => undefined : onClose} title="设置" widthClassName="max-w-5xl max-sm:!p-4">{settingsContent}</AppDialog>}
 
       <AppDialog
         open={!!editingPrompt}
         onClose={savingPromptKey !== null ? () => undefined : closePromptEditor}
         title={editingPrompt ? `编辑提示词 · ${editingPrompt.name}` : '编辑提示词'}
         description={editingPrompt?.key}
-        widthClassName="max-w-4xl"
+        widthClassName="max-w-4xl max-sm:!p-4 [&_textarea]:min-w-0 max-sm:[&_textarea]:text-base [overflow-wrap:anywhere]"
         footer={
           <>
             <button
@@ -1223,7 +1218,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
         {editingPrompt ? (
           <div className="space-y-3">
             <div className="flex flex-wrap gap-2 text-[11px] text-black/55">
-              <span className="rounded-full border border-black/10 bg-black/[0.02] px-2 py-1 font-mono">{editingPromptVariables}</span>
+              <span className="max-w-full break-all rounded-full border border-black/10 bg-black/[0.02] px-2 py-1 font-mono">{editingPromptVariables}</span>
               <span className="rounded-full border border-black/10 bg-black/[0.02] px-2 py-1">
                 {formatDate(editingPrompt.updated_at)}
               </span>
@@ -1236,7 +1231,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               onChange={(event) => setEditingPromptDraft(event.target.value)}
               disabled={savingPromptKey !== null}
               spellCheck={false}
-              className={`h-[460px] max-h-[calc(100vh-360px)] min-h-[260px] w-full resize-y rounded-xl border border-black/10 bg-[#101113] px-3 py-3 font-mono text-xs leading-5 text-white outline-none transition placeholder:text-white/35 focus:border-black/30 disabled:cursor-wait disabled:opacity-60 ${SETTINGS_DARK_SCROLLBAR_CLASSES}`}
+              className={`h-[460px] max-h-[calc(100vh-360px)] min-h-[160px] w-full resize-y rounded-xl border border-black/10 bg-[#101113] px-3 py-3 font-mono text-xs leading-5 text-white outline-none transition placeholder:text-white/35 focus:border-black/30 disabled:cursor-wait disabled:opacity-60 ${SETTINGS_DARK_SCROLLBAR_CLASSES}`}
               placeholder="Prompt content"
             />
           </div>
@@ -1258,7 +1253,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               {skillMarkdownError}
             </div>
           ) : skillMarkdown?.content.trim() ? (
-            <div className="prose prose-sm max-w-none text-sm leading-6 text-black/75 [&_h1]:mt-0 [&_h1]:text-xl [&_h1]:font-semibold [&_h2]:mt-5 [&_h2]:text-base [&_h2]:font-semibold [&_h3]:mt-4 [&_h3]:text-sm [&_h3]:font-semibold [&_p]:my-2 [&_ul]:my-2 [&_ol]:my-2 [&_li]:my-0.5 [&_blockquote]:my-2 [&_blockquote]:border-l-2 [&_blockquote]:border-black/15 [&_blockquote]:pl-3 [&_blockquote]:text-black/60 [&_code]:rounded [&_code]:bg-black/[0.06] [&_code]:px-1 [&_code]:py-[1px] [&_code]:text-[12px] [&_pre]:my-2 [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_pre]:whitespace-pre-wrap [&_pre]:break-words [&_pre]:rounded-xl [&_pre]:bg-black/[0.04] [&_pre]:p-3 [&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_table]:my-2 [&_table]:w-full [&_table]:border-collapse [&_th]:border [&_th]:border-black/10 [&_th]:px-2 [&_th]:py-1 [&_th]:text-left [&_td]:border [&_td]:border-black/10 [&_td]:px-2 [&_td]:py-1 [&_hr]:my-3 [&_hr]:border-black/10">
+            <div className="prose prose-sm max-w-none text-sm leading-6 text-black/75 [&_h1]:mt-0 [&_h1]:text-xl [&_h1]:font-semibold [&_h2]:mt-5 [&_h2]:text-base [&_h2]:font-semibold [&_h3]:mt-4 [&_h3]:text-sm [&_h3]:font-semibold [&_p]:my-2 [&_ul]:my-2 [&_ol]:my-2 [&_li]:my-0.5 [&_blockquote]:my-2 [&_blockquote]:border-l-2 [&_blockquote]:border-black/15 [&_blockquote]:pl-3 [&_blockquote]:text-black/60 [&_code]:rounded [&_code]:bg-black/[0.06] [&_code]:px-1 [&_code]:py-[1px] [&_code]:text-[12px] [&_pre]:my-2 [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_pre]:whitespace-pre-wrap [&_pre]:break-words [&_pre]:rounded-xl [&_pre]:bg-black/[0.04] [&_pre]:p-3 [&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_table]:block [&_table]:max-w-full [&_table]:overflow-x-auto [&_table]:my-2 [&_table]:w-full [&_table]:border-collapse [&_th]:border [&_th]:border-black/10 [&_th]:px-2 [&_th]:py-1 [&_th]:text-left [&_td]:border [&_td]:border-black/10 [&_td]:px-2 [&_td]:py-1 [&_hr]:my-3 [&_hr]:border-black/10">
               <ReactMarkdown remarkPlugins={[remarkGfm]}>{skillMarkdown.content}</ReactMarkdown>
             </div>
           ) : (

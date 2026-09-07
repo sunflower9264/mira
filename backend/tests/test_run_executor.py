@@ -2840,6 +2840,116 @@ def test_executor_validates_generate_json_output_contract(auth_client, configure
     assert "输出契约" in step["input"]["prompt"]
 
 
+def test_executor_recovers_json_business_gate_failure_once_in_same_session(
+    auth_client,
+    configure_codex,
+):
+    configure_codex()
+    runtime = SequenceRuntime(
+        [
+            '{"status":"failed","summary":"联调失败"}',
+            '{"status":"passed","summary":"修复后联调通过"}',
+        ]
+    )
+    set_runtime_override(runtime)
+    try:
+        gate = _contract_node(
+            "n_gate",
+            prompt="验证项目联调结果",
+            output_contract={
+                "type": "json",
+                "success_field": "status",
+                "success_value": "passed",
+                "json_schema": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "status": {"type": "string", "enum": ["passed", "failed"]},
+                        "summary": {"type": "string"},
+                    },
+                    "required": ["status", "summary"],
+                },
+            },
+        )
+        graph = {
+            "nodes": [gate, _output_node("n_out", source="n_gate")],
+            "execution_edges": [{"id": "e1", "source": "n_gate", "target": "n_out"}],
+        }
+        app_id = _build_app(auth_client, graph=graph)
+        run = auth_client.post("/api/runs", json={"app_id": app_id, "inputs": {}}).json()
+        final = _wait_for_terminal(auth_client, run["run_id"])
+    finally:
+        set_runtime_override(MockRuntime())
+
+    assert final["status"] == "success", final
+    by_id = {step["node_id"]: step for step in final["steps"]}
+    assert by_id["n_gate"]["status"] == "success"
+    assert by_id["n_gate"]["output"] == {"status": "passed", "summary": "修复后联调通过"}
+    assert by_id["n_out"]["status"] == "success"
+    assert len(runtime.prompts) == 2
+    assert runtime.session_ids == [None, "sequence_session_1"]
+    recovery_prompt = runtime.prompts[1]
+    assert "联调失败" in recovery_prompt
+    assert "检查刚才的执行记录、项目日志、测试报告和当前工作区" in recovery_prompt
+    assert "修复根因后重新执行原验收" in recovery_prompt
+    assert "验证项目联调结果" not in recovery_prompt
+    assert "success_field" not in recovery_prompt
+    assert "success_value" not in recovery_prompt
+    assert "JSON Schema" not in recovery_prompt
+    assert any("开始根因恢复 1/1" in log["text"] for log in by_id["n_gate"]["logs"])
+    assert any("根因恢复后复验通过" in log["text"] for log in by_id["n_gate"]["logs"])
+
+
+def test_executor_fails_run_when_business_gate_recovery_still_fails(
+    auth_client,
+    configure_codex,
+):
+    configure_codex()
+    runtime = SequenceRuntime(
+        [
+            '{"status":"failed","summary":"首次联调失败"}',
+            '{"status":"failed","summary":"修复后仍失败"}',
+        ]
+    )
+    set_runtime_override(runtime)
+    try:
+        gate = _contract_node(
+            "n_gate",
+            prompt="验证项目联调结果",
+            output_contract={
+                "type": "json",
+                "success_field": "status",
+                "success_value": "passed",
+                "json_schema": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "status": {"type": "string", "enum": ["passed", "failed"]},
+                        "summary": {"type": "string"},
+                    },
+                    "required": ["status", "summary"],
+                },
+            },
+        )
+        graph = {
+            "nodes": [gate, _output_node("n_out", source="n_gate")],
+            "execution_edges": [{"id": "e1", "source": "n_gate", "target": "n_out"}],
+        }
+        app_id = _build_app(auth_client, graph=graph)
+        run = auth_client.post("/api/runs", json={"app_id": app_id, "inputs": {}}).json()
+        final = _wait_for_terminal(auth_client, run["run_id"])
+    finally:
+        set_runtime_override(MockRuntime())
+
+    assert final["status"] == "failed", final
+    by_id = {step["node_id"]: step for step in final["steps"]}
+    assert by_id["n_gate"]["status"] == "failed"
+    assert by_id["n_gate"]["failure_kind"] == "contract"
+    assert by_id["n_out"]["status"] != "success"
+    assert len(runtime.prompts) == 2
+    assert any("根因恢复后复验仍未通过" in log["text"] for log in by_id["n_gate"]["logs"])
+
+
 def test_executor_keeps_output_contract_out_of_decision_plan(auth_client, configure_codex):
     configure_codex()
     runtime = PlanningCaptureRuntime()

@@ -35,7 +35,7 @@
 
 ## 输出与 Artifact
 
-- `output_contracts.py` 仅允许 generate 配置 `json`、`html`、`artifact`；自由文本不设契约。JSON 使用受限 Draft 2020-12 strict object schema，HTML 通过 `{"html":"..."}` wrapper，artifact 返回 `{"artifacts":[{"path","name"}]}` 并限制在当前 branch workspace。
+- `output_contracts.py` 仅允许 generate 配置 `json`、`html`、`artifact`；自由文本不设契约。JSON 使用受限 Draft 2020-12 strict object schema，并可用 `success_field` / `success_value` 把业务未通过标记为可根因恢复的门禁失败；`node_handlers.py` 在同一 thread/workspace 中只恢复和复验一次，仍失败才形成 contract failure。HTML 通过 `{"html":"..."}` wrapper，artifact 返回 `{"artifacts":[{"path","name"}]}` 并限制在当前 branch workspace。
 - output 节点始终使用 HTML wrapper。契约失败最多进行一次最小修正；普通修正复用当前 thread/workspace，U+FFFD 场景按当前实现重新生成受损内容，不得以删除坏字符代替语义修复。基础设施型 Office 校验不可用不交给 Agent repair。
 - `workflow_data.py` 将成功结果包装为版本化 Envelope。Artifact 提交时复制到 Run 根的 `artifacts/<node>/<artifact>/`、去除写权限，并记录 holder、origin、可选 reused_from、相对路径、size、SHA-256、kind 和 manifest version。
 - Files 以及 Trace 中的 artifact 列表只从成功 artifact-contract Step 的 Envelope 按需组装，不扫描 workspace、不新增 artifact 表。对外只给 hash-bound 签名 URL，不返回内部路径；大小/hash 改变标记 `modified` 且不可下载，Run success 前统一复验。
@@ -47,7 +47,7 @@
 - Skill ZIP 只能有一个 canonical `SKILL.md`，archive MD5 与 root 在安装时复验。`requirements.lock` 优先于同目录 `requirements.txt`；`skill_dependencies.py` 只接受包索引 requirement，不允许 URL/路径/pip 执行选项，并以 `--only-binary=:all:` 下载 wheel、离线安装到 `.deps`。
 - 依赖 builder 使用 runtime 镜像但不挂载 Codex 凭据、workspace、uploads 或 Docker socket；下载阶段可联网，安装阶段禁网。缓存绑定 requirements、policy、Python ABI 和镜像身份，挂载前复验 manifest/tree hash；失败 Skill 禁用。
 - NL compile 以 `nlcompile_sessions` 持久化 plan/wait/refine/apply/cancel：plan 可原生提问，apply 禁止再提问；patch batch 必须在临时 graph 整批模拟、重试与完整校验，失败不返回半应用 graph，成功前使用独立 `nlcompile_prompt_refiner` 整理节点提示词并做 layout。
-- Prompt Assistant 以 `prompt_assistant_generations` 持久化 running/waiting/resume/cancel/active；内存 session 只做当前进程快速等待。页面生成使用 Codex 配置默认模型与推理强度，最多接受一轮 1–3 个问题，用户可见提示词拒绝内部字段或协议。数据库状态是恢复事实来源。
+- Prompt Assistant 以 `prompt_assistant_generations` 持久化 running/waiting/resume/cancel/active；内存 session 只做当前进程快速等待。页面生成使用 Codex 配置默认模型与推理强度，最多接受一轮 1–3 个问题，用户可见提示词拒绝内部字段或协议；已有业务门禁由后端和前端应用结果时静默保留，不把保护规则写进项目提示词。数据库状态是恢复事实来源。
 
 ## 修改与验证
 

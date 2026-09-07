@@ -34,28 +34,26 @@ interface AppLaunchViewProps {
 
 const tokens = {
   compact: {
-    page: 'px-6 pt-8 pb-4',
+    page: 'px-4 pt-5 pb-4',
     grid: 'gap-5',
-    hero: 'gap-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]',
+    hero: 'gap-4',
     cover: 'aspect-video rounded-3xl',
-    coverPlaceholder: 'aspect-video rounded-3xl',
     title: 'text-2xl',
     description: 'text-sm leading-6 line-clamp-2',
     metaText: 'text-xs',
     startButton: 'h-11 px-5 text-sm',
-    footerPad: 'px-4 pb-[31px] pt-2',
+    footerPad: 'px-3 pb-3 pt-2',
   },
   spacious: {
     page: 'px-8 pt-12 pb-4',
     grid: 'gap-8',
     hero: 'gap-8 md:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]',
     cover: 'aspect-video rounded-3xl',
-    coverPlaceholder: 'aspect-video rounded-3xl',
     title: 'text-4xl',
     description: 'text-base leading-7 line-clamp-3',
     metaText: 'text-sm',
     startButton: 'h-12 px-6 text-base',
-    footerPad: 'px-6 pb-[31px] pt-3',
+    footerPad: 'px-6 pb-4 pt-3',
   },
 } as const;
 
@@ -69,13 +67,6 @@ function CoverImage({ src, classes }: { src: string; classes: string }) {
   );
 }
 
-function CoverPlaceholder({ classes }: { classes: string }) {
-  return (
-    <div className={`${classes} w-full border border-dashed border-black/15 bg-black/[0.02] flex items-center justify-center text-xs text-black/40`}>
-      封面占位
-    </div>
-  );
-}
 
 type PromptNode = GenerateNode | ConditionNode | OutputNode;
 
@@ -210,10 +201,8 @@ export function AppLaunchView({ app, onStart, onToolsChange, density = 'compact'
       ].join(' · ');
 
   const renderHero = (
-    <section className={`grid ${t.hero}`}>
-      <div>
-        {coverUrl ? <CoverImage src={coverUrl} classes={t.cover} /> : <CoverPlaceholder classes={t.coverPlaceholder} />}
-      </div>
+    <section className={`grid ${coverUrl ? t.hero : 'gap-4'}`}>
+      {coverUrl ? <CoverImage src={coverUrl} classes={t.cover} /> : null}
       <div className="flex min-w-0 flex-col justify-center">
         <div className="flex flex-wrap items-center gap-2">
           <h2 className={`${t.title} font-semibold tracking-tight text-black`}>{app.name}</h2>
@@ -260,7 +249,7 @@ export function AppLaunchView({ app, onStart, onToolsChange, density = 'compact'
 
   const renderFooter = (
     <div className={`shrink-0 ${t.footerPad}`}>
-      <div className="mx-auto w-full max-w-[560px] px-4">
+      <div className="mx-auto w-full max-w-[560px]">
         {!activeUserInput ? (
           <div className="flex justify-center">
             <button
@@ -291,8 +280,8 @@ export function AppLaunchView({ app, onStart, onToolsChange, density = 'compact'
   );
 
   return (
-    <div className="flex h-full min-h-full flex-col">
-      <div className={`flex-1 overflow-y-auto ${SCROLLBAR_CLASSES}`}>
+    <div className="flex h-full min-h-0 flex-col">
+      <div className={`min-h-0 flex-1 overflow-y-auto ${SCROLLBAR_CLASSES}`}>
         <div className={`${t.page}`}>
           <div className={`mx-auto flex w-full max-w-3xl flex-col ${t.grid}`}>
             {renderHero}

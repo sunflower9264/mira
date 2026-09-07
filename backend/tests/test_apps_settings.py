@@ -909,6 +909,8 @@ def test_patch_app_normalizes_stale_output_contract_fields(auth_client):
                             "type": "artifact",
                             "artifact_kind": "archive",
                             "json_schema": {"type": "object", "additionalProperties": False},
+                            "success_field": "status",
+                            "success_value": "passed",
                         },
                     },
                 ],
@@ -920,6 +922,77 @@ def test_patch_app_normalizes_stale_output_contract_fields(auth_client):
     assert response.status_code == 200, response.text
     node = response.json()["graph"]["nodes"][0]
     assert node["output_contract"] == {"type": "artifact", "artifact_kind": "archive"}
+
+
+def test_patch_app_preserves_json_business_gate_contract(auth_client):
+    created = auth_client.post("/api/apps", json={"name": "BusinessGateContract"}).json()
+    contract = {
+        "type": "json",
+        "success_field": "status",
+        "success_value": "passed",
+        "json_schema": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {"status": {"type": "string", "enum": ["passed", "failed"]}},
+            "required": ["status"],
+        },
+    }
+    response = auth_client.patch(
+        f"/api/apps/{created['id']}",
+        json={
+            "graph": {
+                "nodes": [
+                    {
+                        "id": "n_gen",
+                        "type": "generate",
+                        "position": {"x": 0, "y": 0},
+                        "title": "Generate",
+                        "prompt": "ok",
+                        "output_contract": contract,
+                    },
+                ],
+                "execution_edges": [],
+            }
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["graph"]["nodes"][0]["output_contract"] == contract
+
+
+def test_patch_app_rejects_unreachable_json_business_gate_value(auth_client):
+    created = auth_client.post("/api/apps", json={"name": "InvalidBusinessGate"}).json()
+    response = auth_client.patch(
+        f"/api/apps/{created['id']}",
+        json={
+            "graph": {
+                "nodes": [
+                    {
+                        "id": "n_gen",
+                        "type": "generate",
+                        "position": {"x": 0, "y": 0},
+                        "title": "Generate",
+                        "prompt": "ok",
+                        "output_contract": {
+                            "type": "json",
+                            "success_field": "status",
+                            "success_value": "passed",
+                            "json_schema": {
+                                "type": "object",
+                                "additionalProperties": False,
+                                "properties": {"status": {"type": "string", "enum": ["failed"]}},
+                                "required": ["status"],
+                            },
+                        },
+                    },
+                ],
+                "execution_edges": [],
+            }
+        },
+    )
+
+    assert response.status_code == 400
+    assert "success_value 不符合门禁字段 schema" in response.json()["detail"]
 
 
 def test_patch_app_rejects_json_field_level_output_contract(auth_client):

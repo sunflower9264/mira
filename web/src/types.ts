@@ -62,6 +62,17 @@ export interface Graph {
 export type WikiSourceStatus = 'pending' | 'ready' | 'unsupported' | 'failed' | 'pending_delete';
 export type WikiOperationStatus = 'pending' | 'running' | 'success' | 'failed' | 'cancelled';
 
+export interface AiActivity {
+  id: string;
+  kind: 'app_run' | 'workspace_turn' | 'nl_compile' | 'prompt_assistant' | 'wiki';
+  status: 'queued' | 'working' | 'waiting_user';
+  title: string;
+  phase: string;
+  started_at?: string | null;
+  cancellable: boolean;
+  href: string;
+}
+
 export interface WikiInfo {
   id: string;
   purpose: string;
@@ -184,6 +195,8 @@ export type ArtifactContractKind =
 export interface NodeOutputContract {
   type: OutputContractType;
   json_schema?: Record<string, unknown>;
+  success_field?: string;
+  success_value?: string;
   artifact_kind?: ArtifactContractKind;
   max_count?: number;
   validate_office_documents?: boolean;

@@ -41,12 +41,12 @@ Mira 是参考 Google Opal 产品思路构建的可视化 AI App 平台，使用
 - 每个用户有一个长期 Wiki。普通 Run 冻结当前 Wiki revision 并只读挂载到 `/mnt/wiki`；Wiki 不进入 branch workspace/checkpoint，输出与 Artifact 不自动写回。第三方 App 授权绑定用户、App 与 graph SHA-256。
 - 每个 Workspace 是 owner-only 的持久项目目录，拥有多个 Codex thread 和一个常驻 Docker runtime；同一 Workspace 的 turn 必须串行。Workspace Wiki 使用 working copy 和三方合并发布，Workflow graph 只能经带 base SHA 的 Proposal、lint、只读预览和人工确认修改；Workspace 内执行 App 仍使用正式 Run 链路。
 - Run 按直接前置依赖调度，ready 节点可并发。Run 只有唯一 output Step 为 `success`、其他 Step 为 `success` / `skipped` / `checkpoint_reused`，并且所有正式 Artifact 复验通过时才能成功。
-- `failure_kind` 只使用 `runtime`、`contract`、`routing`、`integrity`、`internal`。业务验收不通过应作为正常业务输出，不伪装成执行异常。
+- `failure_kind` 只使用 `runtime`、`contract`、`routing`、`integrity`、`internal`。普通业务验收结果保持正常业务输出；工作流显式配置的 `success_field` / `success_value` 门禁首次不通过时，在 Step 写入失败终态前由同一 thread/workspace 执行一次根因恢复并重新验收，仍不通过才按输出契约失败。取消、路由、完整性、内部或基础设施故障不触发该恢复。
 - Run 事件持久化到数据库；SSE 的进程内 hub 只负责广播、取消和等待信号。后端启动把未完成运行标为 `interrupted`，并清理没有数据库记录的普通 Run workspace。
 
 ## 输出、文件与完整性
 
-- `generate.output_contract` 支持 `json`、`html`、`artifact`；自由文本不设契约。JSON 使用 strict object `json_schema`；HTML 通过 `{"html":"..."}` wrapper 校验后原样保存；artifact 只接受当前运行 workspace 内的文件路径和声明的 `artifact_kind`。
+- `generate.output_contract` 支持 `json`、`html`、`artifact`；自由文本不设契约。JSON 使用 strict object `json_schema`，可用 `success_field` / `success_value` 把业务未通过转为一次根因恢复后的真实 Step/Run failure；HTML 通过 `{"html":"..."}` wrapper 校验后原样保存；artifact 只接受当前运行 workspace 内的文件路径和声明的 `artifact_kind`。
 - `output` 是 HTML-only 最终展示节点。JSON Schema 是内部校验实现，不向普通用户显示字段大纲、Schema 或字段引用控件。
 - workspace 文件可以供同一 Run 后续推理，但 Files、Trace 和下载 API 只承认成功 artifact contract Step 的正式 manifest，不扫描 workspace，也不新增旁路 artifact 表。
 - Artifact manifest 必须包含 holder、origin、可选 reused_from、相对路径、大小、SHA-256、kind 和版本。下载响应只返回 hash-bound 签名链接、`sha256` 与 `integrity`，不得返回 runtime 绝对路径；`modified` 产物不可下载。

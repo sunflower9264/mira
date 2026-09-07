@@ -24,6 +24,7 @@
 
 - `test_real_ai_backend.py` 默认跳过；仅在 `MIRA_RUN_REAL_AI_BACKEND_TEST=1` 且提供隔离源 DB/凭据时启动真实 Codex 后端测试。
 - `test_real_ai_deploy_decision.py` 默认跳过；仅在 `MIRA_RUN_REAL_AI_DEPLOY_TEST=1` 且明确提供部署地址/凭据时创建真实 Run，并在结束时取消。
+- `test_real_ai_deploy_root_recovery.py` 默认跳过；仅在 `MIRA_RUN_REAL_AI_DEPLOY_RECOVERY_TEST=1` 且明确提供部署地址/凭据时创建临时 App，真实验证 Prompt Assistant、一次根因恢复和源码产物。
 - 普通 `pytest` 不应意外触发真实 Codex、部署写入或真实工作流。
 
 ## 编写规则

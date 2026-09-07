@@ -30,6 +30,7 @@ from app.schemas import (
     WorkspaceWorkflowRunOut,
 )
 from app.services.workspaces import (
+    append_workspace_event,
     confirm_workflow_proposal,
     create_workflow_proposal,
     create_workspace,
@@ -257,6 +258,14 @@ async def post_workspace_turn_resume(
     )
     if not await resume_workspace_turn(turn.id, payload.request_id, result):
         raise HTTPException(status_code=409, detail="提问会话已中断")
+    await append_workspace_event(
+        db,
+        workspace_id=turn.workspace_id,
+        session_id=turn.session_id,
+        turn_id=turn.id,
+        event_type="decision_submitted",
+        payload={"request_id": payload.request_id},
+    )
 
 
 @router.post("/workspace-sessions/{session_id}/actions")

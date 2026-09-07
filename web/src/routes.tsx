@@ -3,6 +3,7 @@ import { createBrowserRouter, Navigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from './stores/useAuthStore';
 import { useSettingsStore } from './stores/useSettingsStore';
 import { desktopPathFor, mobilePathFor, prefersMobileViewport } from './lib/mobile';
+import { AiActivityDock } from './components/common/AiActivityDock';
 
 const Home = lazy(() => import('./pages/Home').then((m) => ({ default: m.Home })));
 const Editor = lazy(() => import('./pages/Editor').then((m) => ({ default: m.Editor })));
@@ -14,6 +15,8 @@ const MobileWorkspace = lazy(() => import('./pages/Workspace').then((m) => ({ de
 const MobileHome = lazy(() => import('./pages/mobile/MobileHome').then((m) => ({ default: m.MobileHome })));
 const MobileAuth = lazy(() => import('./pages/mobile/MobileAuth').then((m) => ({ default: m.MobileAuth })));
 const MobileRun = lazy(() => import('./pages/mobile/MobileRun').then((m) => ({ default: m.MobileRun })));
+const MobileEditor = lazy(() => import('./pages/mobile/MobileEditor').then((m) => ({ default: m.MobileEditor })));
+const MobileSettings = lazy(() => import('./pages/mobile/MobileSettings').then((m) => ({ default: m.MobileSettings })));
 const AdminCodexOnboarding = lazy(() =>
   import('./components/settings/AdminCodexOnboarding').then((m) => ({ default: m.AdminCodexOnboarding })),
 );
@@ -40,9 +43,10 @@ function DeviceRouteGate({ children }: { children: ReactElement }) {
 
 // 未登录时直接重定向到登录页，避免受保护页面 mount 后再发 401 请求触发兜底跳转。
 function RequireAuth({ children, loginPath = '/login' }: { children: ReactElement; loginPath?: string }) {
+  const location = useLocation();
   const user = useAuthStore((s) => s.user);
   if (!user) return <Navigate to={loginPath} replace />;
-  return <AdminCodexSetupGate>{children}</AdminCodexSetupGate>;
+  return <><AdminCodexSetupGate>{children}</AdminCodexSetupGate>{!(location.pathname.endsWith('/editor') || location.pathname === '/m' || location.pathname === '/m/wiki' || location.pathname === '/m/settings' || location.pathname.startsWith('/m/workspaces/') || location.pathname.startsWith('/workspaces/') || location.pathname.startsWith('/m/apps/')) ? <AiActivityDock /> : null}</>;
 }
 
 function AdminCodexSetupGate({ children }: { children: ReactElement }) {
@@ -99,7 +103,8 @@ function AdminCodexSetupGate({ children }: { children: ReactElement }) {
 export const router = createBrowserRouter([
   { path: '/', element: <DeviceRouteGate><RequireAuth>{withSuspense(<Home />)}</RequireAuth></DeviceRouteGate> },
   { path: '/login', element: <DeviceRouteGate>{withSuspense(<Login />)}</DeviceRouteGate> },
-  { path: '/wiki', element: <RequireAuth>{withSuspense(<Wiki />)}</RequireAuth> },
+  { path: '/wiki', element: <DeviceRouteGate><RequireAuth>{withSuspense(<Wiki />)}</RequireAuth></DeviceRouteGate> },
+  { path: '/settings', element: <DeviceRouteGate><RequireAuth>{withSuspense(<MobileSettings />)}</RequireAuth></DeviceRouteGate> },
   { path: '/workspaces/:id', element: <DeviceRouteGate><RequireAuth>{withSuspense(<Workspace />)}</RequireAuth></DeviceRouteGate> },
   { path: '/apps/:id/editor', element: <DeviceRouteGate><RequireAuth>{withSuspense(<Editor />)}</RequireAuth></DeviceRouteGate> },
   { path: '/apps/:id/view', element: <DeviceRouteGate><RequireAuth>{withSuspense(<AppView />)}</RequireAuth></DeviceRouteGate> },
@@ -107,6 +112,9 @@ export const router = createBrowserRouter([
   { path: '/m', element: <DeviceRouteGate><RequireAuth loginPath="/m/login">{withSuspense(<MobileHome />)}</RequireAuth></DeviceRouteGate> },
   { path: '/m/login', element: <DeviceRouteGate>{withSuspense(<MobileAuth />)}</DeviceRouteGate> },
   { path: '/m/apps/:id/run', element: <DeviceRouteGate><RequireAuth loginPath="/m/login">{withSuspense(<MobileRun />)}</RequireAuth></DeviceRouteGate> },
+  { path: '/m/apps/:id/editor', element: <DeviceRouteGate><RequireAuth loginPath="/m/login">{withSuspense(<MobileEditor />)}</RequireAuth></DeviceRouteGate> },
+  { path: '/m/wiki', element: <DeviceRouteGate><RequireAuth loginPath="/m/login">{withSuspense(<Wiki mobile />)}</RequireAuth></DeviceRouteGate> },
+  { path: '/m/settings', element: <DeviceRouteGate><RequireAuth loginPath="/m/login">{withSuspense(<MobileSettings />)}</RequireAuth></DeviceRouteGate> },
   { path: '/m/workspaces/:id', element: <DeviceRouteGate><RequireAuth loginPath="/m/login">{withSuspense(<MobileWorkspace />)}</RequireAuth></DeviceRouteGate> },
   { path: '*', element: <Navigate to="/" replace /> },
 ]);

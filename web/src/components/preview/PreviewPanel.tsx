@@ -1,6 +1,6 @@
 // Right-hand panel (PRD §7.2). Three tabs: Preview / Console / Step.
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { PreviewTab } from './PreviewTab';
 import { ConsoleTab } from './ConsoleTab';
 import { StepTab } from './StepTab';
@@ -16,15 +16,26 @@ import { showCaughtError } from '../../stores/useErrorDialogStore';
 import type { App, Run, UserInputNode } from '../../types';
 import type { LaunchInputs } from './AppLaunchView';
 
-type Tab = 'preview' | 'console' | 'step';
+export type PreviewPanelTab = 'preview' | 'console' | 'step';
+type Tab = PreviewPanelTab;
 const TAB_LABELS: Record<Tab, string> = {
   preview: '预览',
   console: '控制台',
   step: '步骤',
 };
 
-export function PreviewPanel() {
-  const [tab, setTab] = useState<Tab>('preview');
+export function PreviewPanel({ mobile = false, tab: controlledTab, onTabChange, headerContent }: {
+  headerContent?: ReactNode;
+  mobile?: boolean;
+  tab?: Tab;
+  onTabChange?: (tab: Tab) => void;
+}) {
+  const [localTab, setLocalTab] = useState<Tab>('preview');
+  const tab = controlledTab ?? localTab;
+  const setTab = (next: Tab) => {
+    setLocalTab(next);
+    onTabChange?.(next);
+  };
   const [historyOpen, setHistoryOpen] = useState(false);
   const status = useRunStore((s) => s.status);
   const steps = useRunStore((s) => s.steps);
@@ -72,8 +83,8 @@ export function PreviewPanel() {
     (mode === 'replay' || status === 'success' || status === 'failed' || status === 'cancelled');
 
   useEffect(() => {
-    if (stepEnabled && runId === null && mode !== 'replay') setTab('step');
-  }, [selectedNodeId, stepEnabled, runId, mode]);
+    if (!mobile && !headerContent && stepEnabled && runId === null && mode !== 'replay') setTab('step');
+  }, [selectedNodeId, stepEnabled, runId, mode, mobile, headerContent]);
 
   const editFailedNode = () => {
     if (!failedStep || !failedNodeInApp) return;
@@ -99,15 +110,24 @@ export function PreviewPanel() {
 
   return (
     <div className="relative h-full flex flex-col overflow-hidden">
-      <header className="h-12 px-3 flex items-center border-b border-black/5">
+      <header className="h-12 shrink-0 px-2 flex items-center gap-2 border-b border-black/5">
         <button
-          className="p-1.5 rounded-full hover:bg-black/5 text-black/55"
+          className="grid h-10 w-10 shrink-0 place-items-center rounded-full hover:bg-black/5 text-black/55"
           aria-label="历史记录"
           onClick={() => setHistoryOpen(true)}
         >
           <MenuIcon className="w-4 h-4" />
         </button>
-        <div className="flex-1 flex items-center justify-center gap-1 text-sm">
+        {headerContent ?? (mobile ? (
+          <div className="min-w-0 flex-1 text-sm font-medium">
+            {tab === 'step' ? (
+              <select aria-label="选择步骤" value={selectedNodeId ?? ''} onChange={(event) => setSelected(event.target.value || null)} className="h-10 w-full min-w-0 bg-transparent text-base outline-none">
+                <option value="" disabled>选择步骤</option>
+                {app?.graph.nodes.map((node, index) => <option key={node.id} value={node.id}>{index + 1}. {node.title || node.type}</option>)}
+              </select>
+            ) : TAB_LABELS[tab]}
+          </div>
+        ) : <div className="flex-1 flex items-center justify-center gap-1 text-sm">
           {(['preview', 'console', 'step'] as Tab[]).map((t) => {
             const disabled = t === 'step' && !stepEnabled;
             return (
@@ -129,19 +149,25 @@ export function PreviewPanel() {
               </button>
             );
           })}
-        </div>
+        </div>)}
         <button
           aria-label="重启预览"
           title="重启预览"
-          className="p-1.5 rounded-full text-black/55 hover:bg-black/5 disabled:cursor-not-allowed disabled:opacity-40"
+          className="grid h-10 w-10 shrink-0 place-items-center rounded-full text-black/55 hover:bg-black/5 disabled:cursor-not-allowed disabled:opacity-40"
           onClick={() => reset()}
           disabled={status !== 'success' && status !== 'failed' && status !== 'interrupted'}
         >
           <RefreshIcon className="w-4 h-4" />
         </button>
       </header>
+      {headerContent && tab === 'step' && <div className="border-b border-black/[0.05] px-3 py-2">
+        <select aria-label="选择步骤" value={selectedNodeId ?? ''} onChange={(event) => setSelected(event.target.value || null)} className="h-9 w-full min-w-0 rounded-lg border border-black/10 bg-white px-2 text-sm outline-none">
+          <option value="" disabled>选择步骤</option>
+          {app?.graph.nodes.map((node, index) => <option key={node.id} value={node.id}>{index + 1}. {node.title || node.type}</option>)}
+        </select>
+      </div>}
       {/* Progress bar (PRD §7.3) */}
-      <div className="h-1 bg-black/5 relative">
+      <div className="h-0.5 shrink-0 bg-black/5 relative">
         <div
           className="absolute inset-y-0 left-0 bg-black/55 transition-[width] duration-200"
           style={{ width: `${progress * 100}%` }}
@@ -150,6 +176,7 @@ export function PreviewPanel() {
       {canRepairFailedRun && failedStep && (
         <>
           <FailedRunRepairBar
+            mobile={mobile}
             nodeTitle={failedNodeInApp?.title || failedNodeInRun?.title || failedStep.node_id}
             nodeExists={!!failedNodeInApp}
             hasInputOverrides={repairInputs !== null}
@@ -185,7 +212,7 @@ export function PreviewPanel() {
           </button>
         </div>
       )}
-      <div className="flex-1 overflow-y-auto" key={app?.id}>
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain" key={app?.id}>
         {tab === 'preview' && <PreviewTab hideRunFailureError={showRepairFailureError} />}
         {tab === 'console' && <ConsoleTab />}
         {tab === 'step' && <StepTab />}
@@ -226,6 +253,7 @@ export function PreviewPanel() {
 }
 
 function FailedRunRepairBar({
+  mobile = false,
   nodeTitle,
   nodeExists,
   hasInputOverrides,
@@ -234,6 +262,7 @@ function FailedRunRepairBar({
   onEditInputs,
   onRerun,
 }: {
+  mobile?: boolean;
   nodeTitle: string;
   nodeExists: boolean;
   hasInputOverrides: boolean;
@@ -245,14 +274,14 @@ function FailedRunRepairBar({
   return (
     <section className="border-b border-red-100 bg-red-50/80 px-3 py-2">
       <div className="flex flex-wrap items-center gap-2">
-        <div className="min-w-0 flex-1">
+        <div className={mobile ? 'w-full min-w-0' : 'min-w-0 flex-1'}>
           <div className="flex items-center gap-2 text-xs font-medium text-red-800">
-            <span className="rounded-full bg-red-100 px-2 py-0.5 text-[10px] uppercase tracking-wider text-red-700">
+            <span className="shrink-0 whitespace-nowrap rounded-full bg-red-100 px-2 py-0.5 text-[10px] uppercase tracking-wider text-red-700">
               修复运行
             </span>
-            <span className="truncate">失败节点：{nodeTitle}</span>
+            <span className={mobile ? 'min-w-0 break-words' : 'truncate'}>失败节点：{nodeTitle}</span>
             {hasInputOverrides && (
-              <span className="rounded-full border border-red-200 bg-white/70 px-1.5 py-0.5 text-[10px] text-red-700">
+              <span className="shrink-0 whitespace-nowrap rounded-full border border-red-200 bg-white/70 px-1.5 py-0.5 text-[10px] text-red-700">
                 已改输入
               </span>
             )}
@@ -267,7 +296,7 @@ function FailedRunRepairBar({
           type="button"
           onClick={onEditNode}
           disabled={!nodeExists || repairing}
-          className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-red-200 bg-white px-3 py-1.5 text-xs font-medium text-red-800 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-45"
+          className={`${mobile ? 'min-h-10' : ''} inline-flex shrink-0 items-center gap-1.5 rounded-full border border-red-200 bg-white px-3 py-1.5 text-xs font-medium text-red-800 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-45`}
         >
           <EditIcon className="h-3.5 w-3.5" />
           编辑失败节点
@@ -276,7 +305,7 @@ function FailedRunRepairBar({
           type="button"
           onClick={onEditInputs}
           disabled={repairing}
-          className="shrink-0 rounded-full border border-red-200 bg-white px-3 py-1.5 text-xs font-medium text-red-800 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-45"
+          className={`${mobile ? 'min-h-10' : ''} shrink-0 rounded-full border border-red-200 bg-white px-3 py-1.5 text-xs font-medium text-red-800 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-45`}
         >
           修改输入
         </button>
@@ -284,7 +313,7 @@ function FailedRunRepairBar({
           type="button"
           onClick={onRerun}
           disabled={!nodeExists || repairing}
-          className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-black px-3 py-1.5 text-xs font-medium text-white hover:bg-black/80 disabled:cursor-not-allowed disabled:opacity-45"
+          className={`${mobile ? 'min-h-10' : ''} inline-flex shrink-0 items-center gap-1.5 rounded-full bg-black px-3 py-1.5 text-xs font-medium text-white hover:bg-black/80 disabled:cursor-not-allowed disabled:opacity-45`}
         >
           <RefreshIcon className="h-3.5 w-3.5" />
           {repairing ? '启动中' : '从失败前检查点重新执行'}

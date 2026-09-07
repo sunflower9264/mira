@@ -57,13 +57,13 @@ export function AppView({ readOnly = false }: { readOnly?: boolean }) {
 
   return (
     <div className="flex h-full flex-col bg-[#F4F5F7] text-[#0B0B0F]">
-      <header className="h-12 px-3 flex items-center justify-between border-b border-black/5 bg-white">
-        <div className="flex items-center gap-3">
+      <header className="h-12 shrink-0 gap-3 px-3 flex items-center justify-between border-b border-black/5 bg-white">
+        <div className="flex min-w-0 flex-1 items-center gap-3">
           <button className="p-1.5 rounded-full hover:bg-black/5" onClick={() => navigate(readonly ? '/' : `/apps/${app.id}/editor`)} aria-label="返回">
             <ArrowLeftIcon className="w-4 h-4" />
           </button>
-          <span className="text-sm font-medium">{app.name}</span>
-          <span className="text-[14px] uppercase tracking-wider text-black/45">
+          <span className="min-w-0 truncate text-sm font-medium">{app.name}</span>
+          <span className="hidden shrink-0 text-xs uppercase tracking-wider text-black/45 xl:inline">
             {app.archived_at ? '已下架' : app.status === 'published' ? app.visibility === 'private' ? '私有发布' : '已发布' : '草稿'}
           </span>
         </div>
@@ -80,8 +80,26 @@ export function AppView({ readOnly = false }: { readOnly?: boolean }) {
             <span className="px-3 py-1 rounded-full bg-white shadow-sm text-black">应用</span>
           </div>
         )}
-        <div className="flex items-center gap-3 text-sm text-black/55">
-          {!readonly && <span className="text-xs">已保存</span>}
+        <div className="flex shrink-0 items-center gap-2 text-sm text-black/55">
+        <button
+          className="grid h-9 w-9 place-items-center p-1.5 rounded-full hover:bg-black/10"
+          aria-label="历史记录"
+          onClick={() => setHistoryOpen(true)}
+        >
+          <MenuIcon className="w-4 h-4" />
+        </button>
+        {showReset ? (
+          <button
+            className="grid h-9 w-9 place-items-center p-1.5 rounded-full text-black/55 hover:bg-black/10"
+            aria-label="重新开始"
+            title="重新开始"
+            onClick={() => resetRun()}
+          >
+            <RefreshIcon className="w-4 h-4" />
+          </button>
+        ) : null}
+
+          {!readonly && <span className="hidden text-xs xl:inline">已保存</span>}
           {!readonly && <PublishButton app={app} />}
           {!readonly && <AppMenu onEdit={() => setEditOpen(true)} onHistory={() => setVersionsOpen(true)} />}
           {!readonly && isAdmin && (
@@ -131,23 +149,6 @@ export function AppView({ readOnly = false }: { readOnly?: boolean }) {
             });
           }}
         />
-        <button
-          className="absolute top-3 left-3 z-10 p-1.5 rounded-full hover:bg-black/10"
-          aria-label="历史记录"
-          onClick={() => setHistoryOpen(true)}
-        >
-          <MenuIcon className="w-4 h-4" />
-        </button>
-        {showReset ? (
-          <button
-            className="absolute top-3 right-3 z-10 p-1.5 rounded-full text-black/55 hover:bg-black/10"
-            aria-label="重新开始"
-            title="重新开始"
-            onClick={() => resetRun()}
-          >
-            <RefreshIcon className="w-4 h-4" />
-          </button>
-        ) : null}
         <RunHistoryDrawer
           open={historyOpen}
           onClose={() => setHistoryOpen(false)}

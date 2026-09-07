@@ -78,8 +78,8 @@ export function AdminCodexOnboarding({ onCompleted }: AdminCodexOnboardingProps)
         <UserMenu iconClassName="h-5 w-5" />
       </header>
 
-      <main className="min-h-0 flex-1 overflow-y-auto px-6 py-6">
-        <section className="mx-auto w-full max-w-5xl rounded-2xl bg-white p-5 shadow-card ring-1 ring-black/5">
+      <main className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6 sm:py-6">
+        <section className="mx-auto w-full max-w-5xl rounded-2xl bg-white p-4 sm:p-5 shadow-card ring-1 ring-black/5">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <div className="text-[11px] font-medium uppercase tracking-wider text-black/55">Initial Setup</div>
@@ -103,25 +103,25 @@ export function AdminCodexOnboarding({ onCompleted }: AdminCodexOnboardingProps)
             <ModelChips values={supportedModels} onChange={setSupportedModels} disabled={loading || saving} />
           </div>
           <div className="mt-5 grid gap-4 md:grid-cols-2">
-            <label className="grid gap-1.5 text-xs font-medium text-black/60">
+            <label className="grid min-w-0 gap-1.5 text-xs font-medium text-black/60">
               config.toml <span className="truncate font-mono text-[11px] font-normal text-black/40">{configPath}</span>
               <textarea
                 value={configDraft}
                 onChange={(event) => setConfigDraft(event.target.value)}
                 disabled={loading || saving}
                 spellCheck={false}
-                className={`min-h-[340px] resize-y rounded-xl border border-black/10 bg-[#101113] px-3 py-3 font-mono text-xs leading-5 text-white outline-none disabled:opacity-60 ${SETTINGS_SCROLLBAR_CLASSES}`}
+                className={`min-h-[240px] min-w-0 sm:min-h-[340px] resize-y rounded-xl border border-black/10 bg-[#101113] px-3 py-3 font-mono text-base sm:text-xs leading-6 text-white outline-none disabled:opacity-60 ${SETTINGS_SCROLLBAR_CLASSES}`}
                 placeholder={'model = "your-model-id"'}
               />
             </label>
-            <label className="grid gap-1.5 text-xs font-medium text-black/60">
+            <label className="grid min-w-0 gap-1.5 text-xs font-medium text-black/60">
               auth.json <span className="truncate font-mono text-[11px] font-normal text-black/40">{authPath}</span>
               <textarea
                 value={authDraft}
                 onChange={(event) => setAuthDraft(event.target.value)}
                 disabled={loading || saving}
                 spellCheck={false}
-                className={`min-h-[340px] resize-y rounded-xl border border-black/10 bg-[#101113] px-3 py-3 font-mono text-xs leading-5 text-white outline-none disabled:opacity-60 ${SETTINGS_SCROLLBAR_CLASSES}`}
+                className={`min-h-[240px] min-w-0 sm:min-h-[340px] resize-y rounded-xl border border-black/10 bg-[#101113] px-3 py-3 font-mono text-base sm:text-xs leading-6 text-white outline-none disabled:opacity-60 ${SETTINGS_SCROLLBAR_CLASSES}`}
                 placeholder={'{\n  "OPENAI_API_KEY": "sk-..."\n}'}
               />
             </label>

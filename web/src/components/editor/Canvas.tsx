@@ -177,7 +177,7 @@ function sameIds(a: string[], b: string[]): boolean {
   return a.length === b.length && a.every((id, index) => id === b[index]);
 }
 
-function CanvasInner() {
+function CanvasInner({ mobile = false, onEditStep, hideNlInput = false }: { mobile?: boolean; onEditStep?: () => void; hideNlInput?: boolean }) {
   const touchCanvas = useCoarsePointer();
   const app = useEditorStore((s) => s.app);
   const selectedIds = useEditorStore((s) => s.selectedIds);
@@ -192,6 +192,7 @@ function CanvasInner() {
   const [rfNodes, setRfNodes, onNodesChangeRF] = useNodesState<RFNode>([]);
   const [rfEdges, setRfEdges, onEdgesChangeRF] = useEdgesState<RFEdge>([]);
   const [isConnecting, setIsConnecting] = useState(false);
+  const [touchSelecting, setTouchSelecting] = useState(false);
   const [selectedEdgeIds, setSelectedEdgeIds] = useState<string[]>([]);
   const [canvasToast, setCanvasToast] = useState<string | null>(null);
 
@@ -268,38 +269,15 @@ function CanvasInner() {
     setGraph({ ...app.graph, nodes });
   }, [app, getNodes, setGraph]);
 
-  const onNodesDelete = useCallback(
-    (deleted: RFNode[]) => {
+  const onDelete = useCallback(
+    ({ nodes: deletedNodes, edges: deletedEdges }: { nodes: RFNode[]; edges: RFEdge[] }) => {
       if (!app) return;
-      const ids = new Set(deleted.map((d) => d.id));
-      const remainingNodes = app.graph.nodes.filter((n) => !ids.has(n.id));
-      const edges = app.graph.execution_edges.filter((e) => !ids.has(e.source) && !ids.has(e.target));
-      setSelectedEdgeIds((current) => {
-        const next = current.filter((id) => edges.some((edge) => edge.id === id));
-        return sameIds(current, next) ? current : next;
-      });
-    setGraph({
-      ...app.graph,
-      nodes: remainingNodes,
-      execution_edges: edges,
-      });
-    },
-    [app, setGraph],
-  );
-
-  const onEdgesDelete = useCallback(
-    (deleted: RFEdge[]) => {
-      if (!app) return;
-      const ids = new Set(deleted.map((d) => d.id));
-      const edges = app.graph.execution_edges.filter((e) => !ids.has(e.id));
-      setSelectedEdgeIds((current) => {
-        const next = current.filter((id) => !ids.has(id));
-        return sameIds(current, next) ? current : next;
-      });
-    setGraph({
-      ...app.graph,
-      execution_edges: edges,
-      });
+      const nodeIds = new Set(deletedNodes.map((node) => node.id));
+      const edgeIds = new Set(deletedEdges.map((edge) => edge.id));
+      const remainingNodes = app.graph.nodes.filter((node) => !nodeIds.has(node.id));
+      const edges = app.graph.execution_edges.filter((edge) => !edgeIds.has(edge.id) && !nodeIds.has(edge.source) && !nodeIds.has(edge.target));
+      setSelectedEdgeIds((current) => current.filter((id) => edges.some((edge) => edge.id === id)));
+      setGraph({ ...app.graph, nodes: remainingNodes, execution_edges: edges });
     },
     [app, setGraph],
   );
@@ -388,10 +366,12 @@ function CanvasInner() {
       nodeTypes={nodeTypes}
       onNodesChange={onNodesChange}
       onEdgesChange={onEdgesChangeRF}
+      onNodeDoubleClick={onEditStep ? () => onEditStep() : undefined}
       onNodeDragStart={onNodeDragStart}
       onNodeDragStop={onNodeDragStop}
-      onNodesDelete={onNodesDelete}
-      onEdgesDelete={onEdgesDelete}
+      onDelete={onDelete}
+      onSelectionDragStart={onNodeDragStart}
+      onSelectionDragStop={onNodeDragStop}
       onConnect={onConnect}
       isValidConnection={isValidConnection}
       onConnectStart={() => setIsConnecting(true)}
@@ -405,11 +385,11 @@ function CanvasInner() {
       onPaneContextMenu={preventContextMenu}
       onNodeContextMenu={preventContextMenu}
       onEdgeContextMenu={preventContextMenu}
-      panOnDrag={touchCanvas}
+      panOnDrag={touchCanvas && !touchSelecting}
       panActivationKeyCode={touchCanvas ? null : 'Space'}
       deleteKeyCode={['Delete', 'Backspace']}
       multiSelectionKeyCode={['Control', 'Meta']}
-      selectionOnDrag={!touchCanvas}
+      selectionOnDrag={!touchCanvas || touchSelecting}
       selectionMode={SelectionMode.Partial}
       connectionMode={ConnectionMode.Strict}
       connectOnClick
@@ -423,19 +403,20 @@ function CanvasInner() {
         interactionWidth: touchCanvas ? 32 : 20,
       }}
       fitView
+      minZoom={0.1}
       fitViewOptions={{ padding: 0.25, maxZoom: 0.9 }}
       proOptions={{ hideAttribution: true }}
     >
       <Background variant={BackgroundVariant.Lines} color="#e5e7eb" gap={20} lineWidth={1} />
-      <CanvasOverlay toast={canvasToast} showToast={showCanvasToast} />
+      <CanvasOverlay toast={canvasToast} showToast={showCanvasToast} mobile={mobile} onEditStep={onEditStep} hideNlInput={hideNlInput} touchSelecting={touchSelecting} onToggleTouchSelecting={() => setTouchSelecting((current) => !current)} hasSelection={selectedIds.length > 0 || selectedEdgeIds.length > 0} />
     </ReactFlow>
   );
 }
 
-export function Canvas() {
+export function Canvas({ mobile = false, onEditStep, hideNlInput = false }: { mobile?: boolean; onEditStep?: () => void; hideNlInput?: boolean }) {
   return (
     <ReactFlowProvider>
-      <CanvasInner />
+      <CanvasInner mobile={mobile} onEditStep={onEditStep} hideNlInput={hideNlInput} />
     </ReactFlowProvider>
   );
 }

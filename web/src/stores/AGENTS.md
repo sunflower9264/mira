@@ -10,6 +10,7 @@
 
 - Store 是业务状态边界；组件不应绕过 store 重复实现同一跨页面流程。
 - `useEditorStore` 的 `app.graph` 是编辑器 canonical graph；节点、边、viewport、保存、undo/redo、布局美化和 Prompt Assistant 生成态都要保持一致。
+- 自动保存的 PATCH 按顺序提交；`flushSave` 必须等待已开始和排队的保存，保存失败阻止离开、发布或创建版本快照。
 - 文本输入保存可跳过画布 undo/redo 历史，但必须避免过期 future 覆盖新文本。
 - `useEditorStore.load` 可能被 Editor 和 App View 快速连续调用，必须忽略过期响应，避免旧 app 覆盖当前路由。
 - Prompt Assistant 生成态按 node id 保存在 `promptAssistantGenerations`；切换节点不应自动取消或丢失生成态。

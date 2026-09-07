@@ -1,10 +1,14 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Menu, MenuButton, MenuItem, MenuItems } from '@headlessui/react';
+import { AiActivityDock } from '../../components/common/AiActivityDock';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   ArrowLeft,
   CheckCircle2,
   History,
   Loader2,
+  MoreHorizontal,
+  Pencil,
   Play,
   RotateCcw,
   Settings2,
@@ -22,7 +26,6 @@ import { useSettingsStore } from '../../stores/useSettingsStore';
 import type {
   App,
   Run,
-  RunSummary,
   Step,
   UserInputNode,
   WorkflowLintResult,
@@ -33,15 +36,16 @@ import { SelectDropdown } from '../../components/common/SelectDropdown';
 import { AppToolsInlineSelect, AppToolsSummary } from '../../components/common/AppToolsInlineSelect';
 import { WorkflowLintNotice } from '../../components/common/WorkflowLintNotice';
 import { WaitingInputPanel } from '../../components/preview/WaitingInputPanel';
-import { HtmlOutputFrame } from '../../components/preview/HtmlOutputFrame';
-import { RunArtifactsPanel, useRunArtifacts } from '../../components/preview/RunArtifactsPanel';
+import { HtmlOutputPreview } from '../../components/preview/HtmlOutputPreview';
+import { RunArtifactsPanel, useRunArtifacts, type RunArtifactsState } from '../../components/preview/RunArtifactsPanel';
+import { RunHistoryDrawer } from '../../components/preview/RunHistoryDrawer';
 import { MobileSheet } from '../../components/mobile/MobileSheet';
 import { useAppCoverUrl } from '../../hooks/useAppCoverUrl';
 import { showCaughtError } from '../../stores/useErrorDialogStore';
 import { useWikiAwareRunStart } from '../../hooks/useWikiAwareRunStart';
 import { hasRunInputContent } from '../../lib/runInput';
 
-type View = 'result' | 'process';
+type View = 'result' | 'process' | 'files';
 type LaunchInputs = Record<string, string | { value: string; attachments?: { id: string; name?: string }[] }>;
 
 const STATUS_LABEL: Record<RunUiStatus, string> = {
@@ -70,10 +74,25 @@ const STEP_LABEL: Record<Step['status'], string> = {
 };
 
 export function MobileRun() {
+  const pageRef = useRef<HTMLDivElement>(null);
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [app, setApp] = useState<App | null>(null);
   const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    const viewport = window.visualViewport;
+    if (!viewport) return;
+    const resize = () => {
+      if (pageRef.current) {
+        pageRef.current.style.height = `${viewport.height}px`;
+        pageRef.current.style.top = `${viewport.offsetTop}px`;
+      }
+    };
+    resize();
+    viewport.addEventListener('resize', resize);
+    viewport.addEventListener('scroll', resize);
+    return () => { viewport.removeEventListener('resize', resize); viewport.removeEventListener('scroll', resize); };
+  }, [loading]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -164,8 +183,10 @@ export function MobileRun() {
     return step?.status === 'success' || step?.status === 'failed' || step?.status === 'skipped';
   });
   const canStop = runId !== null && isCancellableRunStatus(status);
-  const running = runId !== null && !['success', 'failed', 'cancelled', 'interrupted'].includes(status);
   const showIdle = status === 'idle';
+  const resultReady = outputReady || ['success', 'failed', 'cancelled'].includes(status);
+  const artifactsState = useRunArtifacts(resultReady ? runId : null, status);
+  useEffect(() => { if (view === 'files' && !artifactsState.artifacts.length) setView('result'); }, [artifactsState.artifacts.length, view]);
   const activeFilled =
     !activeInput ||
     inputForNode(inputValue, attachments).filled;
@@ -220,13 +241,13 @@ export function MobileRun() {
   }
 
   return (
-    <div className="flex min-h-dvh flex-col bg-[#F4F5F7] text-[#0B0B0F]">
-      <header className="sticky top-0 z-20 border-b border-black/5 bg-white/85 px-3 pb-2 pt-[calc(env(safe-area-inset-top)+8px)] backdrop-blur">
-        <div className="flex items-center gap-2">
+    <div ref={pageRef} className="fixed inset-x-0 top-0 flex h-dvh flex-col overflow-hidden bg-[#F4F5F7] text-[#0B0B0F]">
+      <header className="z-20 shrink-0 border-b border-black/5 bg-white px-2 pt-[env(safe-area-inset-top)]">
+        <div className="flex h-14 items-center gap-1">
           <button
             type="button"
             onClick={() => navigate('/m')}
-            className="grid h-10 w-10 shrink-0 place-items-center rounded-full text-black/55 hover:bg-black/5 hover:text-black"
+            className="grid h-11 w-11 shrink-0 place-items-center rounded-full text-black/55 hover:bg-black/5 hover:text-black"
             aria-label="返回"
           >
             <ArrowLeft className="h-4 w-4" />
@@ -241,30 +262,30 @@ export function MobileRun() {
           <button
             type="button"
             onClick={() => setHistoryOpen(true)}
-            className="grid h-10 w-10 place-items-center rounded-full text-black/55 hover:bg-black/5 hover:text-black"
+            className="grid h-11 w-11 place-items-center rounded-full text-black/55 hover:bg-black/5 hover:text-black"
             aria-label="历史记录"
           >
             <History className="h-4 w-4" />
           </button>
-          {app.can_edit ? (
-            <button
-              type="button"
-              onClick={() => setSettingsOpen(true)}
-              className="grid h-10 w-10 place-items-center rounded-full text-black/55 hover:bg-black/5 hover:text-black"
-              aria-label="运行设置"
-            >
-              <Settings2 className="h-4 w-4" />
-            </button>
-          ) : null}
+          <AiActivityDock compact />
+          <Menu as="div" className="relative shrink-0">
+            <MenuButton type="button" aria-label="运行菜单" className="grid h-11 w-11 place-items-center rounded-full text-black/55 hover:bg-black/5"><MoreHorizontal className="h-5 w-5" /></MenuButton>
+            <MenuItems anchor="bottom end" className="z-[85] mt-1 w-44 rounded-2xl bg-white p-1 shadow-xl ring-1 ring-black/5 focus:outline-none">
+              {app.can_edit ? <MenuItem>{({ focus }) => <button type="button" onClick={() => navigate(`/m/apps/${app.id}/editor`)} className={`flex min-h-11 w-full items-center gap-2 rounded-xl px-3 text-sm ${focus ? 'bg-black/5' : ''}`}><Pencil className="h-4 w-4" />编辑工作流</button>}</MenuItem> : null}
+              {app.can_edit ? <MenuItem>{({ focus }) => <button type="button" onClick={() => setSettingsOpen(true)} className={`flex min-h-11 w-full items-center gap-2 rounded-xl px-3 text-sm ${focus ? 'bg-black/5' : ''}`}><Settings2 className="h-4 w-4" />运行设置</button>}</MenuItem> : null}
+              <MenuItem disabled={canStop || status === 'starting' || !app.can_run}>{({ focus, disabled }) => <button type="button" disabled={disabled} onClick={() => { resetRun(); setInputValue(''); setAttachments([]); setView('result'); }} className={`flex min-h-11 w-full items-center gap-2 rounded-xl px-3 text-sm disabled:opacity-35 ${focus ? 'bg-black/5' : ''}`}><RotateCcw className="h-4 w-4" />新运行</button>}</MenuItem>
+            </MenuItems>
+          </Menu>
         </div>
-        <div className="mt-2 h-1 overflow-hidden rounded-full bg-black/[0.06]">
+        <div className="h-0.5 overflow-hidden bg-black/[0.06]">
           <div className="h-full rounded-full bg-black/70 transition-[width] duration-300" style={{ width: `${progress.percent}%` }} />
         </div>
       </header>
 
-      <main className="min-h-0 flex-1 overflow-y-auto px-4 pb-4 pt-4">
+      {resultReady && !waitingInput ? <Segmented value={view} onChange={setView} hasFiles={artifactsState.artifacts.length > 0} /> : null}
+      <main aria-label="运行内容" className={`min-h-0 flex-1 overflow-y-auto overscroll-contain ${resultReady && view === 'result' ? 'bg-white' : 'p-4'}`}>
         {mode === 'replay' && replay ? (
-          <div className="mb-3 rounded-2xl border border-black/10 bg-white px-3 py-2 text-xs text-black/60 shadow-card">
+          <div className="border-b border-black/5 bg-white px-4 py-1.5 text-[11px] text-black/45">
             正在查看历史记录 · {formatDate(replay.started_at)}
           </div>
         ) : null}
@@ -279,19 +300,16 @@ export function MobileRun() {
         ) : status === 'starting' ? (
           <StartingPanel />
         ) : waitingInput ? (
-          <div className="min-h-[60dvh]">
+          <div className="flex min-h-full flex-col">
             <WaitingInputPanel />
           </div>
         ) : status === 'interrupted' ? (
           <InterruptedPanel onContinue={() => void continueRun()} onRestart={() => void restartFromCurrentRun()} />
         ) : (
           <>
-            {outputReady || status === 'success' || status === 'failed' || status === 'cancelled' ? (
-              <Segmented value={view} onChange={setView} />
-            ) : null}
             {view === 'result' && (outputReady || status === 'success' || status === 'failed' || status === 'cancelled') ? (
-              <ResultView outputs={outputs} steps={steps} status={status} error={error} runId={runId} />
-            ) : (
+              <ResultView outputs={outputs} steps={steps} status={status} error={error} artifactsState={artifactsState} />
+            ) : view === 'files' ? <RunArtifactsPanel runId={runId} density="mobile" state={artifactsState} /> : (
               <ProcessView nodes={runGraphNodes} steps={steps} deltas={deltas} progress={progress} status={status} />
             )}
           </>
@@ -299,7 +317,7 @@ export function MobileRun() {
 
       </main>
 
-      <footer className="shrink-0 border-t border-black/5 bg-white/90 px-4 pb-[calc(env(safe-area-inset-bottom)+12px)] pt-3 backdrop-blur">
+      {!waitingInput && (showIdle || canStop || status === 'starting') ? <footer className="shrink-0 border-t border-black/5 bg-white/90 px-4 pb-[calc(env(safe-area-inset-bottom)+8px)] pt-2 backdrop-blur">
         {showIdle ? (
           <StartComposer
             input={activeInput}
@@ -320,7 +338,7 @@ export function MobileRun() {
             <Loader2 className="h-4 w-4 animate-spin" />
             启动中...
           </button>
-        ) : canStop ? (
+        ) : (
           <button
             type="button"
             onClick={() => void cancelRun()}
@@ -329,35 +347,14 @@ export function MobileRun() {
             <Square className="h-4 w-4 fill-current" />
             停止运行
           </button>
-        ) : (
-          <div className="grid grid-cols-[1fr_auto] gap-2">
-            <button
-              type="button"
-              disabled={!app?.can_run}
-              onClick={() => {
-                resetRun();
-                setInputValue('');
-                setAttachments([]);
-                setView('result');
-              }}
-              className="flex h-11 items-center justify-center gap-2 rounded-full bg-black text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              <RotateCcw className="h-4 w-4" />
-              新运行
-            </button>
-            {running ? (
-              <button type="button" className="h-11 rounded-full border border-black/10 px-4 text-sm text-black/55">
-                {STATUS_LABEL[status]}
-              </button>
-            ) : null}
-          </div>
         )}
-      </footer>
+      </footer> : null}
 
-      <MobileRunHistorySheet
+      <RunHistoryDrawer
         open={historyOpen}
-        onOpenChange={setHistoryOpen}
-        app={app}
+        onClose={() => setHistoryOpen(false)}
+        appId={app.id}
+        appName={app.name}
         currentRunId={runId}
         onSelectRun={(run) => {
           if (isRestorableRunStatus(run.status)) {
@@ -409,7 +406,7 @@ function IdlePanel({
   return (
     <section className="space-y-4">
       <div
-        className="aspect-video overflow-hidden rounded-[24px] bg-neutral-950 p-4 text-white shadow-card"
+        className={`${coverUrl ? 'aspect-video bg-neutral-950 text-white' : 'border border-black/5 bg-white text-black'} overflow-hidden rounded-[20px] p-4 shadow-card`}
         style={
           coverUrl
             ? {
@@ -421,14 +418,14 @@ function IdlePanel({
         }
       >
         <div className="flex h-full flex-col justify-end">
-          <div className="mb-2 flex items-center gap-2 text-[10px] text-white/65">
-            <span className="rounded-full bg-white/15 px-2 py-0.5 backdrop-blur">
+          <div className="mb-2 flex items-center gap-2 text-[10px] opacity-60">
+            <span className="rounded-full bg-black/5 px-2 py-0.5">
               {app.archived_at ? '已下架' : app.status === 'published' ? '已发布' : '草稿'}
             </span>
-            {app.can_view_source ? <span>{app.graph.nodes.length} nodes</span> : null}
+            {app.can_view_source ? <span>{app.graph.nodes.length} 个步骤</span> : null}
           </div>
           <h1 className="text-xl font-semibold leading-tight">{app.name}</h1>
-          <p className="mt-2 line-clamp-2 text-sm leading-5 text-white/68">
+          <p className="mt-2 line-clamp-2 text-sm leading-5 opacity-65">
             {app.description || '输入内容后运行这个 Mira 应用。'}
           </p>
         </div>
@@ -450,12 +447,12 @@ function StartingPanel() {
   return (
     <section className="rounded-[22px] border border-blue-200 bg-blue-50 p-4 text-blue-900 shadow-card">
       <div className="flex items-center gap-3">
-        <div className="grid h-10 w-10 place-items-center rounded-full bg-blue-600 text-white">
+        <div className="grid h-11 w-11 place-items-center rounded-full bg-blue-600 text-white">
           <Loader2 className="h-5 w-5 animate-spin" />
         </div>
         <div>
           <div className="text-sm font-semibold">正在创建运行</div>
-          <div className="mt-1 text-xs text-blue-700">拿到 run_id 后会开始接收实时事件。</div>
+          <div className="mt-1 text-xs text-blue-700">正在准备运行，请稍候。</div>
         </div>
       </div>
     </section>
@@ -540,7 +537,7 @@ function ProcessView({
     <section className="space-y-3">
       <div className="rounded-[22px] border border-black/10 bg-white p-4 shadow-card">
         <div className="flex items-center gap-3">
-          <div className="grid h-10 w-10 place-items-center rounded-full bg-black text-white">
+          <div className="grid h-11 w-11 place-items-center rounded-full bg-black text-white">
             {finished ? <CheckCircle2 className="h-5 w-5" /> : <Loader2 className="h-5 w-5 animate-spin" />}
           </div>
           <div className="min-w-0 flex-1">
@@ -616,15 +613,14 @@ function ResultView({
   steps,
   status,
   error,
-  runId,
+  artifactsState,
 }: {
   outputs: WorkflowNode[];
   steps: Record<string, Step>;
   status: Run['status'];
   error: string | null;
-  runId: string | null;
+  artifactsState: RunArtifactsState;
 }) {
-  const artifactsState = useRunArtifacts(runId, status);
 
   return (
     <section className="space-y-3">
@@ -638,19 +634,12 @@ function ResultView({
         const step = steps[node.id];
         const text = formatOutputValue(step?.output);
         return (
-          <article key={node.id} className="overflow-hidden rounded-[22px] border border-black/10 bg-white shadow-card">
-            <header className="flex items-center justify-between gap-2 border-b border-black/5 px-4 py-3">
-              <div className="truncate text-sm font-semibold">{node.title || '输出'}</div>
-              <span className="rounded-full bg-black/[0.04] px-2 py-0.5 text-[10px] text-black/45">
-                {STEP_LABEL[step?.status ?? 'pending']}
-              </span>
-            </header>
+          <article key={node.id} className="min-w-0 bg-white">
             {text ? (
-              <HtmlOutputFrame
+              <HtmlOutputPreview
                 html={text}
                 artifacts={artifactsState.artifacts}
                 title={node.title || '输出'}
-                className="block h-[62dvh] w-full border-0 bg-white"
               />
             ) : (
               <div className="px-4 py-10 text-center text-sm text-black/45">
@@ -668,7 +657,6 @@ function ResultView({
           这个应用没有输出节点。
         </div>
       ) : null}
-      <RunArtifactsPanel runId={runId} density="mobile" state={artifactsState} />
     </section>
   );
 }
@@ -689,93 +677,10 @@ function InterruptedPanel({ onContinue, onRestart }: { onContinue(): void; onRes
   );
 }
 
-function Segmented({ value, onChange }: { value: View; onChange(value: View): void }) {
-  return (
-    <div className="mb-3 grid grid-cols-2 rounded-full bg-black/[0.05] p-1 text-sm">
-      <button type="button" onClick={() => onChange('result')} className={`h-9 rounded-full ${value === 'result' ? 'bg-white font-medium shadow-sm' : 'text-black/50'}`}>结果</button>
-      <button type="button" onClick={() => onChange('process')} className={`h-9 rounded-full ${value === 'process' ? 'bg-white font-medium shadow-sm' : 'text-black/50'}`}>过程</button>
-    </div>
-  );
-}
-
-function MobileRunHistorySheet({
-  open,
-  onOpenChange,
-  app,
-  currentRunId,
-  onSelectRun,
-}: {
-  open: boolean;
-  onOpenChange(open: boolean): void;
-  app: App;
-  currentRunId: string | null;
-  onSelectRun(run: Run): void;
-}) {
-  const [runs, setRuns] = useState<RunSummary[] | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [selectingId, setSelectingId] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!open) {
-      setSelectingId(null);
-      return;
-    }
-    let cancelled = false;
-    setLoading(true);
-    void api
-      .listRunSummaries(app.id)
-      .then((data) => {
-        if (!cancelled) setRuns(data);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [open, app.id]);
-
-  const selectRun = async (id: string) => {
-    setSelectingId(id);
-    try {
-      const run = await api.getRun(id);
-      onSelectRun(run);
-    } catch (error) {
-      showCaughtError(error, '加载历史运行失败', '加载历史运行失败');
-    } finally {
-      setSelectingId(null);
-    }
-  };
-
-  return (
-    <MobileSheet open={open} onOpenChange={onOpenChange} title="历史记录" description="查看并选择应用的历史运行记录。">
-      {loading && !runs ? <div className="py-8 text-center text-sm text-black/45">加载中...</div> : null}
-      {runs?.length === 0 ? (
-        <div className="py-10 text-center text-sm text-black/45">暂无运行记录</div>
-      ) : null}
-      <div className="space-y-2">
-        {(runs ?? []).map((run) => (
-          <button
-            key={run.id}
-            type="button"
-            disabled={selectingId !== null}
-            onClick={() => void selectRun(run.id)}
-            className={`w-full rounded-2xl border px-3 py-3 text-left ${
-              run.id === currentRunId ? 'border-black/35 bg-black/[0.04]' : 'border-black/10 bg-white'
-            }`}
-          >
-            <div className="flex items-center justify-between gap-2">
-              <span className="truncate text-sm font-medium text-black/80">
-                {selectingId === run.id ? '加载中...' : run.name || summarizeInputs(run.inputs) || app.name}
-              </span>
-              <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] ${statusTone(run.status)}`}>{STATUS_LABEL[run.status]}</span>
-            </div>
-            <div className="mt-1 text-xs text-black/42">{formatDate(run.started_at)}</div>
-          </button>
-        ))}
-      </div>
-    </MobileSheet>
-  );
+function Segmented({ value, onChange, hasFiles }: { value: View; onChange(value: View): void; hasFiles: boolean }) {
+  return <nav aria-label="运行视图" className="flex shrink-0 border-b border-black/5 bg-white px-3">
+    {([['result', '结果'], ['process', '过程'], ...(hasFiles ? [['files', '文件']] : [])] as [View, string][]).map(([key, label]) => <button key={key} type="button" aria-pressed={value === key} onClick={() => onChange(key)} className={`h-11 flex-1 border-b-2 text-sm ${value === key ? 'border-black font-semibold text-black' : 'border-transparent text-black/45'}`}>{label}</button>)}
+  </nav>;
 }
 
 function MobileRunSettingsSheet({
@@ -971,21 +876,6 @@ function stepDot(status: Step['status']): string {
   }
 }
 
-function statusTone(status: Run['status']): string {
-  switch (status) {
-    case 'success':
-      return 'bg-emerald-50 text-emerald-700';
-    case 'failed':
-      return 'bg-red-50 text-red-700';
-    case 'running':
-      return 'bg-blue-50 text-blue-700';
-    case 'waiting_for_user':
-    case 'interrupted':
-      return 'bg-amber-50 text-amber-700';
-    default:
-      return 'bg-black/[0.04] text-black/50';
-  }
-}
 
 function formatDuration(ms: number | undefined): string {
   if (!ms) return '';
@@ -1003,19 +893,4 @@ function formatDate(iso: string | null | undefined): string {
   if (Number.isNaN(date.getTime())) return iso;
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
-}
-
-function summarizeInputs(inputs: Run['inputs']): string {
-  for (const value of Object.values(inputs ?? {})) {
-    if (typeof value === 'string' && value.trim()) return value.trim();
-    if (value && typeof value === 'object') {
-      const record = value as { value?: unknown; attachments?: unknown };
-      if (typeof record.value === 'string' && record.value.trim()) return record.value.trim();
-      if (Array.isArray(record.attachments)) {
-        const first = record.attachments.find((item) => item && typeof item === 'object' && typeof (item as { name?: unknown }).name === 'string');
-        if (first) return String((first as { name: string }).name);
-      }
-    }
-  }
-  return '';
 }

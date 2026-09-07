@@ -43,17 +43,17 @@ export function AppDialog({
     <Dialog open={open} onClose={dismissible ? onClose : () => undefined} className="relative z-[80]">
       <DialogBackdrop className="fixed inset-0 bg-black/35 backdrop-blur-[2px]" />
       <div className="fixed inset-0 overflow-y-auto">
-        <div className="flex min-h-full items-center justify-center p-4">
+        <div className="flex min-h-full items-center justify-center px-3 py-[max(12px,env(safe-area-inset-top))] sm:p-4">
           <DialogPanel
-            className={`w-full ${widthClassName} rounded-[24px] bg-white p-6 shadow-[0_20px_70px_rgba(0,0,0,0.18)] ring-1 ring-black/5`}
+            className={`w-full ${widthClassName} rounded-[20px] bg-white p-4 sm:rounded-[24px] sm:p-6 shadow-[0_20px_70px_rgba(0,0,0,0.18)] ring-1 ring-black/5`}
           >
-            <div className="flex items-start justify-between gap-4">
-              <div>
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
                 <DialogTitle className="text-lg font-semibold tracking-tight text-black">
                   {title}
                 </DialogTitle>
                 {description ? (
-                  <Description className="mt-2 text-sm leading-6 text-black/65">
+                  <Description as="div" className="mt-2 text-sm leading-6 text-black/65">
                     {description}
                   </Description>
                 ) : null}
@@ -61,14 +61,14 @@ export function AppDialog({
               <button
                 type="button"
                 onClick={onClose}
-                className="rounded-full p-1.5 text-black/45 transition hover:bg-black/5 hover:text-black/70"
+                className="grid h-11 w-11 shrink-0 place-items-center rounded-full text-black/45 transition sm:h-8 sm:w-8 hover:bg-black/5 hover:text-black/70"
                 aria-label="关闭弹窗"
               >
                 ✕
               </button>
             </div>
             {children ? <div className="mt-5">{children}</div> : null}
-            {footer ? <div className="mt-6 flex items-center justify-end gap-3">{footer}</div> : null}
+            {footer ? <div className="mt-6 flex flex-wrap items-center justify-end gap-2 sm:gap-3">{footer}</div> : null}
           </DialogPanel>
         </div>
       </div>

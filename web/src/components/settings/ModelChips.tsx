@@ -63,7 +63,7 @@ export function ModelChips({
             onClick={() => remove(index)}
             disabled={disabled}
             aria-label={`移除 ${tag}`}
-            className="-mr-0.5 inline-flex h-4 w-4 items-center justify-center rounded-full text-white/70 transition hover:bg-white/15 hover:text-white disabled:cursor-not-allowed"
+            className="-mr-0.5 inline-flex h-7 w-7 sm:h-4 sm:w-4 items-center justify-center rounded-full text-white/70 transition hover:bg-white/15 hover:text-white disabled:cursor-not-allowed"
           >
             ×
           </button>
@@ -77,7 +77,7 @@ export function ModelChips({
         disabled={disabled}
         spellCheck={false}
         placeholder={modelValues.length === 0 ? emptyPlaceholder : morePlaceholder}
-        className="min-w-[140px] flex-1 bg-transparent px-1 py-1 font-mono text-xs text-black outline-none placeholder:text-black/30 disabled:cursor-wait"
+        className="min-w-[140px] flex-1 bg-transparent px-1 py-1 font-mono text-base sm:text-xs text-black outline-none placeholder:text-black/30 disabled:cursor-wait"
       />
     </div>
   );

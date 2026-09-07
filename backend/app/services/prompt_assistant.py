@@ -49,6 +49,16 @@ _INTERNAL_VISIBLE_PROMPT_TERMS = (
     "reasoning_effort",
     "node_id",
     "edge_id",
+    "success_field",
+    "success_value",
+    "failure_kind",
+    "agent_session_id",
+    "runtime_policy",
+    "session_scope",
+    "step.delta",
+    "run_events",
+    "自动修复机制",
+    "根因恢复 1/1",
     "{{node.output}}",
     "{{source.output}}",
     "/workspace/.mira/run-context/",
@@ -71,6 +81,7 @@ class PromptAssistantSession:
     cancel_event: asyncio.Event
     prompt: str
     graph: dict[str, Any]
+    node_id: str | None = None
     task: asyncio.Task[None] | None = None
     resume_future: asyncio.Future[DecisionResult] | None = None
     current_request: DecisionRequest | None = None
@@ -160,7 +171,7 @@ async def generate_prompt_assistant(
         user_id=user_id,
         app_id=app.id,
         status="running",
-        prompt_json=_json_dumps({"prompt": prompt, "graph": graph}),
+        prompt_json=_json_dumps({"prompt": prompt, "graph": graph, "node_id": payload.node_id}),
         model=None,
         reasoning_effort=None,
         history_json="[]",
@@ -181,6 +192,7 @@ async def _start_prompt_assistant_session_from_row(
     payload = _prompt_payload(row)
     prompt = str(payload.get("prompt") or "")
     graph = prepare_planning_graph(payload.get("graph")) if isinstance(payload.get("graph"), dict) else {}
+    node_id = payload.get("node_id") if isinstance(payload.get("node_id"), str) else None
     if not prompt or not graph:
         raise HTTPException(status_code=502, detail="提示词生成会话缺少可恢复上下文")
     await runtime_config.write_configs(db)
@@ -194,6 +206,7 @@ async def _start_prompt_assistant_session_from_row(
         cancel_event=asyncio.Event(),
         prompt=prompt,
         graph=graph,
+        node_id=node_id,
     )
     _generation_sessions[row.id] = session
     session.task = asyncio.create_task(
@@ -270,6 +283,9 @@ async def _run_prompt_assistant_session(
             runtime_policy="plan",
             forbidden_prompt_terms=prompt_internal_terms(session.graph),
         )
+        target_node = _node_by_id(session.graph, session.node_id) if session.node_id else None
+        if _has_business_gate(target_node) and generated.output_contract is not None:
+            generated = PromptAssistantResult(prompt=generated.prompt, output_contract=None)
         completed = {
             "status": "completed",
             "prompt": generated.prompt,
@@ -688,6 +704,11 @@ def _contract_rules(node: dict[str, Any]) -> str:
     )
 
 
+def _has_business_gate(node: dict[str, Any] | None) -> bool:
+    contract = node.get("output_contract") if isinstance(node, dict) else None
+    return isinstance(contract, dict) and isinstance(contract.get("success_field"), str)
+
+
 def _app_context(app: App) -> str:
     lines = [f"- 应用名称：{app.name}"]
     description = str(app.description or "").strip()
@@ -763,7 +784,12 @@ def _node_summary(node: dict, *, detail: str) -> str:
     if node_type == "generate":
         contract = node.get("output_contract")
         if isinstance(contract, dict):
-            contract_text = json.dumps(contract, ensure_ascii=False, sort_keys=True)
+            visible_contract = {
+                key: value
+                for key, value in contract.items()
+                if key not in {"success_field", "success_value"}
+            }
+            contract_text = json.dumps(visible_contract, ensure_ascii=False, sort_keys=True)
             if detail != "full":
                 contract_text = _clip_head_tail(contract_text, _RELATED_PROMPT_LIMIT)
             lines.append(f"- 当前 output_contract：{contract_text}")

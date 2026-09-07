@@ -63,40 +63,47 @@ interface EditorStoreState {
 
 // Debounced save. One timer per store instance, fine since editor is singleton.
 let saveTimer: number | undefined;
+let saveInFlight: Promise<void> | null = null;
 let saveVersion = 0;
 let editVersion = 0;
 let loadVersion = 0;
 
-async function performSave(
+function performSave(
   get: () => EditorStoreState,
   set: (p: Partial<EditorStoreState>) => void,
   opts: { throwOnError?: boolean } = {},
-) {
+): Promise<void> {
   const version = ++saveVersion;
   const requestedEditVersion = editVersion;
   const app = get().app;
-  if (!app) return;
-  const appId = app.id;
+  if (!app) return Promise.resolve();
+  const previousSave = saveInFlight;
   set({ saveStatus: 'saving', saveError: null });
-  try {
-    const updated = await api.patchApp(app.id, {
-      name: app.name,
-      description: app.description,
-      cover: app.cover,
-      graph: app.graph,
-    });
-    const current = get().app;
-    if (version !== saveVersion || !current || current.id !== appId) return;
-    if (editVersion !== requestedEditVersion) return;
-    // refresh in-memory app (timestamps moved) without re-resetting history
-    set({ app: updated, saveStatus: 'saved', saveError: null });
-  } catch (error) {
-    if (version !== saveVersion) return;
-    if (editVersion !== requestedEditVersion) return;
-    const message = error instanceof Error ? error.message : '保存失败';
-    set({ saveStatus: 'error', saveError: message });
-    if (opts.throwOnError) throw error;
-  }
+  const saving = (async () => {
+    // Serialize writes so an older response cannot overwrite newer edits on the server.
+    await previousSave?.catch(() => undefined);
+    try {
+      const updated = await api.patchApp(app.id, {
+        name: app.name,
+        description: app.description,
+        cover: app.cover,
+        graph: app.graph,
+      });
+      const current = get().app;
+      if (version !== saveVersion || !current || current.id !== app.id) return;
+      if (editVersion !== requestedEditVersion) return;
+      set({ app: updated, saveStatus: 'saved', saveError: null });
+    } catch (error) {
+      if (version !== saveVersion || editVersion !== requestedEditVersion) return;
+      const message = error instanceof Error ? error.message : '保存失败';
+      set({ saveStatus: 'error', saveError: message });
+      if (opts.throwOnError) throw error;
+    }
+  })();
+  saveInFlight = saving;
+  const clear = () => { if (saveInFlight === saving) saveInFlight = null; };
+  void saving.then(clear, clear);
+  return saving;
 }
 
 function scheduleSave(get: () => EditorStoreState, set: (p: Partial<EditorStoreState>) => void) {
@@ -114,17 +121,18 @@ async function flushPendingSave(
   get: () => EditorStoreState,
   set: (p: Partial<EditorStoreState>) => void,
 ) {
-  if (!saveTimer) {
-    if (get().saveStatus === 'dirty') {
+  while (saveTimer || saveInFlight || get().saveStatus === 'dirty') {
+    if (saveTimer) {
+      window.clearTimeout(saveTimer);
+      saveTimer = undefined;
       await performSave(get, set, { throwOnError: true });
-      return;
+    } else if (saveInFlight) {
+      await saveInFlight;
+    } else {
+      await performSave(get, set, { throwOnError: true });
     }
-    if (get().saveStatus === 'error') throw new Error(get().saveError ?? '保存失败');
-    return;
   }
-  window.clearTimeout(saveTimer);
-  saveTimer = undefined;
-  await performSave(get, set, { throwOnError: true });
+  if (get().saveStatus === 'error') throw new Error(get().saveError ?? '保存失败');
 }
 
 function pushHistory(history: History, graph: Graph): History {

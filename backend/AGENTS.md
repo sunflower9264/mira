@@ -42,10 +42,10 @@
 - 一次 Run 由一个逻辑 RunAgent 管理 thread lineage、branch workspace 和 checkpoint。线性节点复用 thread/workspace；真实 fan-out 才 `thread/fork` 并复制 checkpoint，fan-in 由协调 Codex 基于完整分支证据合并并校验 receipt。
 - `user_input` 接受文本、附件或两者组合，至少一项非空；它与 `asset` 都把上下文写入 `.mira/run-context/`，附件副本写入 `inputs/`；`/mnt/inputs` 只暂挂当前决策请求附件。不要恢复 `/mnt/results`、每节点独立 workspace 或手工 sidecar/handoff 通道。
 - 除 `output` 外的 LLM 节点先以 `collaborationMode=plan` 判断是否缺少关键用户决策；原生 `item/tool/requestUserInput` 归一化为 Mira waiting/resume，并用同一 JSON-RPC request id 回填。执行 turn 使用可写 policy；不通过 prompt 或 MCP 另造提问协议。
-- `generate.output_contract` 支持 `json`、`html`、`artifact`；未配置即自由文本。JSON 需要受支持子集内的 strict object schema；HTML 使用 `{"html":"..."}`；artifact 只接受当前 branch workspace 内的真实文件并提交到 run 级只读 artifact 目录。`output` 节点始终是 HTML-only 最终展示节点。
+- `generate.output_contract` 支持 `json`、`html`、`artifact`；未配置即自由文本。JSON 需要受支持子集内的 strict object schema；业务门禁可用 `success_field` 与 `success_value` 声明，首次不匹配时在同一 thread/workspace 内根因恢复并复验一次，仍不匹配才形成 contract Step/Run failure。HTML 使用 `{"html":"..."}`；artifact 只接受当前 branch workspace 内的真实文件并提交到 run 级只读 artifact 目录。`output` 节点始终是 HTML-only 最终展示节点。
 - 正式产物只来自成功 artifact contract Step 的版本化 Envelope，含 holder/origin/可选 reused_from、相对路径、大小、SHA-256、kind 和 manifest version。Files API 与 Trace 的 artifact 部分不扫描 workspace、不新增 artifact 表、不返回内部路径；下载链接绑定 hash，已修改文件不可下载，Run 成功前还会统一复验。
 - Artifact 文本及受支持归档成员拒绝 U+FFFD、危险路径/链接/特殊文件和伪造容器。`validate_office_documents=true` 仅适用于 `docx`、`excel`、`ppt`、`zip`、`file`，并要求宿主机隔离校验器真实转换、检查页数和文字边界；基础设施缺失时 fail closed。
-- ready 节点按直接前置依赖并发执行。Run 仅在唯一 output Step 成功、其他 Step 为 `success` / `skipped` / checkpoint reuse，且 artifact 复验通过后成功；引擎失败用 `runtime`、`contract`、`routing`、`integrity`、`internal` 分类，业务验收不通过仍是正常业务输出。
+- ready 节点按直接前置依赖并发执行。Run 仅在唯一 output Step 成功、其他 Step 为 `success` / `skipped` / checkpoint reuse，且 artifact 复验通过后成功；引擎失败用 `runtime`、`contract`、`routing`、`integrity`、`internal` 分类。普通业务验收结果仍是正常业务输出；显式配置 `success_field` / `success_value` 的控制流门禁例外，未通过时属于 contract failure。
 - rerun-from 创建新 Run，读取当前 App graph，但从来源 Run 的 cut 前 checkpoint/thread lineage/Step 结果冻结复用；没有有效 pre-checkpoint 返回 409，旧 Run 保持只读。condition 分支测试只在新 Run snapshot 写 override。
 - `run_only` 市场应用对非 owner 可运行但不可克隆；App/Run/SSE/artifact 走集中脱敏，Step Trace 对受保护 viewer 返回 403。`system_gallery` 是只读 seed 源，只能克隆后编辑。
 

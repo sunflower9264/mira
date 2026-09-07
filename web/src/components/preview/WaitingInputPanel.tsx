@@ -184,15 +184,12 @@ export function WaitingInputPanel() {
 
   return (
     <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-black/10 bg-white shadow-card">
-      <header className="shrink-0 px-6 pt-6 pb-4">
+      <header className="shrink-0 px-4 pt-4 pb-3">
         <div className="flex items-start gap-4">
           <div className="min-w-0 flex-1">
             <div className="text-[11px] font-medium uppercase tracking-wider text-amber-600">
               等待补充输入
             </div>
-            <h3 className="mt-1.5 text-lg font-semibold text-black/85">
-              等待你的选择
-            </h3>
           </div>
           {canStop ? (
             <button
@@ -213,7 +210,7 @@ export function WaitingInputPanel() {
       </header>
 
       {/* 选项区：撑满剩余空间，溢出可滚动；没有 groups 时占位让输入框落到底部。 */}
-      <div className="min-h-0 flex-1 overflow-y-auto px-6">
+      <div className="min-h-0 flex-1 overflow-y-auto px-4">
         {groups.length > 0 ? (
           <DecisionPromptPanel
             context={waitingInput.context}
@@ -231,7 +228,7 @@ export function WaitingInputPanel() {
       </div>
 
       {/* 输入框（含附件）：发送按钮统一提交选项、文字和文件。 */}
-      <div className={`shrink-0 px-6 pt-3 pb-6 ${submitting ? 'opacity-75' : ''}`}>
+      <div className={`shrink-0 px-4 pt-3 pb-4 ${submitting ? 'opacity-75' : ''}`}>
         {showSubmitButton ? (
           <button
             type="button"

@@ -274,7 +274,7 @@ export function RunHistoryDrawer({
                       <button
                         type="button"
                         onClick={() => setEditingId(null)}
-                        className="rounded-full px-2.5 py-1 text-[11px] text-black/55 hover:bg-black/5 hover:text-black"
+                        className="min-h-10 rounded-full px-3 py-2 text-xs md:min-h-0 md:px-2.5 md:py-1 md:text-[11px] text-black/55 hover:bg-black/5 hover:text-black"
                       >
                         取消
                       </button>
@@ -282,7 +282,7 @@ export function RunHistoryDrawer({
                         type="button"
                         disabled={saving || compactText(draftName).length === 0}
                         onClick={() => void submitRename(run.id)}
-                        className="rounded-full bg-black px-2.5 py-1 text-[11px] text-white hover:bg-black/80 disabled:cursor-not-allowed disabled:opacity-40"
+                        className="min-h-10 rounded-full bg-black px-3 py-2 text-xs md:min-h-0 md:px-2.5 md:py-1 md:text-[11px] text-white hover:bg-black/80 disabled:cursor-not-allowed disabled:opacity-40"
                       >
                         保存
                       </button>
@@ -305,14 +305,14 @@ export function RunHistoryDrawer({
                         {STATUS_LABEL[run.status]}
                       </span>
                     </div>
-                    <div className="mt-1 truncate pr-14 text-sm text-black/80" title={name}>
+                    <div className="mt-1 truncate md:pr-14 text-sm text-black/80" title={name}>
                       {selecting ? '加载中...' : displayName}
                     </div>
                   </button>
                 )}
                 {!editing && (
                   confirming ? (
-                    <div className="absolute bottom-1.5 right-2 flex items-center gap-1">
+                    <div className="flex items-center justify-end gap-1 px-2 pb-1 md:absolute md:bottom-1.5 md:right-2 md:p-0">
                       <button
                         type="button"
                         onClick={(event) => {
@@ -330,13 +330,13 @@ export function RunHistoryDrawer({
                           event.stopPropagation();
                           void handleDelete(run.id);
                         }}
-                        className="rounded-full bg-red-600 px-2.5 py-1 text-[11px] text-white hover:bg-red-700"
+                        className="min-h-10 rounded-full bg-red-600 px-3 py-2 text-xs md:min-h-0 md:px-2.5 md:py-1 md:text-[11px] text-white hover:bg-red-700"
                       >
                         删除
                       </button>
                     </div>
                   ) : (
-                    <div className="absolute bottom-1.5 right-2 flex items-center gap-1 opacity-0 transition group-hover:opacity-100">
+                    <div className="flex items-center justify-end gap-1 px-2 pb-1 opacity-100 transition md:absolute md:bottom-1.5 md:right-2 md:p-0 md:opacity-0 md:group-hover:opacity-100 md:focus-within:opacity-100">
                       <button
                         type="button"
                         aria-label="编辑名称"
@@ -345,7 +345,7 @@ export function RunHistoryDrawer({
                           event.stopPropagation();
                           startEditing(run);
                         }}
-                        className="rounded-full p-1.5 text-black/35 hover:bg-black/5 hover:text-black"
+                        className="grid h-10 w-10 place-items-center rounded-full md:h-auto md:w-auto md:p-1.5 text-black/35 hover:bg-black/5 hover:text-black"
                       >
                         <EditIcon className="h-3.5 w-3.5" />
                       </button>
@@ -358,7 +358,7 @@ export function RunHistoryDrawer({
                           event.stopPropagation();
                           armConfirm(run.id);
                         }}
-                        className="rounded-full p-1.5 text-black/35 hover:bg-red-50 hover:text-red-600 disabled:opacity-40"
+                        className="grid h-10 w-10 place-items-center rounded-full md:h-auto md:w-auto md:p-1.5 text-black/35 hover:bg-red-50 hover:text-red-600 disabled:opacity-40"
                       >
                         <TrashIcon className="h-3.5 w-3.5" />
                       </button>

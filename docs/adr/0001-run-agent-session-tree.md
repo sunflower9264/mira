@@ -17,7 +17,7 @@
 2. `user_input` 与 `asset` 不创建独立数据总线，而是在 Agent 首次使用前写入 branch workspace 的 `.mira/run-context/`；`user_input` 可提交文本、附件或两者组合，附件复制到 `inputs/`。
 3. 真正 fan-out 在父节点 post-checkpoint 上创建子 branch：checkpoint 是版本化 manifest 与不可变内容对象，分支从指定 manifest 物化为独立可写 workspace；Codex App Server 使用 `thread/fork` 创建子 thread。
 4. fan-in 不做“最后写入胜出”或后端主分支选择。协调 Agent必须读取共同父、所有 branch snapshot、branch context 和 diff manifest，完成合并并返回严格 receipt。后端验证覆盖路径、来源集合、删除状态、hash 以及证据目录未被篡改。
-5. 每个成功节点创建 immutable checkpoint。同一 Run 内相同 SHA-256 文件内容只保存一次，节点 checkpoint 仅重复保存轻量 manifest，因此不依赖宿主文件系统 reflink。节点正式回复仍经过统一 Envelope 和 output contract；一次 repair 在原 thread/workspace 内完成，不回滚工作区。
+5. 每个成功节点创建 immutable checkpoint。同一 Run 内相同 SHA-256 文件内容只保存一次，节点 checkpoint 仅重复保存轻量 manifest，因此不依赖宿主文件系统 reflink。节点正式回复仍经过统一 Envelope 和 output contract；格式型 repair 在原 thread/workspace 内完成一次。显式业务门禁首次失败时，在 Step 终态前用同一 thread/workspace 发起一次根因恢复并重新执行验收；恢复后仍失败则整个 Run 真实失败，不隐式创建新 Run，也不继续重试。
 6. rerun-from 改为 checkpoint rerun：新 Run 克隆 cut 前 manifest/对象引用、必要的精简 scoped HOME 与 thread lineage，冻结 cut 前 step，并只物化 cut checkpoint 的执行 branch；当前 App graph 只执行 cut 与 descendants。当前 Graph 新增的 cut 前节点标记 `checkpoint_reused`。来源 Run 永远只读。
 7. Codex thread ID、branch ID 和 checkpoint ID 是后端内部状态，不出现在 Step/Trace 前端契约。
 8. 需要补充用户决策时，Codex turn 使用 `collaborationMode=plan`；外层 Docker 将 branch workspace 只读挂载，App Server 使用 `externalSandbox`，避免在受限容器中嵌套 Linux sandbox。App Server 的原生 `item/tool/requestUserInput` 由 runtime 归一化后接入现有 waiting/SSE/UI 回答链路，回答通过同一 JSON-RPC request 返回并在同一 turn 内继续；前端消费 `run.resumed` 清除已回答问题，使历史 SSE 重放最终与当前 Run 状态一致。提问只收集当前节点能直接采用的信息，不承担返回上游、改变分支、重新执行节点或重试工具错误；这些控制流由运行结束后的 checkpoint rerun 创建新 Run。规划若仍声明缺少用户决策却没有发起原生提问，只重试一次，随后按 contract 失败并禁止进入执行阶段。

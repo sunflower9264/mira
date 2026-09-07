@@ -30,6 +30,8 @@ ARTIFACT_KINDS = {"image", "code", "html", "markdown", "csv", "excel", "docx", "
 CONTRACT_KEYS = {
     "type",
     "json_schema",
+    "success_field",
+    "success_value",
     "artifact_kind",
     "max_count",
     "validate_office_documents",
@@ -78,6 +80,7 @@ class ContractValidationResult:
     output: Any = None
     error: str | None = None
     repairable: bool = True
+    recovery_kind: Literal["root_cause"] | None = None
 
 
 def output_contract_for_node(node: dict[str, Any]) -> dict[str, Any] | None:
@@ -104,10 +107,22 @@ def normalize_output_contract_config(contract: Any) -> Any:
         return {
             key: value
             for key, value in contract.items()
-            if key not in {"json_schema", "artifact_kind", "max_count", "validate_office_documents"}
+            if key
+            not in {
+                "json_schema",
+                "success_field",
+                "success_value",
+                "artifact_kind",
+                "max_count",
+                "validate_office_documents",
+            }
         }
     if output_type == "artifact":
-        return {key: value for key, value in contract.items() if key != "json_schema"}
+        return {
+            key: value
+            for key, value in contract.items()
+            if key not in {"json_schema", "success_field", "success_value"}
+        }
     return contract
 
 
@@ -134,8 +149,25 @@ def validate_output_contract_config(node: dict[str, Any]) -> str | None:
         schema_error = validate_strict_json_schema(schema)
         if schema_error:
             return f"节点「{label}」json_schema 无效：{schema_error}"
+        success_field = contract.get("success_field")
+        success_value = contract.get("success_value")
+        if (success_field is None) != (success_value is None):
+            return f"节点「{label}」业务门禁必须同时配置 success_field 和 success_value"
+        if success_field is not None:
+            if not isinstance(success_field, str) or not success_field.strip():
+                return f"节点「{label}」output_contract.success_field 必须是非空字符串"
+            if not isinstance(success_value, str) or not success_value:
+                return f"节点「{label}」output_contract.success_value 必须是非空字符串"
+            if success_field not in schema.get("properties", {}) or success_field not in schema.get("required", []):
+                return f"节点「{label}」业务门禁字段必须是 json_schema 的必填顶层字段"
+            try:
+                Draft202012Validator(schema["properties"][success_field]).validate(success_value)
+            except ValidationError as exc:
+                return f"节点「{label}」output_contract.success_value 不符合门禁字段 schema：{exc.message}"
     elif "json_schema" in contract:
         return f"节点「{label}」只有 json 输出契约支持 json_schema"
+    elif "success_field" in contract or "success_value" in contract:
+        return f"节点「{label}」只有 json 输出契约支持业务门禁"
     artifact_kind = contract.get("artifact_kind")
     if output_type == "artifact":
         if artifact_kind not in ARTIFACT_KINDS:
@@ -294,6 +326,16 @@ def validate_contract_output(
             Draft202012Validator(contract["json_schema"]).validate(parsed.output)
         except ValidationError as exc:
             return ContractValidationResult(ok=False, error=f"JSON Schema 校验失败：{exc.message}")
+        success_field = contract.get("success_field")
+        if isinstance(success_field, str) and parsed.output.get(success_field) != contract.get("success_value"):
+            actual = json.dumps(parsed.output.get(success_field), ensure_ascii=False)
+            expected = json.dumps(contract.get("success_value"), ensure_ascii=False)
+            return ContractValidationResult(
+                ok=False,
+                error=f"业务门禁未通过：{success_field}={actual}，要求 {expected}",
+                repairable=False,
+                recovery_kind="root_cause",
+            )
         return ContractValidationResult(ok=True, output=parsed.output)
     if output_type == "html":
         return _validate_html_output(text)

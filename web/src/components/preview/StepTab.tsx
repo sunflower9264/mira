@@ -711,7 +711,13 @@ function PromptField({
     const patch = {
       prompt: result.prompt,
     } as Partial<WorkflowNode>;
-    if (currentNode.type === 'generate' && result.output_contract) {
+    const currentContract = currentNode.type === 'generate' ? currentNode.output_contract : undefined;
+    const hasFixedBusinessGate =
+      currentContract?.type === 'json' &&
+      typeof currentContract.success_field === 'string' &&
+      currentContract.success_field.length > 0 &&
+      typeof currentContract.success_value === 'string';
+    if (currentNode.type === 'generate' && result.output_contract && !hasFixedBusinessGate) {
       const { validate_office_documents, ...contract } = result.output_contract;
       const nextContract: NodeOutputContract =
         typeof validate_office_documents === 'boolean'

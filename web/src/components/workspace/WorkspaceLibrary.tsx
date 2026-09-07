@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { Menu, MenuButton, MenuItem, MenuItems } from '@headlessui/react';
 import { Clock3, FolderKanban, GitBranch, MoreHorizontal, Plus, Sparkles } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { AppDialog } from '../common/AppDialog';
@@ -153,34 +154,30 @@ function WorkspaceCard({
   onRename(): void;
   onDelete(): void;
 }) {
-  const [menuOpen, setMenuOpen] = useState(false);
   const runtime = runtimeCopy(workspace.runtime_status);
   return (
-    <article className="relative flex min-h-44 flex-col overflow-hidden rounded-[22px] border border-black/5 bg-white p-5 shadow-card transition hover:-translate-y-0.5 hover:shadow-[0_10px_30px_rgba(0,0,0,0.08)]">
+    <article className="relative flex min-h-44 flex-col rounded-xl border border-black/10 bg-white p-5 transition hover:border-black/25 hover:shadow-sm">
       <button type="button" onClick={onOpen} className="absolute inset-0 z-0" aria-label={`打开 ${workspace.name}`} />
       <div className="relative z-10 flex items-start justify-between gap-3 pointer-events-none">
         <div className="grid h-10 w-10 place-items-center rounded-2xl bg-black text-white shadow-sm">
           <FolderKanban className="h-5 w-5" />
         </div>
-        <div className="pointer-events-auto relative">
-          <button
+        <Menu as="div" className="pointer-events-auto relative">
+          <MenuButton
             type="button"
-            onClick={() => setMenuOpen((value) => !value)}
             className="grid h-9 w-9 place-items-center rounded-full text-black/40 hover:bg-black/5 hover:text-black"
             aria-label="工作空间菜单"
           >
             <MoreHorizontal className="h-4 w-4" />
-          </button>
-          {menuOpen ? (
-            <div className="absolute right-0 top-10 z-20 w-28 rounded-2xl border border-black/5 bg-white p-1 text-sm shadow-card">
-              <button type="button" onClick={() => { setMenuOpen(false); onRename(); }} className="w-full rounded-xl px-3 py-2 text-left hover:bg-black/5">重命名</button>
-              <button type="button" onClick={() => { setMenuOpen(false); onDelete(); }} className="w-full rounded-xl px-3 py-2 text-left text-red-600 hover:bg-red-50">删除</button>
-            </div>
-          ) : null}
-        </div>
+          </MenuButton>
+          <MenuItems anchor="bottom end" className="z-[85] mt-1 w-36 rounded-xl border border-black/10 bg-white p-1 text-sm shadow-lg focus:outline-none">
+            <MenuItem><button type="button" onClick={onRename} className="w-full rounded-lg px-3 py-2 text-left data-[focus]:bg-black/5">重命名</button></MenuItem>
+            <MenuItem><button type="button" onClick={onDelete} className="w-full rounded-lg px-3 py-2 text-left text-red-600 data-[focus]:bg-red-50">删除</button></MenuItem>
+          </MenuItems>
+        </Menu>
       </div>
       <div className="pointer-events-none relative z-0 mt-4 flex flex-1 flex-col">
-        <h3 className="truncate text-base font-semibold tracking-tight">{workspace.name}</h3>
+        <h3 className="line-clamp-2 text-base font-semibold tracking-tight" title={workspace.name}>{workspace.name}</h3>
         {workspace.description ? <p className="mt-1 line-clamp-2 text-xs leading-5 text-black/45">{workspace.description}</p> : null}
         <div className="mt-auto flex flex-wrap items-center gap-x-3 gap-y-2 pt-4 text-[11px] text-black/45">
           <span className="inline-flex items-center gap-1.5">
